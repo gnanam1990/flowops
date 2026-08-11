@@ -13,7 +13,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
 6. x402 V2 Base Sepolia adapter and Builder Code conformance fixture.
 7. Evidence Fetch provider. **Implementation complete; verification commands are documented in the module contract.**
 8. Base reconciliation and halt-safe state. **Implementation complete; live provider selection and Sepolia threshold measurements remain external gates.**
-9. Escrow contracts after the dispute-state redesign.
+9. Escrow contracts after the dispute-state redesign. **Local implementation complete; Base Sepolia deployment, event reconciliation, and external review remain gated.**
 10. Dashboard and operator workflows.
 
 Each item lands as one or more isolated conventional commits with focused tests. Cross-module integration comes only after both module contracts are stable.
@@ -24,7 +24,7 @@ Each item lands as one or more isolated conventional commits with focused tests.
 - Reference-signer Base Sepolia wallet has not been designated or funded.
 - The hosted-facilitator calldata experiment remains `UNRESOLVED`.
 - Production facilitator and independent Base RPC providers are not selected.
-- Escrow dispute resolution is not decided.
+- Base Sepolia escrow deployer, native USDC address verification, deployment window, and external reviewer are not designated.
 - External security and legal reviews have not started.
 - GitHub-hosted Actions remains blocked by the account billing/spending-limit hold. FlowOps now uses an isolated, one-job ephemeral self-hosted Linux runner; pull-request and post-merge `main` checks have passed on that runner.
 

@@ -1,16 +1,22 @@
 # ADR-0003: Optional Delivery-Assured Escrow Rail
 
-Status: Accepted with redesign condition  
+Status: Accepted; v1 redesign selected
 Date: 2026-08-11
 
 ## Decision
 
 FlowOps will offer an optional task-bound escrow rail for compatible providers. It will reuse Tollbooth's proven primitives: immutable call identity, request/response hashes, price/provider snapshot, buyer acknowledgement release, optimistic release after a response, and exact expiry refund when no response arrives.
 
-Tollbooth's current `Held` dispute state will **not** ship unchanged. It has no resolver and intentionally strands funds. Before pilot, FlowOps must choose one of:
+Tollbooth's current `Held` dispute state will **not** ship. It has no resolver and intentionally strands funds. FlowOps v1 selects the finite no-dispute design:
 
-1. launch without buyer disputes, disclosing ack/optimistic/expiry semantics; or
-2. add a finite resolver with roles, evidence, deadlines, outcomes, and an appeal/administrative posture reviewed for legal and custody implications.
+- a provider must acknowledge before the acknowledgement deadline;
+- a provider must submit non-zero response and evidence digests before the delivery deadline;
+- the buyer may accept and release immediately;
+- otherwise, anyone may release only after the disclosed optimistic window;
+- a missed acknowledgement or delivery deadline makes an exact buyer-only refund permissionlessly executable; and
+- every delivered position has a permissionless path to `Released`, every missed-deadline position has a permissionless path to `Refunded`, and no `Held` state exists.
+
+This does not arbitrate subjective quality and does not let FlowOps redirect funds. Adding rejection, dispute, resolver, pause, fee, or rescue powers requires a new ADR plus security and legal review.
 
 ## Chain-time rule
 

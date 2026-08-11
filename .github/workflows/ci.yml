@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          submodules: recursive
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.x"
@@ -26,3 +27,12 @@ jobs:
         run: go vet ./...
       - name: Test with race detector
         run: go test -race ./...
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.7.1
+      - name: Verify Solidity formatting
+        run: forge fmt --check
+      - name: Build Solidity contracts
+        run: forge build --sizes
+      - name: Test Solidity contracts
+        run: forge test
