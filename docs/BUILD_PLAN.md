@@ -26,5 +26,6 @@ Each item lands as one or more isolated conventional commits with focused tests.
 - Production facilitator and independent Base RPC providers are not selected.
 - Escrow dispute resolution is not decided.
 - External security and legal reviews have not started.
+- GitHub Actions is configured but the first run was not started because GitHub reported an account billing/spending-limit hold. Local `make check` is green; hosted CI remains blocked until the account setting is resolved.
 
 These block live settlement or mainnet; they do not block local implementation of the authorization vertical slice.
