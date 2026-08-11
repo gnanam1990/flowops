@@ -37,11 +37,20 @@ type FreezeGate interface {
 	Check(ctx context.Context, organizationID, taskID, agentID string) error
 }
 
+type ChainGate interface {
+	CheckChain(ctx context.Context, chainID uint64) error
+}
+
+type authorizationChainGate interface {
+	CheckAuthorizationChain(ctx context.Context, authorization envelope.Authorization) error
+}
+
 type Config struct {
 	Policy                *policy.Engine
 	ActivePolicyVersion   func() string
 	Journal               *Journal
 	FreezeGate            FreezeGate
+	ChainGate             ChainGate
 	Clock                 func() time.Time
 	ApprovalTTL           time.Duration
 	AuthorizationTTL      time.Duration
@@ -58,6 +67,7 @@ type Lifecycle struct {
 	activePolicyVersion    func() string
 	journal                *Journal
 	freezeGate             FreezeGate
+	chainGate              ChainGate
 	clock                  func() time.Time
 	approvalTTL            time.Duration
 	authorizationTTL       time.Duration
@@ -73,8 +83,8 @@ type Lifecycle struct {
 }
 
 func New(cfg Config) (*Lifecycle, error) {
-	if cfg.Policy == nil || cfg.Journal == nil || cfg.FreezeGate == nil || cfg.ActivePolicyVersion == nil {
-		return nil, errors.New("policy, active policy version, journal, and freeze gate are required")
+	if cfg.Policy == nil || cfg.Journal == nil || cfg.FreezeGate == nil || cfg.ChainGate == nil || cfg.ActivePolicyVersion == nil {
+		return nil, errors.New("policy, active policy version, journal, freeze gate, and chain gate are required")
 	}
 	if cfg.RequestIDSource == nil || cfg.AuthorizationIDSource == nil || cfg.NonceSource == nil {
 		return nil, errors.New("request ID, authorization ID, and nonce sources are required")
@@ -91,7 +101,7 @@ func New(cfg Config) (*Lifecycle, error) {
 	}
 	l := &Lifecycle{
 		policy: cfg.Policy, activePolicyVersion: cfg.ActivePolicyVersion, journal: cfg.Journal,
-		freezeGate: cfg.FreezeGate, clock: clock, approvalTTL: cfg.ApprovalTTL,
+		freezeGate: cfg.FreezeGate, chainGate: cfg.ChainGate, clock: clock, approvalTTL: cfg.ApprovalTTL,
 		authorizationTTL: cfg.AuthorizationTTL, requestIDSource: cfg.RequestIDSource,
 		authorizationIDSource: cfg.AuthorizationIDSource, nonceSource: cfg.NonceSource,
 		envelopeKeyID: cfg.EnvelopeKeyID, envelopePrivateKey: append(ed25519.PrivateKey(nil), cfg.EnvelopePrivateKey...),
@@ -209,6 +219,9 @@ func (l *Lifecycle) Issue(ctx context.Context, requestID string) (envelope.Signe
 		return envelope.SignedAuthorization{}, ErrUnknownRequest
 	}
 	if record.State == StateIssued && record.Authorization != nil {
+		if err := l.checkChain(ctx, record); err != nil {
+			return envelope.SignedAuthorization{}, fmt.Errorf("chain unavailable: %w", err)
+		}
 		return envelope.Sign(*record.Authorization, l.envelopeKeyID, l.envelopePrivateKey)
 	}
 	if record.State != StateApproved {
@@ -226,6 +239,9 @@ func (l *Lifecycle) Issue(ctx context.Context, requestID string) (envelope.Signe
 	}
 	if err := l.freezeGate.Check(ctx, record.Intent.OrganizationID, record.Intent.TaskID, record.Intent.AgentID); err != nil {
 		return envelope.SignedAuthorization{}, fmt.Errorf("frozen: %w", err)
+	}
+	if err := l.checkChain(ctx, record); err != nil {
+		return envelope.SignedAuthorization{}, fmt.Errorf("chain unavailable: %w", err)
 	}
 	authorizationID, err := l.authorizationIDSource()
 	if err != nil {
@@ -265,6 +281,15 @@ func (l *Lifecycle) Issue(ctx context.Context, requestID string) (envelope.Signe
 		return envelope.SignedAuthorization{}, fmt.Errorf("apply durable issuance event: %w", err)
 	}
 	return signed, nil
+}
+
+func (l *Lifecycle) checkChain(ctx context.Context, record Record) error {
+	if record.Authorization != nil {
+		if strictGate, ok := l.chainGate.(authorizationChainGate); ok {
+			return strictGate.CheckAuthorizationChain(ctx, *record.Authorization)
+		}
+	}
+	return l.chainGate.CheckChain(ctx, record.Intent.ChainID)
 }
 
 func (l *Lifecycle) SweepExpired(ctx context.Context) (int, error) {

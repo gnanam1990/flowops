@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check smoke-x402-readonly smoke-evidence-fetch
+.PHONY: test check fmt-check smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation
 
 test:
 	go test -race ./...
@@ -15,3 +15,6 @@ smoke-x402-readonly:
 
 smoke-evidence-fetch:
 	go test -race -run '^TestHandlerSmoke$$' ./internal/evidencefetch
+
+smoke-reconciliation:
+	go test -race -run '^(TestHaltDrillPreservesAmbiguousExecutionAndRecoversOnce|TestCanonicalReorgReversesLedgerAndRequiresFreshOutcome|TestSmokeChainHaltStopsBothAuthorizationBoundaries)$$' ./internal/reconciliation ./internal/controlplane

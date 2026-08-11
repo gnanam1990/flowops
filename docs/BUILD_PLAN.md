@@ -12,7 +12,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
 5. Control-plane intent and approval lifecycle.
 6. x402 V2 Base Sepolia adapter and Builder Code conformance fixture.
 7. Evidence Fetch provider. **Implementation complete; verification commands are documented in the module contract.**
-8. Base reconciliation and halt-safe state.
+8. Base reconciliation and halt-safe state. **Implementation complete; live provider selection and Sepolia threshold measurements remain external gates.**
 9. Escrow contracts after the dispute-state redesign.
 10. Dashboard and operator workflows.
 

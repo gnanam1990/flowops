@@ -48,6 +48,10 @@ type ChainGate interface {
 	CheckChain(ctx context.Context, chainID uint64) error
 }
 
+type authorizationChainGate interface {
+	CheckAuthorizationChain(ctx context.Context, authorization envelope.Authorization) error
+}
+
 type FreezeGate interface {
 	CheckFrozen(ctx context.Context, authorization envelope.Authorization) error
 }
@@ -195,8 +199,14 @@ func (v *Verifier) Authorize(ctx context.Context, signed envelope.SignedAuthoriz
 	if err != nil || amount.Cmp(v.maxAmount) > 0 {
 		return Authorized{}, refuse(RefusalAmount, errors.New("amount exceeds local cap"))
 	}
-	if err := v.chainGate.CheckChain(ctx, a.ChainID); err != nil {
-		return Authorized{}, refuse(RefusalChainUnhealthy, err)
+	var chainErr error
+	if strictGate, ok := v.chainGate.(authorizationChainGate); ok {
+		chainErr = strictGate.CheckAuthorizationChain(ctx, a)
+	} else {
+		chainErr = v.chainGate.CheckChain(ctx, a.ChainID)
+	}
+	if chainErr != nil {
+		return Authorized{}, refuse(RefusalChainUnhealthy, chainErr)
 	}
 	if err := v.freezeGate.CheckFrozen(ctx, a); err != nil {
 		return Authorized{}, refuse(RefusalFrozen, err)
