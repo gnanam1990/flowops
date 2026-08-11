@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+bin/
+coverage/
+dist/
+node_modules/
+tmp/
+*.db
+*.db-shm
+*.db-wal
+*.log
+contracts/cache/
+contracts/out/
+contracts/broadcast/
+apps/dashboard/.next/
