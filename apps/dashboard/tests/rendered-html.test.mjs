@@ -31,6 +31,9 @@ test("renders the FlowOps economic control room", async () => {
   assert.match(html, /Review 3 approvals/);
   assert.match(html, /Base Sepolia/);
   assert.match(html, /Preview data/);
+  assert.match(html, /Pending chain evidence/);
+  assert.match(html, /Non-custodial/);
+  assert.match(html, /Observer quorum/);
   assert.match(html, /Preview records are illustrative and cannot move funds/);
   assert.match(html, /Emergency pause/);
   assert.match(html, /Economic activity/);
@@ -42,4 +45,5 @@ test("removes starter content and never claims preview controls executed", async
   assert.doesNotMatch(html, /Your site is taking shape|Building your site|codex-preview/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
   assert.doesNotMatch(html, /pause successful|payment successful|approval successful/i);
+  assert.doesNotMatch(html, /submitted successfully|write succeeded/i);
 });

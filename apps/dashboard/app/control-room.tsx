@@ -47,7 +47,7 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
 
   const explainPreview = (action: string) => {
     setNotice(
-      `${action} is locked in preview mode. Connect the authenticated FlowOps control plane to execute this action.`,
+      `${action} is locked in preview mode. Nothing was submitted and no write occurred. Connect the authenticated FlowOps control plane to execute this action.`,
     );
   };
 
@@ -60,7 +60,10 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
             <i />
             <i />
           </span>
-          <span className="brand-name">FlowOps</span>
+          <span>
+            <strong className="brand-name">FlowOps</strong>
+            <small className="brand-subtitle">Control plane</small>
+          </span>
         </div>
 
         <div className="org-card">
@@ -90,21 +93,31 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
         </nav>
 
         <div className="sidebar-foot">
-          <span className="chain-dot" aria-hidden="true" />
-          <span>
-            <strong>{snapshot.chain.network}</strong>
-            <small>{snapshot.chain.observers}</small>
-          </span>
+          <span className="preview-rail"><i /> Preview data</span>
+          <div className="chain-summary">
+            <span className="chain-dot" aria-hidden="true" />
+            <span>
+              <strong>{snapshot.chain.network}</strong>
+              <small>{snapshot.chain.observers}</small>
+            </span>
+          </div>
+          <p className="signer-note"><strong>Non-custodial.</strong> Customer signing keys stay outside FlowOps.</p>
         </div>
       </aside>
 
       <div className="workspace">
         <header className="topbar">
-          <div>
+          <div className="topbar-title">
             <span className="mobile-brand">FlowOps</span>
             <span className="breadcrumb">Control room / {title}</span>
           </div>
+          <dl className="context-strip">
+            <div><dt>Total observed</dt><dd>{snapshot.money.total} <span>USDC</span></dd></div>
+            <div><dt>Base trusted block</dt><dd>#{snapshot.chain.lastTrustedBlock}</dd></div>
+            <div><dt>Observer quorum</dt><dd className="quorum"><i />{snapshot.chain.observers}</dd></div>
+          </dl>
           <div className="topbar-actions">
+            <span className="fresh-label">Fresh {snapshot.chain.lastTrustedAt}</span>
             <span className="preview-pill">Preview data</span>
             <button className="icon-button" aria-label="Notifications" type="button">
               <span aria-hidden="true">●</span>
@@ -205,6 +218,7 @@ function Overview({
   onAgents: () => void;
   onActivity: () => void;
 }) {
+  const [range, setRange] = useState<"24h" | "7d" | "30d">("7d");
   return (
     <>
       <section className="hero">
@@ -217,8 +231,18 @@ function Overview({
             See what your agents can spend, what needs a decision, and what Base
             has actually confirmed.
           </p>
+          <div className="observation-meta">
+            <span>Observed {snapshot.generatedAt}</span>
+            <span>Policy profile v14.2</span>
+            <span>Customer-controlled signers</span>
+          </div>
         </div>
         <div className="hero-actions">
+          <div className="time-range" aria-label="Time range">
+            {(["24h", "7d", "30d"] as const).map((item) => (
+              <button aria-pressed={range === item} className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)} type="button">{item}</button>
+            ))}
+          </div>
           <button className="primary-button" type="button" onClick={onApprovals}>
             Review 3 approvals <span>→</span>
           </button>
@@ -235,8 +259,8 @@ function Overview({
           <small>Across 4 customer-controlled signers</small>
         </div>
         <MoneyCard label="Available" value={snapshot.money.available} tone="good" />
-        <MoneyCard label="Reserved" value={snapshot.money.reserved} tone="neutral" />
-        <MoneyCard label="Pending" value={snapshot.money.pending} tone="pending" />
+        <MoneyCard label="Reserved" value={snapshot.money.reserved} tone="reserved" />
+        <MoneyCard label="Pending chain evidence" value={snapshot.money.pending} tone="pending" />
         <MoneyCard label="Unresolved" value={snapshot.money.unresolved} tone="risk" />
       </section>
 
@@ -323,7 +347,7 @@ function Overview({
 }
 
 function Approvals({ approvals, onSelect }: { approvals: Approval[]; onSelect: (approval: Approval) => void }) {
-  const [filter, setFilter] = useState<"all" | "medium" | "low">("all");
+  const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const visible = approvals.filter((item) => filter === "all" || item.risk === filter);
   return (
     <section className="section-stack">
@@ -333,7 +357,7 @@ function Approvals({ approvals, onSelect }: { approvals: Approval[]; onSelect: (
         description="Every decision is bound to the exact amount, vendor, task, and policy version shown here."
       />
       <div className="filter-bar" aria-label="Approval filters">
-        {(["all", "medium", "low"] as const).map((item) => (
+        {(["all", "high", "medium", "low"] as const).map((item) => (
           <button className={filter === item ? "active" : ""} onClick={() => setFilter(item)} key={item} type="button">
             {item === "all" ? "All pending" : `${capitalize(item)} risk`}
           </button>
@@ -358,28 +382,46 @@ function Approvals({ approvals, onSelect }: { approvals: Approval[]; onSelect: (
 }
 
 function Agents({ agents }: { agents: Agent[] }) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<"all" | Agent["status"]>("all");
+  const visible = agents.filter((agent) => {
+    const matchesQuery = `${agent.name} ${agent.purpose} ${agent.task}`.toLowerCase().includes(query.toLowerCase());
+    return matchesQuery && (status === "all" || agent.status === status);
+  });
   return (
     <section className="section-stack">
       <SectionHeading eyebrow="Machine principals" title="Governed agents" description="Purpose, owner policy, signer health, and spend remain visible as one operational unit." />
+      <div className="directory-controls">
+        <label className="search-field"><span>Search agents</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, purpose, or task" /></label>
+        <div className="filter-bar" aria-label="Agent status filters">
+          {(["all", "ACTIVE", "PAUSED", "QUARANTINED"] as const).map((item) => <button className={status === item ? "active" : ""} key={item} onClick={() => setStatus(item)} type="button">{item === "all" ? "All" : capitalize(item.toLowerCase())}</button>)}
+        </div>
+      </div>
       <div className="agent-directory">
-        {agents.map((agent) => (
+        {visible.map((agent) => (
           <article className="agent-card" key={agent.id}>
             <header><AgentMark mark={agent.mark} /><span><strong>{agent.name}</strong><small>{agent.purpose}</small></span><StatusBadge status={agent.status} /></header>
             <div className="agent-balance"><span>Available budget</span><strong>{agent.available}</strong><small>of {agent.limit}</small></div>
             <div className="progress-track small"><i style={{ width: `${agent.percent}%` }} /></div>
-            <footer><span>Current task</span><strong>{agent.task}</strong></footer>
+            <footer><span>Current task</span><strong>{agent.task}</strong><small>Signer boundary: customer-controlled</small></footer>
           </article>
         ))}
       </div>
+      {visible.length === 0 ? <p className="empty-state">No governed agents match these filters.</p> : null}
     </section>
   );
 }
 
 function ActivityView({ activity }: { activity: Activity[] }) {
+  const [filter, setFilter] = useState<"all" | Activity["state"]>("all");
+  const visible = activity.filter((item) => filter === "all" || item.state === filter);
   return (
     <section className="section-stack">
       <SectionHeading eyebrow="Policy to receipt" title="Economic activity" description="A single timeline for tasks, approvals, payments, delivery evidence, refunds, and security events." />
-      <div className="activity-view panel"><ActivityRows activity={activity} /></div>
+      <div className="filter-bar" aria-label="Activity filters">
+        {(["all", "settled", "released", "refunded", "approval", "security"] as const).map((item) => <button className={filter === item ? "active" : ""} key={item} onClick={() => setFilter(item)} type="button">{capitalize(item)}</button>)}
+      </div>
+      <div className="activity-view panel"><ActivityRows activity={visible} /></div>
     </section>
   );
 }
@@ -452,7 +494,7 @@ function ApprovalDrawer({ approval, onClose, onAction }: { approval: Approval; o
         <header><span>Approval {approval.id}</span><button ref={closeRef} onClick={onClose} aria-label="Close approval details" type="button">×</button></header>
         <div className="drawer-title"><AgentMark mark={approval.agentMark} /><div><small>{approval.agent}</small><h2 id="approval-title">{approval.title}</h2></div></div>
         <div className="drawer-amount"><span>Exact authorized amount</span><strong>{approval.amount}</strong><small>{approval.rail} · Base Sepolia USDC</small></div>
-        <dl className="detail-list"><div><dt>Recipient</dt><dd>{approval.vendor}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Intent binding</dt><dd className="mono">0x83b1…0ca9</dd></div></dl>
+        <dl className="detail-list"><div><dt>Recipient / vendor</dt><dd>{approval.vendor}</dd></div><div><dt>Agent</dt><dd>{approval.agent}</dd></div><div><dt>Task</dt><dd>{approval.title}</dd></div><div><dt>Rail</dt><dd>{approval.rail}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Policy snapshot</dt><dd className="mono">pol_v14.2</dd></div><div><dt>Evidence refs</dt><dd className="mono">EV-{approval.id}-02 · BASE-OBS-03</dd></div><div><dt>Created</dt><dd>{approval.requested}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Request digest</dt><dd className="mono">0x83b1…0ca9</dd></div></dl>
         <div className="reason-box"><span>Why approval is required</span><p>{approval.reason}</p></div>
         <div className="truth-box"><strong>What this decision means</strong><p>Approval authorizes only this frozen intent. Any change to amount, recipient, task, rail, or request digest requires a new decision.</p></div>
         <footer><button className="secondary-button" onClick={() => { onClose(); onAction("Denial"); }} type="button">Deny</button><button className="primary-button" onClick={() => { onClose(); onAction("Approval"); }} type="button">Approve exact intent</button></footer>
