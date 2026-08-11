@@ -24,8 +24,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22.23.1"
-          cache: npm
-          cache-dependency-path: apps/dashboard/package-lock.json
       - name: Verify formatting
         run: test -z "$(gofmt -l $(git ls-files '*.go'))" || (gofmt -l $(git ls-files '*.go') && exit 1)
       - name: Vet
