@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check
+.PHONY: test check fmt-check smoke-x402-readonly
 
 test:
 	go test -race ./...
@@ -9,3 +9,6 @@ fmt-check:
 check: fmt-check
 	go vet ./...
 	go test -race ./...
+
+smoke-x402-readonly:
+	go run ./cmd/x402-conformance
