@@ -1,0 +1,475 @@
+package controlplane
+
+import (
+	"context"
+	"crypto/ed25519"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math/big"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gnanam1990/flowops/internal/policy"
+	"github.com/gnanam1990/flowops/pkg/envelope"
+)
+
+const (
+	eventIntentSubmitted     = "intent.submitted"
+	eventApprovalDecided     = "approval.decided"
+	eventAuthorizationIssued = "authorization.issued"
+	eventIntentExpired       = "intent.expired"
+)
+
+var (
+	ErrUnknownRequest      = errors.New("unknown request")
+	ErrIdempotencyConflict = errors.New("intent ID already names different content")
+	ErrNotPendingApproval  = errors.New("request is not pending approval")
+	ErrNotApproved         = errors.New("request is not approved")
+	ErrApprovalDigest      = errors.New("approval request digest mismatch")
+	ErrApprovalExpired     = errors.New("approval window expired")
+	ErrPolicyChanged       = errors.New("active policy version changed")
+)
+
+type FreezeGate interface {
+	Check(ctx context.Context, organizationID, taskID, agentID string) error
+}
+
+type Config struct {
+	Policy                *policy.Engine
+	ActivePolicyVersion   func() string
+	Journal               *Journal
+	FreezeGate            FreezeGate
+	Clock                 func() time.Time
+	ApprovalTTL           time.Duration
+	AuthorizationTTL      time.Duration
+	RequestIDSource       func() (string, error)
+	AuthorizationIDSource func() (string, error)
+	NonceSource           func() (string, error)
+	EnvelopeKeyID         string
+	EnvelopePrivateKey    ed25519.PrivateKey
+}
+
+type Lifecycle struct {
+	mu                     sync.Mutex
+	policy                 *policy.Engine
+	activePolicyVersion    func() string
+	journal                *Journal
+	freezeGate             FreezeGate
+	clock                  func() time.Time
+	approvalTTL            time.Duration
+	authorizationTTL       time.Duration
+	requestIDSource        func() (string, error)
+	authorizationIDSource  func() (string, error)
+	nonceSource            func() (string, error)
+	envelopeKeyID          string
+	envelopePrivateKey     ed25519.PrivateKey
+	records                map[string]Record
+	requestByIntent        map[string]string
+	requestByAuthorization map[string]string
+	requestByNonce         map[string]string
+}
+
+func New(cfg Config) (*Lifecycle, error) {
+	if cfg.Policy == nil || cfg.Journal == nil || cfg.FreezeGate == nil || cfg.ActivePolicyVersion == nil {
+		return nil, errors.New("policy, active policy version, journal, and freeze gate are required")
+	}
+	if cfg.RequestIDSource == nil || cfg.AuthorizationIDSource == nil || cfg.NonceSource == nil {
+		return nil, errors.New("request ID, authorization ID, and nonce sources are required")
+	}
+	if cfg.ApprovalTTL <= 0 || cfg.AuthorizationTTL <= 0 || cfg.AuthorizationTTL > cfg.ApprovalTTL {
+		return nil, errors.New("authorization TTL must be positive and no longer than approval TTL")
+	}
+	if !idPattern.MatchString(cfg.EnvelopeKeyID) || len(cfg.EnvelopePrivateKey) != ed25519.PrivateKeySize {
+		return nil, errors.New("envelope signing identity is invalid")
+	}
+	clock := cfg.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	l := &Lifecycle{
+		policy: cfg.Policy, activePolicyVersion: cfg.ActivePolicyVersion, journal: cfg.Journal,
+		freezeGate: cfg.FreezeGate, clock: clock, approvalTTL: cfg.ApprovalTTL,
+		authorizationTTL: cfg.AuthorizationTTL, requestIDSource: cfg.RequestIDSource,
+		authorizationIDSource: cfg.AuthorizationIDSource, nonceSource: cfg.NonceSource,
+		envelopeKeyID: cfg.EnvelopeKeyID, envelopePrivateKey: append(ed25519.PrivateKey(nil), cfg.EnvelopePrivateKey...),
+		records: make(map[string]Record), requestByIntent: make(map[string]string),
+		requestByAuthorization: make(map[string]string), requestByNonce: make(map[string]string),
+	}
+	for _, event := range cfg.Journal.Events() {
+		if err := l.applyEvent(event); err != nil {
+			return nil, fmt.Errorf("replay event %d (%s): %w", event.Sequence, event.Kind, err)
+		}
+	}
+	return l, nil
+}
+
+func (l *Lifecycle) Submit(ctx context.Context, intent PaymentIntent) (Record, error) {
+	if err := intent.Validate(); err != nil {
+		return Record{}, err
+	}
+	intentDigest, err := intent.Digest()
+	if err != nil {
+		return Record{}, err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if requestID, exists := l.requestByIntent[intent.IntentID]; exists {
+		existing := l.records[requestID]
+		if existing.IntentDigest != intentDigest {
+			return Record{}, ErrIdempotencyConflict
+		}
+		return cloneRecord(existing), nil
+	}
+	if err := l.freezeGate.Check(ctx, intent.OrganizationID, intent.TaskID, intent.AgentID); err != nil {
+		return Record{}, fmt.Errorf("frozen: %w", err)
+	}
+	now := l.clock().UTC()
+	decision := l.policy.Evaluate(toPolicyIntent(intent), l.spendSnapshot(intent, now))
+	if !idPattern.MatchString(decision.PolicyVersion) {
+		return Record{}, errors.New("policy returned an invalid version identifier")
+	}
+	state, err := decisionState(decision)
+	if err != nil {
+		return Record{}, err
+	}
+	requestID, err := l.requestIDSource()
+	if err != nil {
+		return Record{}, fmt.Errorf("generate request ID: %w", err)
+	}
+	if !idPattern.MatchString(requestID) {
+		return Record{}, errors.New("generated request ID is invalid")
+	}
+	if _, exists := l.records[requestID]; exists {
+		return Record{}, errors.New("generated request ID already exists")
+	}
+	expiresAt := now.Add(l.approvalTTL).Unix()
+	reqDigest, err := requestDigest(requestID, intentDigest, decision, expiresAt)
+	if err != nil {
+		return Record{}, err
+	}
+	record := Record{
+		RequestID: requestID, Intent: intent, IntentDigest: intentDigest, RequestDigest: reqDigest,
+		Decision: decision, State: state, SubmittedAt: now.Unix(), ApprovalExpiresAt: expiresAt,
+	}
+	event, err := l.journal.Append(ctx, now, eventIntentSubmitted, requestID, submittedPayload{Record: record})
+	if err != nil {
+		return Record{}, err
+	}
+	if err := l.applyEvent(event); err != nil {
+		return Record{}, fmt.Errorf("apply durable submit event: %w", err)
+	}
+	return cloneRecord(l.records[requestID]), nil
+}
+
+func (l *Lifecycle) Decide(ctx context.Context, requestID, requestDigest string, action ApprovalAction, actor, note string) (Record, error) {
+	if action != Approve && action != Reject {
+		return Record{}, errors.New("approval action is invalid")
+	}
+	if !idPattern.MatchString(actor) || len(note) > 2048 {
+		return Record{}, errors.New("approval actor or note is invalid")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record, ok := l.records[requestID]
+	if !ok {
+		return Record{}, ErrUnknownRequest
+	}
+	if record.State != StatePendingApproval {
+		return Record{}, ErrNotPendingApproval
+	}
+	if requestDigest != record.RequestDigest {
+		return Record{}, ErrApprovalDigest
+	}
+	now := l.clock().UTC()
+	if !now.Before(time.Unix(record.ApprovalExpiresAt, 0)) {
+		if err := l.expireLocked(ctx, record, now, "approval window elapsed before decision"); err != nil {
+			return Record{}, err
+		}
+		return Record{}, ErrApprovalExpired
+	}
+	approval := Approval{Action: action, Actor: actor, Note: note, RequestDigest: requestDigest, DecidedAt: now.Unix()}
+	event, err := l.journal.Append(ctx, now, eventApprovalDecided, requestID, approvalPayload{Approval: approval})
+	if err != nil {
+		return Record{}, err
+	}
+	if err := l.applyEvent(event); err != nil {
+		return Record{}, fmt.Errorf("apply durable approval event: %w", err)
+	}
+	return cloneRecord(l.records[requestID]), nil
+}
+
+func (l *Lifecycle) Issue(ctx context.Context, requestID string) (envelope.SignedAuthorization, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record, ok := l.records[requestID]
+	if !ok {
+		return envelope.SignedAuthorization{}, ErrUnknownRequest
+	}
+	if record.State == StateIssued && record.Authorization != nil {
+		return envelope.Sign(*record.Authorization, l.envelopeKeyID, l.envelopePrivateKey)
+	}
+	if record.State != StateApproved {
+		return envelope.SignedAuthorization{}, ErrNotApproved
+	}
+	now := l.clock().UTC()
+	if !now.Before(time.Unix(record.ApprovalExpiresAt, 0)) {
+		if err := l.expireLocked(ctx, record, now, "approval window elapsed before issuance"); err != nil {
+			return envelope.SignedAuthorization{}, err
+		}
+		return envelope.SignedAuthorization{}, ErrApprovalExpired
+	}
+	if active := l.activePolicyVersion(); active != record.Decision.PolicyVersion {
+		return envelope.SignedAuthorization{}, fmt.Errorf("%w: approved under %s, active is %s", ErrPolicyChanged, record.Decision.PolicyVersion, active)
+	}
+	if err := l.freezeGate.Check(ctx, record.Intent.OrganizationID, record.Intent.TaskID, record.Intent.AgentID); err != nil {
+		return envelope.SignedAuthorization{}, fmt.Errorf("frozen: %w", err)
+	}
+	authorizationID, err := l.authorizationIDSource()
+	if err != nil {
+		return envelope.SignedAuthorization{}, fmt.Errorf("generate authorization ID: %w", err)
+	}
+	nonce, err := l.nonceSource()
+	if err != nil {
+		return envelope.SignedAuthorization{}, fmt.Errorf("generate nonce: %w", err)
+	}
+	expiresAt := now.Add(l.authorizationTTL)
+	if approvalExpiry := time.Unix(record.ApprovalExpiresAt, 0); expiresAt.After(approvalExpiry) {
+		expiresAt = approvalExpiry
+	}
+	authorization := envelope.Authorization{
+		Version: envelope.Version, AuthorizationID: authorizationID,
+		OrganizationID: record.Intent.OrganizationID, CustomerID: record.Intent.CustomerID,
+		AgentID: record.Intent.AgentID, TaskID: record.Intent.TaskID, ActionID: record.Intent.ActionID,
+		Rail: record.Intent.Rail, ChainID: record.Intent.ChainID, Recipient: record.Intent.Recipient,
+		Asset: record.Intent.Asset, AmountAtomic: record.Intent.AmountAtomic, Resource: record.Intent.Resource,
+		PolicyVersion: record.Decision.PolicyVersion, Nonce: nonce, IssuedAt: now.Unix(), ExpiresAt: expiresAt.Unix(),
+	}
+	signed, err := envelope.Sign(authorization, l.envelopeKeyID, l.envelopePrivateKey)
+	if err != nil {
+		return envelope.SignedAuthorization{}, fmt.Errorf("sign authorization: %w", err)
+	}
+	if _, exists := l.requestByAuthorization[authorization.AuthorizationID]; exists {
+		return envelope.SignedAuthorization{}, errors.New("generated authorization ID already exists")
+	}
+	if _, exists := l.requestByNonce[authorization.Nonce]; exists {
+		return envelope.SignedAuthorization{}, errors.New("generated nonce already exists")
+	}
+	event, err := l.journal.Append(ctx, now, eventAuthorizationIssued, requestID, issuedPayload{Authorization: authorization})
+	if err != nil {
+		return envelope.SignedAuthorization{}, err
+	}
+	if err := l.applyEvent(event); err != nil {
+		return envelope.SignedAuthorization{}, fmt.Errorf("apply durable issuance event: %w", err)
+	}
+	return signed, nil
+}
+
+func (l *Lifecycle) SweepExpired(ctx context.Context) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.clock().UTC()
+	requestIDs := make([]string, 0, len(l.records))
+	for requestID, record := range l.records {
+		if (record.State == StatePendingApproval || record.State == StateApproved) && !now.Before(time.Unix(record.ApprovalExpiresAt, 0)) {
+			requestIDs = append(requestIDs, requestID)
+		}
+	}
+	sort.Strings(requestIDs)
+	completed := 0
+	for _, requestID := range requestIDs {
+		if err := l.expireLocked(ctx, l.records[requestID], now, "approval window elapsed during sweep"); err != nil {
+			return completed, err
+		}
+		completed++
+	}
+	return completed, nil
+}
+
+func (l *Lifecycle) expireLocked(ctx context.Context, record Record, now time.Time, reason string) error {
+	event, err := l.journal.Append(ctx, now, eventIntentExpired, record.RequestID, expiredPayload{Reason: reason})
+	if err != nil {
+		return err
+	}
+	if err := l.applyEvent(event); err != nil {
+		return fmt.Errorf("apply durable expiry event: %w", err)
+	}
+	return nil
+}
+
+func (l *Lifecycle) Get(requestID string) (Record, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record, ok := l.records[requestID]
+	return cloneRecord(record), ok
+}
+
+func (l *Lifecycle) PendingApprovals() []Record {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	result := make([]Record, 0)
+	for _, record := range l.records {
+		if record.State == StatePendingApproval {
+			result = append(result, cloneRecord(record))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].RequestID < result[j].RequestID })
+	return result
+}
+
+func (l *Lifecycle) spendSnapshot(intent PaymentIntent, now time.Time) policy.SpendSnapshot {
+	taskReserved := new(big.Int)
+	dailyReserved := new(big.Int)
+	for _, record := range l.records {
+		if !reservationActive(record.State) || record.Intent.OrganizationID != intent.OrganizationID || record.Intent.CustomerID != intent.CustomerID {
+			continue
+		}
+		amount, ok := new(big.Int).SetString(record.Intent.AmountAtomic, 10)
+		if !ok {
+			continue
+		}
+		if record.Intent.TaskID == intent.TaskID {
+			taskReserved.Add(taskReserved, amount)
+		}
+		submitted := time.Unix(record.SubmittedAt, 0).UTC()
+		if submitted.Year() == now.Year() && submitted.YearDay() == now.YearDay() {
+			dailyReserved.Add(dailyReserved, amount)
+		}
+	}
+	return policy.SpendSnapshot{
+		TaskSpentAtomic: "0", TaskReservedAtomic: taskReserved.String(),
+		DailySpentAtomic: "0", DailyReservedAtomic: dailyReserved.String(),
+	}
+}
+
+func reservationActive(state State) bool {
+	return state == StatePendingApproval || state == StateApproved || state == StateIssued
+}
+
+func toPolicyIntent(intent PaymentIntent) policy.Intent {
+	return policy.Intent{
+		OrganizationID: intent.OrganizationID, CustomerID: intent.CustomerID, AgentID: intent.AgentID,
+		TaskID: intent.TaskID, ActionID: intent.ActionID, Rail: intent.Rail, ChainID: intent.ChainID,
+		Recipient: intent.Recipient, Asset: intent.Asset, AmountAtomic: intent.AmountAtomic,
+		Resource: intent.Resource, Category: intent.Category,
+	}
+}
+
+func (l *Lifecycle) applyEvent(event Event) error {
+	switch event.Kind {
+	case eventIntentSubmitted:
+		var payload submittedPayload
+		if err := decodePayload(event, &payload); err != nil {
+			return err
+		}
+		record := payload.Record
+		if event.RequestID != record.RequestID || event.At != record.SubmittedAt {
+			return errors.New("submitted event identity or time mismatch")
+		}
+		if _, exists := l.records[record.RequestID]; exists {
+			return errors.New("duplicate request ID")
+		}
+		if _, exists := l.requestByIntent[record.Intent.IntentID]; exists {
+			return errors.New("duplicate intent ID")
+		}
+		intentDigest, err := record.Intent.Digest()
+		if err != nil || intentDigest != record.IntentDigest {
+			return errors.New("intent digest mismatch")
+		}
+		reqDigest, err := requestDigest(record.RequestID, record.IntentDigest, record.Decision, record.ApprovalExpiresAt)
+		if err != nil || reqDigest != record.RequestDigest {
+			return errors.New("request digest mismatch")
+		}
+		state, err := decisionState(record.Decision)
+		if err != nil || state != record.State || record.Approval != nil || record.Authorization != nil {
+			return errors.New("submitted state does not match decision")
+		}
+		l.records[record.RequestID] = cloneRecord(record)
+		l.requestByIntent[record.Intent.IntentID] = record.RequestID
+		return nil
+	case eventApprovalDecided:
+		var payload approvalPayload
+		if err := decodePayload(event, &payload); err != nil {
+			return err
+		}
+		record, ok := l.records[event.RequestID]
+		if !ok || record.State != StatePendingApproval || payload.Approval.RequestDigest != record.RequestDigest || payload.Approval.DecidedAt != event.At ||
+			!eventBefore(event.At, record.ApprovalExpiresAt) || !idPattern.MatchString(payload.Approval.Actor) || len(payload.Approval.Note) > 2048 {
+			return errors.New("approval event is invalid for current request")
+		}
+		switch payload.Approval.Action {
+		case Approve:
+			record.State = StateApproved
+		case Reject:
+			record.State = StateRejected
+		default:
+			return errors.New("approval action is invalid")
+		}
+		record.Approval = &payload.Approval
+		l.records[event.RequestID] = record
+		return nil
+	case eventAuthorizationIssued:
+		var payload issuedPayload
+		if err := decodePayload(event, &payload); err != nil {
+			return err
+		}
+		record, ok := l.records[event.RequestID]
+		if !ok || record.State != StateApproved || payload.Authorization.IssuedAt != event.At || !eventBefore(event.At, record.ApprovalExpiresAt) {
+			return errors.New("issuance event is invalid for current request")
+		}
+		if err := authorizationMatches(record, payload.Authorization); err != nil {
+			return err
+		}
+		if _, exists := l.requestByAuthorization[payload.Authorization.AuthorizationID]; exists {
+			return errors.New("duplicate authorization ID")
+		}
+		if _, exists := l.requestByNonce[payload.Authorization.Nonce]; exists {
+			return errors.New("duplicate authorization nonce")
+		}
+		record.State = StateIssued
+		record.Authorization = &payload.Authorization
+		l.records[event.RequestID] = record
+		l.requestByAuthorization[payload.Authorization.AuthorizationID] = event.RequestID
+		l.requestByNonce[payload.Authorization.Nonce] = event.RequestID
+		return nil
+	case eventIntentExpired:
+		var payload expiredPayload
+		if err := decodePayload(event, &payload); err != nil || strings.TrimSpace(payload.Reason) == "" {
+			return errors.New("expiry event is invalid")
+		}
+		record, ok := l.records[event.RequestID]
+		if !ok || (record.State != StatePendingApproval && record.State != StateApproved) || event.At < record.ApprovalExpiresAt {
+			return errors.New("expiry event is invalid for current request")
+		}
+		record.State = StateExpired
+		l.records[event.RequestID] = record
+		return nil
+	default:
+		return fmt.Errorf("unknown event kind %q", event.Kind)
+	}
+}
+
+func authorizationMatches(record Record, a envelope.Authorization) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	i := record.Intent
+	if a.OrganizationID != i.OrganizationID || a.CustomerID != i.CustomerID || a.AgentID != i.AgentID ||
+		a.TaskID != i.TaskID || a.ActionID != i.ActionID || a.Rail != i.Rail || a.ChainID != i.ChainID ||
+		a.Recipient != i.Recipient || a.Asset != i.Asset || a.AmountAtomic != i.AmountAtomic || a.Resource != i.Resource ||
+		a.PolicyVersion != record.Decision.PolicyVersion || a.IssuedAt < record.SubmittedAt || a.ExpiresAt > record.ApprovalExpiresAt {
+		return errors.New("authorization does not match approved intent")
+	}
+	return nil
+}
+
+func decodePayload(event Event, target any) error {
+	if err := json.Unmarshal(event.Payload, target); err != nil {
+		return fmt.Errorf("decode %s payload: %w", event.Kind, err)
+	}
+	return nil
+}
+
+func eventBefore(at, boundary int64) bool { return at < boundary }
