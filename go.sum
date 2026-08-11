@@ -1,2 +1,4 @@
 github.com/x402-foundation/x402/go/v2 v2.21.0 h1:DB+vJdLo3RBxz43o4zexfoQUlR6QfNc/YCafrkOIAFM=
 github.com/x402-foundation/x402/go/v2 v2.21.0/go.mod h1:KJZBIAosfnCzZGISFJVxTXKS5N2osJgDppD3Zmsnc4A=
+golang.org/x/net v0.48.0 h1:zyQRTTrjc33Lhh0fBgT/H3oZq9WuvRR5gPC70xpDiQU=
+golang.org/x/net v0.48.0/go.mod h1:+ndRgGjkh8FGtu1w1FGbEC31if4VrNVMuKTgcAAnQRY=

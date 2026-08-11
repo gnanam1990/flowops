@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check smoke-x402-readonly
+.PHONY: test check fmt-check smoke-x402-readonly smoke-evidence-fetch
 
 test:
 	go test -race ./...
@@ -12,3 +12,6 @@ check: fmt-check
 
 smoke-x402-readonly:
 	go run ./cmd/x402-conformance
+
+smoke-evidence-fetch:
+	go test -race -run '^TestHandlerSmoke$$' ./internal/evidencefetch
