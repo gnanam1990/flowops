@@ -11,6 +11,8 @@ owner's billing/spending hold.
   deregisters after exactly one job.
 - Each runner executes inside a fresh local Linux virtual machine/container and
   its filesystem is destroyed after the job.
+- The disposable Linux image must provide CA certificates, Git, and a C
+  toolchain (`build-essential`) so Go race detection remains enabled.
 - The workflow has `contents: read`, checkout credential persistence is
   disabled, and no production, wallet, RPC, facilitator, or application secret
   is exposed to CI.
