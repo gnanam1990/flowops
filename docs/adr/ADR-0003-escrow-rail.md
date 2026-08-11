@@ -9,8 +9,8 @@ FlowOps will offer an optional task-bound escrow rail for compatible providers. 
 
 Tollbooth's current `Held` dispute state will **not** ship. It has no resolver and intentionally strands funds. FlowOps v1 selects the finite no-dispute design:
 
-- a provider must acknowledge before the acknowledgement deadline;
-- a provider must submit non-zero response and evidence digests before the delivery deadline;
+- a provider must acknowledge by the acknowledgement deadline, inclusive;
+- a provider must submit non-zero response and evidence digests by the delivery deadline, inclusive;
 - the buyer may accept and release immediately;
 - otherwise, anyone may release only after the disclosed optimistic window;
 - a missed acknowledgement or delivery deadline makes an exact buyer-only refund permissionlessly executable; and
