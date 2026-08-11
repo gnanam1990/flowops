@@ -1,20 +1,35 @@
-.PHONY: test check fmt-check solidity-fmt-check smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-escrow
+.PHONY: test check fmt-check solidity-fmt-check dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-escrow
+
+GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
+GO_FILES := $(shell git ls-files '*.go')
 
 test:
-	go test -race ./...
+	go test -race $(GO_PACKAGES)
 	forge test
+	npm test --prefix apps/dashboard
 
 fmt-check:
-	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
+	@test -z "$$(gofmt -l $(GO_FILES))" || (gofmt -l $(GO_FILES) && exit 1)
 
 solidity-fmt-check:
 	forge fmt --check
 
-check: fmt-check solidity-fmt-check
-	go vet ./...
-	go test -race ./...
+dashboard-deps:
+	npm ci --prefix apps/dashboard
+
+dashboard-check: dashboard-deps
+	npm audit --omit=dev --audit-level=high --prefix apps/dashboard
+	npm run lint --prefix apps/dashboard
+	npm test --prefix apps/dashboard
+
+check: fmt-check solidity-fmt-check dashboard-check
+	go vet $(GO_PACKAGES)
+	go test -race $(GO_PACKAGES)
 	forge build --sizes
 	forge test
+
+smoke-dashboard:
+	npm test --prefix apps/dashboard
 
 smoke-x402-readonly:
 	go run ./cmd/x402-conformance
