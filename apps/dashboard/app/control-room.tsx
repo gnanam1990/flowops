@@ -221,23 +221,19 @@ function Overview({
   const [range, setRange] = useState<"24h" | "7d" | "30d">("7d");
   return (
     <>
-      <section className="hero">
-        <div>
-          <div className="eyebrow">
-            <span className="healthy-dot" /> Autonomous execution healthy
-          </div>
-          <h1>Every agent dollar,<br />under control.</h1>
-          <p>
-            See what your agents can spend, what needs a decision, and what Base
-            has actually confirmed.
-          </p>
+      <section className="command-header">
+        <div className="command-index" aria-hidden="true">01 / OPERATIONS</div>
+        <div className="command-copy">
+          <div className="eyebrow"><span className="healthy-dot" /> Authorization boundary online</div>
+          <h1>Treasury command</h1>
+          <p>Govern agent spend from frozen intent to canonical Base evidence.</p>
           <div className="observation-meta">
             <span>Observed {snapshot.generatedAt}</span>
-            <span>Policy profile v14.2</span>
-            <span>Customer-controlled signers</span>
+            <span>Policy v14.2</span>
+            <span>4 external signers</span>
           </div>
         </div>
-        <div className="hero-actions">
+        <div className="command-actions">
           <div className="time-range" aria-label="Time range">
             {(["24h", "7d", "30d"] as const).map((item) => (
               <button aria-pressed={range === item} className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)} type="button">{item}</button>
@@ -252,11 +248,12 @@ function Overview({
         </div>
       </section>
 
-      <section className="money-grid" aria-label="Organization balance">
+      <section className="money-grid balance-ledger" aria-label="Organization balance">
         <div className="balance-card primary-balance">
-          <span>Total observed USDC</span>
+          <span>Observed treasury / USDC</span>
           <strong>{snapshot.money.total}</strong>
-          <small>Across 4 customer-controlled signers</small>
+          <small><i /> Read-only aggregate across customer-controlled signers</small>
+          <div className="balance-signal" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /></div>
         </div>
         <MoneyCard label="Available" value={snapshot.money.available} tone="good" />
         <MoneyCard label="Reserved" value={snapshot.money.reserved} tone="reserved" />
@@ -341,7 +338,7 @@ function Overview({
           <ActivityRows activity={snapshot.activity.slice(0, 4)} />
         </section>
       </div>
-      <p className="freshness">Snapshot refreshed {snapshot.generatedAt}. Preview records are illustrative and cannot move funds.</p>
+      <p className="freshness"><span>END OF OBSERVED WINDOW</span> Snapshot refreshed {snapshot.generatedAt}. Preview records are illustrative and cannot move funds.</p>
     </>
   );
 }

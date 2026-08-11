@@ -27,7 +27,7 @@ test("renders the FlowOps economic control room", async () => {
     html,
     /<meta name="twitter:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i,
   );
-  assert.match(html, /Every agent dollar/);
+  assert.match(html, /Treasury command/);
   assert.match(html, /Review 3 approvals/);
   assert.match(html, /Base Sepolia/);
   assert.match(html, /Preview data/);
