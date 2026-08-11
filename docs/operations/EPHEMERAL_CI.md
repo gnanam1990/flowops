@@ -13,6 +13,10 @@ owner's billing/spending hold.
   its filesystem is destroyed after the job.
 - The disposable Linux image must provide CA certificates, Git, and a C
   toolchain (`build-essential`) so Go race detection remains enabled.
+- Go dependency caching is disabled for the disposable runner. A 2026-08-11 PR
+  run installed Go successfully but then stalled in the Actions cache restore;
+  an ephemeral one-job filesystem provides no local-cache reuse worth making
+  that external cache service part of the merge gate.
 - The workflow has `contents: read`, checkout credential persistence is
   disabled, and no production, wallet, RPC, facilitator, or application secret
   is exposed to CI.

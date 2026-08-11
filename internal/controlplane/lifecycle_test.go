@@ -44,6 +44,14 @@ func (f *fakeFreeze) Check(context.Context, string, string, string) error {
 	return f.err
 }
 
+type healthyControlChain struct{}
+
+func (healthyControlChain) CheckChain(context.Context, uint64) error { return nil }
+
+type unavailableControlChain struct{ err error }
+
+func (g unavailableControlChain) CheckChain(context.Context, uint64) error { return g.err }
+
 type policyVersion struct {
 	mu      sync.RWMutex
 	version string
@@ -101,7 +109,7 @@ func newLifecycleForTest(t *testing.T, path string, clock *fakeClock, freeze *fa
 	}
 	publicKey, privateKey := controlKeys(t)
 	lifecycle, err := New(Config{
-		Policy: controlPolicy(t), ActivePolicyVersion: version.get, Journal: journal, FreezeGate: freeze,
+		Policy: controlPolicy(t), ActivePolicyVersion: version.get, Journal: journal, FreezeGate: freeze, ChainGate: healthyControlChain{},
 		Clock: clock.Now, ApprovalTTL: 10 * time.Minute, AuthorizationTTL: 5 * time.Minute,
 		RequestIDSource: ids.requestID, AuthorizationIDSource: ids.authorizationID, NonceSource: ids.nextNonce,
 		EnvelopeKeyID: "flowops_control_1", EnvelopePrivateKey: privateKey,
@@ -175,7 +183,7 @@ func TestApprovalIssueIsExactIdempotentAndRestartSafe(t *testing.T) {
 	}
 }
 
-func TestPolicyAndFreezeRecheckedBeforeIssuanceWithoutBurning(t *testing.T) {
+func TestPolicyFreezeAndChainRecheckedBeforeIssuanceWithoutBurning(t *testing.T) {
 	now := time.Date(2026, 8, 11, 14, 0, 0, 0, time.UTC)
 	clock, freeze, version, ids := &fakeClock{now: now}, &fakeFreeze{}, &policyVersion{version: "policy_7"}, &sources{}
 	lifecycle, journal, _ := newLifecycleForTest(t, filepath.Join(t.TempDir(), "control.log"), clock, freeze, version, ids)
@@ -197,6 +205,17 @@ func TestPolicyAndFreezeRecheckedBeforeIssuanceWithoutBurning(t *testing.T) {
 		t.Fatalf("failed gates wrote %d events, want only submit", got)
 	}
 	freeze.set(nil)
+	lifecycle.chainGate = unavailableControlChain{err: errors.New("Base head stale")}
+	if _, err := lifecycle.Issue(context.Background(), record.RequestID); err == nil || !strings.Contains(err.Error(), "chain unavailable") {
+		t.Fatalf("chain gate error = %v", err)
+	}
+	if got := len(journal.Events()); got != 1 {
+		t.Fatalf("chain gate wrote %d events, want only submit", got)
+	}
+	if ids.auth.Load() != 0 || ids.nonce.Load() != 0 {
+		t.Fatal("failed chain gate burned an authorization identity or nonce")
+	}
+	lifecycle.chainGate = healthyControlChain{}
 	if _, err := lifecycle.Issue(context.Background(), record.RequestID); err != nil {
 		t.Fatalf("failed gate burned issuance: %v", err)
 	}
