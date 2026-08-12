@@ -1,6 +1,6 @@
 # ADR-0014: Continuous Receipt and Finality Reconciliation
 
-Status: Accepted for capped Base Sepolia pilot  
+Status: Accepted for capped Base Sepolia pilot
 Date: 2026-08-12
 
 ## Context
@@ -38,6 +38,11 @@ queries the canonical block hash at the original height. Quorum agreement on the
 original hash is journaled as a positive finality check and ends routine polling.
 Quorum agreement on a different hash atomically appends an exact ledger reversal,
 reopens the execution, and moves chain state to `RECOVERING`.
+
+The positive checkpoint uses the existing `execution_resolved` journal event
+envelope with additive execution fields. This is deliberate rollback
+compatibility: the prior binary ignores those fields but can still replay and
+preserve the settled execution instead of refusing the journal.
 
 ## Failure posture
 

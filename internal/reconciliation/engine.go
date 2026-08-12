@@ -19,7 +19,6 @@ const (
 	eventChainStatus         = "chain_status"
 	eventExecutionBroadcast  = "execution_broadcast"
 	eventExecutionResolved   = "execution_resolved"
-	eventExecutionFinality   = "execution_finality"
 	eventExecutionReorged    = "execution_reorged"
 	eventExecutionQuarantine = "execution_quarantine"
 	eventLedgerPosted        = "ledger_posted"
@@ -497,7 +496,10 @@ func (e *Engine) ConfirmFinality(ctx context.Context, executionID string, eviden
 	confirmed := cloneExecution(execution)
 	confirmed.FinalityCheckedAt = &now
 	confirmed.FinalityCheckedHead = canonical.ObservedHead
-	event, err := e.journal.append(ctx, now, eventExecutionFinality, executionID, executionPayload{Execution: confirmed, Reorg: cloneReorgEvidence(evidence)})
+	// Reuse the existing resolved-event envelope so an older binary can safely
+	// replay a journal written by this version during an image rollback. Older
+	// readers ignore the additive finality fields and retain the settlement.
+	event, err := e.journal.append(ctx, now, eventExecutionResolved, executionID, executionPayload{Execution: confirmed, Reorg: cloneReorgEvidence(evidence)})
 	if err != nil {
 		return Execution{}, err
 	}
@@ -592,7 +594,7 @@ func (e *Engine) apply(event journalEvent) error {
 		}
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
 		e.executionByHash[payload.Execution.Expected.TransactionHash] = payload.Execution.Expected.ExecutionID
-	case eventExecutionResolved, eventExecutionReorged, eventExecutionFinality:
+	case eventExecutionResolved, eventExecutionReorged:
 		var payload executionPayload
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			return err
@@ -764,9 +766,6 @@ func (e *Engine) validateCanonicalBlockQuorum(execution Execution, evidence []Re
 	canonicalEvidence := evidence[0]
 	canonicalEvidence.ObservedHead = minimumHead
 	if e.status.LastTrusted == nil || e.status.LastTrusted.BlockNumber < execution.BlockNumber || e.status.LastTrusted.BlockNumber-execution.BlockNumber < e.config.ReorgLookback {
-		return ReorgEvidence{}, ErrUnsafeFinality
-	}
-	if minimumHead > e.status.LastTrusted.BlockNumber && minimumHead-e.status.LastTrusted.BlockNumber > e.config.MaxHeadSkew {
 		return ReorgEvidence{}, ErrUnsafeFinality
 	}
 	return canonicalEvidence, nil

@@ -205,6 +205,60 @@ func TestWorkerPersistsPositiveFinalityAndDoesNotPollItAgain(t *testing.T) {
 	}
 }
 
+func TestWorkerAcceptsCanonicalHeadAheadOfLastHealthSnapshot(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 13, 17, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "head-lag.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 120)
+	expected := testExpected()
+	if _, err := engine.RegisterBroadcast(context.Background(), expected); err != nil {
+		t.Fatal(err)
+	}
+	ledger := settlement(clock.Now(), expected.ExecutionID)
+	if _, err := engine.ReconcileReceipt(context.Background(), expected.ExecutionID, receiptQuorum(expected, 100, true), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	settled, _ := engine.Execution(expected.ExecutionID)
+	source := &workerSource{blocks: map[string]ReorgResult{
+		expected.ExecutionID: {Evidence: canonicalBlockEvidence(settled, settled.BlockHash, 125)},
+	}}
+	cycle, err := testWorker(t, source, engine, clock).RunOnce(context.Background())
+	if err != nil || cycle.FinalityConfirmed != 1 || cycle.Deferred != 0 {
+		t.Fatalf("normal head advance was not reconciled: cycle=%+v err=%v", cycle, err)
+	}
+}
+
+func TestFinalityCheckpointUsesRollbackCompatibleJournalEvent(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 13, 18, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "rollback.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 120)
+	expected := testExpected()
+	if _, err := engine.RegisterBroadcast(context.Background(), expected); err != nil {
+		t.Fatal(err)
+	}
+	ledger := settlement(clock.Now(), expected.ExecutionID)
+	if _, err := engine.ReconcileReceipt(context.Background(), expected.ExecutionID, receiptQuorum(expected, 100, true), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	settled, _ := engine.Execution(expected.ExecutionID)
+	if _, err := engine.ConfirmFinality(context.Background(), expected.ExecutionID, canonicalBlockEvidence(settled, settled.BlockHash, 120)); err != nil {
+		t.Fatal(err)
+	}
+	events := engine.journal.Events()
+	if got := events[len(events)-1].Kind; got != eventExecutionResolved {
+		t.Fatalf("finality journal kind = %q, want rollback-compatible %q", got, eventExecutionResolved)
+	}
+}
+
 func TestWorkerReorgAtomicallyReversesSettlement(t *testing.T) {
 	t.Parallel()
 	clock := &testClock{now: time.Date(2026, 8, 12, 13, 20, 0, 0, time.UTC)}
