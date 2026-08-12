@@ -56,6 +56,12 @@ Future economic mutations must use a separate step-up session and return a
 durable command reference and authoritative result rather than mutating
 dashboard state optimistically.
 
+`GET /api/flowops/enrollment` is the owner bootstrap bridge. For an
+authenticated Sites viewer it returns the configured project ID, Sites email,
+and derived SHA-256 site-user key. It is non-cacheable, never returns the raw
+Sites user ID, and grants no FlowOps access by itself. The endpoint returns 401
+without Sites identity and 503 until the project binding is configured.
+
 ## Failure states
 
 - Missing Sites identity: render anonymous preview; do not infer membership.
@@ -81,9 +87,10 @@ make smoke-dashboard
 ```
 
 The rendered tests verify core FlowOps content, dynamic metadata, the full
-server-side identity exchange, live field mapping, tenant-ID agreement, absence
-of credentials in HTML, removal of starter content, and absence of fake success
-claims. The production dependency graph must contain no high severity advisory.
+server-side identity exchange, derived enrollment-code isolation, live field
+mapping, tenant-ID agreement, absence of credentials in HTML, removal of
+starter content, and absence of fake success claims. The production dependency
+graph must contain no high severity advisory.
 
 The vinext development tool currently depends on an `image-size` release with a
 high-severity denial-of-service advisory. It is excluded from the production

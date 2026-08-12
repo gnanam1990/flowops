@@ -4,16 +4,40 @@ import test from "node:test";
 
 let workerPromise;
 
-async function render({ headers = {}, env = {} } = {}) {
+async function render({ path = "/", headers = {}, env = {} } = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerPromise ??= import(workerUrl.href).then((module) => module.default);
   const worker = await workerPromise;
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html", ...headers } }),
+    new Request(`http://localhost${path}`, { headers: { accept: "text/html", ...headers } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ...env },
     { waitUntil() {}, passThroughOnException() {} },
   );
 }
+
+test("returns only a derived owner enrollment code from authenticated Sites identity", async () => {
+  const anonymous = await render({
+    path: "/api/flowops/enrollment",
+    env: { FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test" },
+  });
+  assert.equal(anonymous.status, 401);
+
+  const response = await render({
+    path: "/api/flowops/enrollment",
+    headers: {
+      "oai-authenticated-user-id": "sites-user-opaque",
+      "oai-authenticated-user-email": "owner@example.com",
+    },
+    env: { FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test" },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const enrollment = await response.json();
+  assert.equal(enrollment.siteProjectId, "appgprj_flowops_test");
+  assert.equal(enrollment.email, "owner@example.com");
+  assert.match(enrollment.siteUserKey, /^[0-9a-f]{64}$/);
+  assert.doesNotMatch(JSON.stringify(enrollment), /sites-user-opaque/);
+});
 
 test("renders the FlowOps economic control room", async () => {
   const response = await render();
