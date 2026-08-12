@@ -2,6 +2,9 @@ package reconciliation
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +13,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
 const (
@@ -125,6 +131,35 @@ func testExpected() ExpectedExecution {
 	}
 }
 
+func testBroadcastAttestation(t *testing.T, expected ExpectedExecution, broadcastAt time.Time) BroadcastAttestation {
+	t.Helper()
+	seed, err := hex.DecodeString(strings.Repeat("29", ed25519.SeedSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	authorization := envelope.Authorization{
+		Version: envelope.Version, AuthorizationID: "auth_1", OrganizationID: expected.OrganizationID, CustomerID: "customer_acme",
+		AgentID: expected.AgentID, TaskID: expected.TaskID, ActionID: "action_1", Rail: envelope.RailDirect,
+		ChainID: expected.ChainID, Recipient: expected.Recipient, Asset: expected.Asset, AmountAtomic: expected.AmountAtomic,
+		Resource: "direct USDC transfer", PolicyVersion: "policy_1", Nonce: testHash(898),
+		IssuedAt: broadcastAt.Add(-time.Minute).Unix(), ExpiresAt: broadcastAt.Add(time.Minute).Unix(),
+	}
+	authorizationDigest, err := authorization.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := broadcastreceipt.Sign(broadcastreceipt.Receipt{
+		Version: broadcastreceipt.Version, OrganizationID: expected.OrganizationID, CustomerID: "customer_acme",
+		AuthorizationID: authorization.AuthorizationID, AuthorizationDigest: "0x" + hex.EncodeToString(authorizationDigest[:]), TransactionHash: expected.TransactionHash,
+		Sender: expected.Sender, Outcome: broadcastreceipt.OutcomeAmbiguous, BroadcastAt: broadcastAt.Unix(),
+	}, "customer_signer_1", privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return BroadcastAttestation{SignedReceipt: signed, Authorization: authorization, PublicKeyB64: base64.StdEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey))}
+}
+
 func receiptQuorum(expected ExpectedExecution, block uint64, success bool) []ReceiptEvidence {
 	receipt := ReceiptEvidence{
 		ChainID: expected.ChainID, TransactionHash: expected.TransactionHash, BlockNumber: block,
@@ -134,6 +169,189 @@ func receiptQuorum(expected ExpectedExecution, block uint64, success bool) []Rec
 	alpha, beta := receipt, receipt
 	alpha.Provider, beta.Provider = "rpc_alpha", "rpc_beta"
 	return []ReceiptEvidence{alpha, beta}
+}
+
+func TestAttestedBroadcastRegistersDuringHaltAndSurvivesRestart(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "reconciliation.log")
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	broadcastAt := clock.Now().Add(-time.Second)
+	expected := testExpected()
+	attestation := testBroadcastAttestation(t, expected, broadcastAt)
+	execution, err := engine.RegisterAttestedBroadcast(context.Background(), expected, attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.State != ExecutionPendingChainRecovery || !execution.BroadcastAt.Equal(broadcastAt) {
+		t.Fatalf("halt registration = %+v", execution)
+	}
+	if _, err := engine.RegisterBroadcast(context.Background(), ExpectedExecution{ExecutionID: "exec_other", OrganizationID: expected.OrganizationID, AgentID: expected.AgentID, TaskID: expected.TaskID, IntentDigest: expected.IntentDigest, TransactionHash: testHash(902), ChainID: expected.ChainID, Sender: expected.Sender, Asset: expected.Asset, Recipient: expected.Recipient, AmountAtomic: expected.AmountAtomic}); !errors.Is(err, ErrChainUnavailable) {
+		t.Fatalf("ordinary broadcast during halt = %v", err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	replayed, err := restarted.RegisterAttestedBroadcast(context.Background(), expected, attestation)
+	if err != nil || replayed.State != ExecutionPendingChainRecovery || !replayed.BroadcastAt.Equal(broadcastAt) || replayed.BroadcastAttestation == nil || !equalJSON(*replayed.BroadcastAttestation, attestation) {
+		t.Fatalf("replayed registration = %+v, %v", replayed, err)
+	}
+}
+
+func TestAttestedBroadcastRejectsAuthorizationAndHashConflicts(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	expected := testExpected()
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, testBroadcastAttestation(t, expected, clock.Now())); err != nil {
+		t.Fatal(err)
+	}
+	changedHash := expected
+	changedHash.TransactionHash = testHash(902)
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), changedHash, testBroadcastAttestation(t, changedHash, clock.Now())); !errors.Is(err, ErrConflict) {
+		t.Fatalf("authorization rebound to another hash: %v", err)
+	}
+	changedExecution := expected
+	changedExecution.ExecutionID = "exec_other"
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), changedExecution, testBroadcastAttestation(t, changedExecution, clock.Now())); !errors.Is(err, ErrConflict) {
+		t.Fatalf("hash rebound to another execution: %v", err)
+	}
+}
+
+func TestAttestedBroadcastEngineRejectsUnverifiedProof(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	expected := testExpected()
+	attestation := testBroadcastAttestation(t, expected, clock.Now())
+	attestation.SignedReceipt.Signature = "0x" + strings.Repeat("0", 128)
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, attestation); err == nil {
+		t.Fatal("engine accepted an unverified customer attestation")
+	}
+	if len(engine.Executions()) != 0 {
+		t.Fatal("invalid attestation changed reconciliation state")
+	}
+}
+
+func TestAttestedBroadcastEngineRejectsAuthorizationFieldSubstitution(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	expected := testExpected()
+	for name, mutate := range map[string]func(*ExpectedExecution){
+		"agent":     func(value *ExpectedExecution) { value.AgentID = "agent_other" },
+		"task":      func(value *ExpectedExecution) { value.TaskID = "task_other" },
+		"chain":     func(value *ExpectedExecution) { value.ChainID = 8453 },
+		"asset":     func(value *ExpectedExecution) { value.Asset = "0x3333333333333333333333333333333333333333" },
+		"recipient": func(value *ExpectedExecution) { value.Recipient = "0x3333333333333333333333333333333333333333" },
+		"amount":    func(value *ExpectedExecution) { value.AmountAtomic = "101" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := expected
+			mutate(&changed)
+			if _, err := engine.RegisterAttestedBroadcast(context.Background(), changed, testBroadcastAttestation(t, expected, clock.Now())); err == nil {
+				t.Fatal("authorization field substitution reached reconciliation")
+			}
+		})
+	}
+	if len(engine.Executions()) != 0 {
+		t.Fatal("substitution attempts changed reconciliation state")
+	}
+}
+
+func TestAttestedBroadcastEngineRejectsProtocolRailSubstitution(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	expected := testExpected()
+	attestation := testBroadcastAttestation(t, expected, clock.Now())
+	attestation.Authorization.Rail = envelope.RailX402
+	digest, err := attestation.Authorization.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := attestation.SignedReceipt.Receipt
+	receipt.AuthorizationDigest = "0x" + hex.EncodeToString(digest[:])
+	seed, _ := hex.DecodeString(strings.Repeat("29", ed25519.SeedSize))
+	attestation.SignedReceipt, err = broadcastreceipt.Sign(receipt, "customer_signer_1", ed25519.NewKeyFromSeed(seed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, attestation); err == nil {
+		t.Fatal("x402 authorization entered the direct-USDC reconciler")
+	}
+}
+
+func TestAttestationSurvivesLegacyResolutionAfterRollback(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "reconciliation.log")
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := testExpected()
+	attestation := testBroadcastAttestation(t, expected, clock.Now())
+	execution, err := engine.RegisterAttestedBroadcast(context.Background(), expected, attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an older rollback binary: it ignored the additive attestation
+	// field, then appended a terminal execution using its legacy schema.
+	legacyJournal, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyResolution := execution
+	legacyResolution.BroadcastAttestation = nil
+	legacyResolution.State = ExecutionReverted
+	resolvedAt := clock.Now().Add(time.Second)
+	legacyResolution.ResolvedAt = &resolvedAt
+	legacyResolution.Resolution = "transaction reverted"
+	if _, err := legacyJournal.append(context.Background(), resolvedAt, eventExecutionResolved, expected.ExecutionID, executionPayload{Execution: legacyResolution}); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacyJournal.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	resolved, ok := restarted.Execution(expected.ExecutionID)
+	if !ok || resolved.State != ExecutionReverted || resolved.BroadcastAttestation == nil || !equalJSON(*resolved.BroadcastAttestation, attestation) {
+		t.Fatalf("legacy resolution lost proof: %+v exists=%v", resolved, ok)
+	}
 }
 
 func settlement(now time.Time, executionID string) LedgerTransaction {

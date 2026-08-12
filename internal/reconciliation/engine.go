@@ -303,6 +303,47 @@ func (e *Engine) RegisterBroadcast(ctx context.Context, expected ExpectedExecuti
 	return cloneExecution(execution), nil
 }
 
+// RegisterAttestedBroadcast records a transaction that the customer-controlled
+// signer may already have submitted. Unlike RegisterBroadcast, it must remain
+// available after Base becomes unhealthy: refusing the callback would discard
+// the only durable handle for an ambiguous payment. An unhealthy chain places
+// the execution directly into PENDING_CHAIN_RECOVERY.
+func (e *Engine) RegisterAttestedBroadcast(ctx context.Context, expected ExpectedExecution, attestation BroadcastAttestation) (Execution, error) {
+	if err := expected.validate(e.config.ChainID); err != nil {
+		return Execution{}, err
+	}
+	if err := attestation.validate(expected); err != nil {
+		return Execution{}, err
+	}
+	broadcastAt := time.Unix(attestation.SignedReceipt.Receipt.BroadcastAt, 0).UTC()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if existing, ok := e.executions[expected.ExecutionID]; ok {
+		if equalJSON(existing.Expected, expected) {
+			return cloneExecution(existing), nil
+		}
+		return Execution{}, ErrConflict
+	}
+	if other, ok := e.executionByHash[expected.TransactionHash]; ok && other != expected.ExecutionID {
+		return Execution{}, ErrConflict
+	}
+	now := e.config.Clock().UTC()
+	state := ExecutionBroadcast
+	if !e.chainUsable(now) {
+		state = ExecutionPendingChainRecovery
+	}
+	attestationCopy := attestation
+	execution := Execution{Expected: expected, State: state, BroadcastAt: broadcastAt, BroadcastAttestation: &attestationCopy}
+	event, err := e.journal.append(ctx, now, eventExecutionBroadcast, expected.ExecutionID, executionPayload{Execution: execution})
+	if err != nil {
+		return Execution{}, err
+	}
+	if err := e.apply(event); err != nil {
+		return Execution{}, err
+	}
+	return cloneExecution(execution), nil
+}
+
 func (e *Engine) ReconcileReceipt(ctx context.Context, executionID string, evidence []ReceiptEvidence, settlement *LedgerTransaction) (Execution, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -595,11 +636,17 @@ func (e *Engine) apply(event journalEvent) error {
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			return err
 		}
+		if err := e.preserveBroadcastAttestation(&payload.Execution); err != nil {
+			return err
+		}
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
 		e.executionByHash[payload.Execution.Expected.TransactionHash] = payload.Execution.Expected.ExecutionID
 	case eventExecutionResolved, eventExecutionReorged:
 		var payload executionPayload
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		if err := e.preserveBroadcastAttestation(&payload.Execution); err != nil {
 			return err
 		}
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
@@ -618,6 +665,28 @@ func (e *Engine) apply(event journalEvent) error {
 		e.applyLedger(payload.Transaction)
 	default:
 		return fmt.Errorf("unsupported reconciliation event kind %q", event.Kind)
+	}
+	return nil
+}
+
+// preserveBroadcastAttestation makes additive proof fields rollback tolerant.
+// An older binary ignores the proof while replaying the original broadcast and
+// can later append a resolution without it. The original event remains in the
+// journal, so a newer binary must carry that proof through later legacy events.
+func (e *Engine) preserveBroadcastAttestation(next *Execution) error {
+	if next == nil {
+		return nil
+	}
+	if next.BroadcastAttestation == nil {
+		if current, ok := e.executions[next.Expected.ExecutionID]; ok && current.BroadcastAttestation != nil {
+			attestation := *current.BroadcastAttestation
+			next.BroadcastAttestation = &attestation
+		}
+	}
+	if next.BroadcastAttestation != nil {
+		if err := next.BroadcastAttestation.validate(next.Expected); err != nil {
+			return fmt.Errorf("execution broadcast attestation: %w", err)
+		}
 	}
 	return nil
 }
@@ -894,6 +963,10 @@ func cloneStatus(status ChainStatus) ChainStatus {
 }
 
 func cloneExecution(execution Execution) Execution {
+	if execution.BroadcastAttestation != nil {
+		attestation := *execution.BroadcastAttestation
+		execution.BroadcastAttestation = &attestation
+	}
 	if execution.ResolvedAt != nil {
 		resolvedAt := *execution.ResolvedAt
 		execution.ResolvedAt = &resolvedAt

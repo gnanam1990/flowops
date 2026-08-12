@@ -17,6 +17,7 @@ import (
 
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 )
 
 const (
@@ -39,6 +40,7 @@ type ServerConfig struct {
 	CommandCompletionTimeout time.Duration
 	SiteSessions             *SiteSessionCodec
 	OperatorControlKey       []byte
+	SignerBroadcasts         BroadcastRegistrar
 }
 
 type Server struct {
@@ -50,6 +52,7 @@ type Server struct {
 	commandCompletionTimeout time.Duration
 	siteSessions             *SiteSessionCodec
 	operatorControlKey       []byte
+	signerBroadcasts         BroadcastRegistrar
 	handler                  http.Handler
 }
 
@@ -75,6 +78,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		store: cfg.Store, lifecycle: cfg.Lifecycle, chain: cfg.Chain, clock: clock, idSource: idSource,
 		commandCompletionTimeout: completionTimeout, siteSessions: cfg.SiteSessions,
 		operatorControlKey: append([]byte(nil), cfg.OperatorControlKey...),
+		signerBroadcasts:   cfg.SignerBroadcasts,
 	}
 	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
 		return nil, errors.New("operator control key must contain exactly 32 bytes")
@@ -89,6 +93,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST /v1/agents/{agentID}/pause", s.authenticate(http.HandlerFunc(s.handlePauseAgent)))
 	mux.Handle("GET /v1/commands/{commandID}", s.authenticate(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("GET /v1/dashboard/snapshot", s.authenticate(http.HandlerFunc(s.handleDashboardSnapshot)))
+	mux.HandleFunc("POST /v1/signer/broadcasts", s.handleSignerBroadcast)
 	if len(s.operatorControlKey) == 32 {
 		mux.Handle("POST /v1/operator/chain/halt", s.authenticateOperator(http.HandlerFunc(s.handleOperatorHalt)))
 		mux.Handle("POST /v1/operator/chain/resume", s.authenticateOperator(http.HandlerFunc(s.handleOperatorResume)))
@@ -210,6 +215,30 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"readyForManualResume": status.ReadyForManualResume,
 		"lastTrusted":          status.LastTrusted,
 	})
+}
+
+func (s *Server) handleSignerBroadcast(w http.ResponseWriter, r *http.Request) {
+	if s.signerBroadcasts == nil {
+		writeError(w, http.StatusServiceUnavailable, "SIGNER_BROADCASTS_UNAVAILABLE", errors.New("customer signer broadcast registration is unavailable"), true, "")
+		return
+	}
+	var signed broadcastreceipt.SignedReceipt
+	if err := decodeJSON(w, r, &signed); err != nil {
+		return
+	}
+	execution, err := s.signerBroadcasts.Register(r.Context(), signed)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrBroadcastKeyUnknown), errors.Is(err, ErrBroadcastSignature):
+			writeError(w, http.StatusUnauthorized, "INVALID_SIGNER_RECEIPT", errors.New("signer receipt authentication failed"), false, "")
+		case errors.Is(err, ErrBroadcastBinding), errors.Is(err, ErrBroadcastTime), errors.Is(err, ErrBroadcastRail), errors.Is(err, reconciliation.ErrConflict):
+			writeError(w, http.StatusConflict, "BROADCAST_BINDING_REJECTED", err, false, "")
+		default:
+			writeError(w, http.StatusServiceUnavailable, "BROADCAST_REGISTRATION_UNRESOLVED", err, true, "")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"execution": execution})
 }
 
 type operatorHaltRequest struct {

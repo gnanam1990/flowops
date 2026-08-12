@@ -1,6 +1,8 @@
 # Base reconciliation and halt-safety module
 
-Status: production observer and receipt/finality worker wiring implemented; signer registration, dedicated provider selection, and Sepolia measurement remain open
+Status: production observer, signer receipt registration, and receipt/finality
+worker wiring implemented; dedicated provider selection and Sepolia measurement
+remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
@@ -74,6 +76,21 @@ The settlement ledger transaction is written in the same durable event as the re
 
 If the configured quorum later reports a different canonical hash at the original settlement height beyond the reorg lookback, FlowOps atomically reopens the execution, appends an exact correction that reverses the prior ledger entry, enters `RECOVERING`, and requires a fresh canonical outcome or quarantine before manual resume. The original settlement and its timestamps remain in the journal.
 
+The customer signer registers a domain-separated signed broadcast receipt at
+`POST /v1/signer/broadcasts`. FlowOps resolves the durable authorization and
+derives the expected organization, agent, task, intent, chain, asset, recipient,
+and amount itself; the signer supplies only its signed transaction hash, sender,
+outcome, and broadcast time. One authorization deterministically maps to one
+execution. A callback arriving after a chain halt is retained as
+`PENDING_CHAIN_RECOVERY`, because the wallet may already have submitted it.
+This intake is restricted to `direct_usdc`; x402 facilitator settlements and
+escrow calls require their own protocol-aware registration and event decoders.
+The hash-chained execution event preserves the exact authorization, signed
+receipt, and verifying public key. The reconciliation engine independently
+recomputes the authorization digest, re-verifies the signature, and matches all
+executable economic fields before accepting the event. Key removal stops new
+callbacks but does not erase historical proof.
+
 The runtime worker scans only journaled `BROADCAST` and
 `PENDING_CHAIN_RECOVERY` executions; it cannot create a payment attempt and
 never rebroadcasts one. Missing receipts, timeouts, partial responses, and
@@ -103,7 +120,9 @@ capped pilot and require operator incident handling.
 ## Halt invariants
 
 - No new executable authorization or signer approval while the state is not `HEALTHY`.
-- No new broadcast registration while paused.
+- No FlowOps-authorized new wallet broadcast while paused. A cryptographically
+  attested callback for a transaction that may already have been submitted is
+  still journaled directly as `PENDING_CHAIN_RECOVERY`.
 - No stale settlement or wall-clock refund recognition.
 - No blind rebroadcast: an identical registration returns the existing ambiguous execution.
 - A customer-signer authorization issued before the latest healthy recovery epoch is refused and must be re-evaluated and reissued.
@@ -113,7 +132,7 @@ capped pilot and require operator incident handling.
 ## Verification
 
 ```sh
-go test -race ./internal/reconciliation ./internal/controlplane ./pkg/referencesigner
+go test -race ./internal/reconciliation ./internal/controlplane ./internal/controlapi ./pkg/referencesigner ./pkg/broadcastreceipt
 make smoke-reconciliation
 ```
 
@@ -140,9 +159,10 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
 - add contract-specific escrow event reconciliation after the escrow state machine is finalized;
 - add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
-- connect the customer signer receipt to `RegisterBroadcast`; the deployed
-  no-funds pilot worker is intentionally idle until a cryptographically bound
-  signer adapter supplies expected transaction data;
+- implement the customer-side one-way transaction executor and concrete EOA/HSM
+  wallet adapters; the deployed no-funds pilot worker remains idle until a
+  design partner provisions a signer receipt public key and supplies a real
+  transaction;
 - expose status, exceptions, backfill progress, and manual gates in the dashboard;
 - execute the live halt/recovery acceptance run with the customer signer and a real Sepolia transaction.
 

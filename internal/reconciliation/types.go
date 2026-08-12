@@ -1,12 +1,18 @@
 package reconciliation
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
 type ChainState string
@@ -202,18 +208,61 @@ type ReceiptEvidence struct {
 }
 
 type Execution struct {
-	Expected                ExpectedExecution `json:"expected"`
-	State                   ExecutionState    `json:"state"`
-	BroadcastAt             time.Time         `json:"broadcastAt"`
-	ResolvedAt              *time.Time        `json:"resolvedAt,omitempty"`
-	BlockNumber             uint64            `json:"blockNumber,omitempty"`
-	BlockHash               string            `json:"blockHash,omitempty"`
-	Resolution              string            `json:"resolution,omitempty"`
-	LedgerTransactionID     string            `json:"ledgerTransactionId,omitempty"`
-	CorrectionTransactionID string            `json:"correctionTransactionId,omitempty"`
-	ReorgEvidenceDigest     string            `json:"reorgEvidenceDigest,omitempty"`
-	FinalityCheckedAt       *time.Time        `json:"finalityCheckedAt,omitempty"`
-	FinalityCheckedHead     uint64            `json:"finalityCheckedHead,omitempty"`
+	Expected                ExpectedExecution     `json:"expected"`
+	State                   ExecutionState        `json:"state"`
+	BroadcastAt             time.Time             `json:"broadcastAt"`
+	BroadcastAttestation    *BroadcastAttestation `json:"broadcastAttestation,omitempty"`
+	ResolvedAt              *time.Time            `json:"resolvedAt,omitempty"`
+	BlockNumber             uint64                `json:"blockNumber,omitempty"`
+	BlockHash               string                `json:"blockHash,omitempty"`
+	Resolution              string                `json:"resolution,omitempty"`
+	LedgerTransactionID     string                `json:"ledgerTransactionId,omitempty"`
+	CorrectionTransactionID string                `json:"correctionTransactionId,omitempty"`
+	ReorgEvidenceDigest     string                `json:"reorgEvidenceDigest,omitempty"`
+	FinalityCheckedAt       *time.Time            `json:"finalityCheckedAt,omitempty"`
+	FinalityCheckedHead     uint64                `json:"finalityCheckedHead,omitempty"`
+}
+
+// BroadcastAttestation preserves the exact customer proof accepted when an
+// already-submitted transaction entered reconciliation. The public key is
+// evidence, not current authority; current acceptance still comes from the
+// control-plane's tenant-scoped key registry.
+type BroadcastAttestation struct {
+	SignedReceipt broadcastreceipt.SignedReceipt `json:"signedReceipt"`
+	Authorization envelope.Authorization         `json:"authorization"`
+	PublicKeyB64  string                         `json:"publicKeyB64"`
+}
+
+func (a BroadcastAttestation) validate(expected ExpectedExecution) error {
+	publicKey, err := base64.StdEncoding.DecodeString(a.PublicKeyB64)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize || a.PublicKeyB64 != base64.StdEncoding.EncodeToString(publicKey) {
+		return errors.New("broadcast attestation public key is invalid")
+	}
+	if err := broadcastreceipt.Verify(a.SignedReceipt, ed25519.PublicKey(publicKey)); err != nil {
+		return fmt.Errorf("broadcast attestation signature: %w", err)
+	}
+	receipt := a.SignedReceipt.Receipt
+	authorizationDigest, err := a.Authorization.Digest()
+	if err != nil {
+		return fmt.Errorf("broadcast authorization: %w", err)
+	}
+	canonicalAuthorizationDigest := "0x" + hex.EncodeToString(authorizationDigest[:])
+	if receipt.AuthorizationID != a.Authorization.AuthorizationID || receipt.AuthorizationDigest != canonicalAuthorizationDigest || receipt.OrganizationID != a.Authorization.OrganizationID || receipt.CustomerID != a.Authorization.CustomerID {
+		return errors.New("broadcast receipt does not match its authorization")
+	}
+	if a.Authorization.Rail != envelope.RailDirect {
+		return errors.New("broadcast attestation requires a direct_usdc authorization")
+	}
+	broadcastAt := time.Unix(receipt.BroadcastAt, 0)
+	if broadcastAt.Before(time.Unix(a.Authorization.IssuedAt, 0)) || !broadcastAt.Before(time.Unix(a.Authorization.ExpiresAt, 0)) {
+		return errors.New("broadcast receipt time is outside its authorization window")
+	}
+	if receipt.OrganizationID != expected.OrganizationID || receipt.TransactionHash != expected.TransactionHash || receipt.Sender != expected.Sender ||
+		a.Authorization.OrganizationID != expected.OrganizationID || a.Authorization.AgentID != expected.AgentID || a.Authorization.TaskID != expected.TaskID ||
+		a.Authorization.ChainID != expected.ChainID || a.Authorization.Asset != expected.Asset || a.Authorization.Recipient != expected.Recipient || a.Authorization.AmountAtomic != expected.AmountAtomic {
+		return errors.New("broadcast attestation does not match expected execution")
+	}
+	return nil
 }
 
 type ReorgEvidence struct {

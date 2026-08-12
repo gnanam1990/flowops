@@ -369,7 +369,7 @@ func testLifecycleWithClock(t *testing.T, store Store, chain *mutableChain, cloc
 	t.Helper()
 	engine, err := policy.Compile(policy.Config{
 		Version: "policy_1", Enabled: true, AllowedChainIDs: []uint64{84532},
-		AllowedRails: []envelope.Rail{envelope.RailX402}, AllowedAssets: []string{testUSDC},
+		AllowedRails: []envelope.Rail{envelope.RailX402, envelope.RailDirect}, AllowedAssets: []string{testUSDC},
 		AllowedRecipients: []string{testRecipient}, PerActionLimitAtomic: "200",
 		AutoApproveThresholdAtomic: "100", TaskBudgetAtomic: "1000", DailyBudgetAtomic: "1000",
 	})

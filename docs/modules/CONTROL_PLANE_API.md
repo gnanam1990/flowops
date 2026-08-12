@@ -37,6 +37,12 @@ credential can act only for its bound agent, and an intent's customer identity
 must equal that agent's registered customer signer. Cross-tenant or
 cross-customer identifiers are reported as not found.
 
+Customer signer broadcast intake is a third, non-browser entry flow. It uses a
+customer-key-signed receipt rather than a bearer credential. The server scopes
+the public key to organization, customer, and key ID, then derives all economic
+facts from the already-issued authorization before creating reconciliation
+state. It never accepts a raw transaction or wallet key.
+
 ## Endpoints
 
 | Method | Route | Permission | Result |
@@ -50,6 +56,11 @@ cross-customer identifiers are reported as not found.
 | `POST` | `/v1/agents/{agentID}/pause` | Admin or Owner plus step-up | Durable pause and audit record |
 | `GET` | `/v1/commands/{commandID}` | organization member; agents see only their commands | Authoritative command outcome |
 | `GET` | `/v1/dashboard/snapshot` | human organization member | Live tenant-scoped agents, approvals, and chain state |
+| `POST` | `/v1/signer/broadcasts` | customer signer receipt signature | Authorization-bound expected execution awaiting Base reconciliation |
+
+Signer broadcast intake currently accepts only `direct_usdc` authorizations.
+x402 facilitator responses and escrow calls are not routed through the direct
+USDC receipt worker.
 
 ## Persistence
 
@@ -95,6 +106,11 @@ the live view.
   with `ErrJournalStale` and must replay from PostgreSQL before serving writes.
 - Sites project, user, email, exchange credential, membership, role, or session
   substitution: generic `UNAUTHENTICATED`; no organization existence is leaked.
+- Unknown signer receipt key or bad signature: `INVALID_SIGNER_RECEIPT`.
+- Receipt/authorization, tenant, customer, time, execution, or transaction-hash
+  substitution: `BROADCAST_BINDING_REJECTED`; no reconciliation state changes.
+- No configured customer signer public keys:
+  `SIGNER_BROADCASTS_UNAVAILABLE`; the endpoint is fail-closed.
 
 ## Verification
 
@@ -114,6 +130,9 @@ event replay, audited pause transactions, JSON command results, and
 concurrent-writer journal refusal. Sites tests additionally cover project/user/
 email substitution, session tampering and expiry, membership revocation,
 organization-bound snapshot reads, and absence of step-up authority.
+Signer receipt tests additionally cover every signed-field mutation, key and
+tenant scoping, exact authorization derivation, future/expired timestamps,
+halted-chain intake, idempotency conflict, and restart replay.
 
 ## Remaining live gates
 
@@ -141,6 +160,12 @@ and versions are loaded from the active PostgreSQL policy row for the governed
 agent; they are not shared process-wide environment variables.
 `FLOWOPS_SITE_SESSION_KEY_B64` must encode exactly 32 random bytes and must be
 stored separately from the FlowOps envelope key.
+
+`FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` is optional. When present it is a strict
+array of `organizationId`, `customerId`, `keyId`, and `publicKeyB64`; the last
+field must contain exactly one 32-byte Ed25519 public key. Private-key-shaped
+material, missing/unknown/duplicate fields, and duplicate scoped identities are
+rejected at startup. When absent, signer broadcast intake remains unavailable.
 
 `cmd/flowops-admin` provides strict-stdin, transactionally audited owner
 bootstrap and exchange-token rotation. The container posture, deployment

@@ -54,6 +54,7 @@ The API service requires:
 | `FLOWOPS_BASE_OBSERVATION_MAX_AGE` | Maximum trusted observer-heartbeat age |
 | `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` | Maximum tolerated future timestamp skew |
 | `FLOWOPS_OPERATOR_CONTROL_KEY_B64` | Exactly 32 random bytes, base64; global halt/resume authority |
+| `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
 
 Do not set `FLOWOPS_CONTROL_ADDR` on the selected runtime; `PORT` produces the
 required `0.0.0.0:PORT` listener and still requires explicit trusted-proxy
@@ -62,6 +63,14 @@ mode. Apply migrations with a transient privileged database credential through
 then run the API with `FLOWOPS_APPLY_MIGRATIONS=false`. The default remains
 `true` for local development and upgrades must not rely on that default. Do not
 place secret-bearing URLs or tokens in process arguments.
+
+Signer receipt keys are public material but remain tenant-scoped security
+configuration. Each JSON item must contain exactly `organizationId`,
+`customerId`, `keyId`, and a base64-encoded 32-byte Ed25519 `publicKeyB64`.
+Never place a customer wallet key, attestation private key, seed, raw
+transaction, or keystore in this variable. Leaving it unset keeps
+`POST /v1/signer/broadcasts` fail-closed with no effect on the no-funds health
+or observer runtime.
 
 ## Base observer activation and manual release
 
