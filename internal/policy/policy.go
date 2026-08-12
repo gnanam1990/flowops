@@ -39,18 +39,18 @@ const (
 )
 
 type Config struct {
-	Version                    string
-	Enabled                    bool
-	AllowedChainIDs            []uint64
-	AllowedRails               []envelope.Rail
-	AllowedAssets              []string
-	AllowedRecipients          []string
-	BlockedCategories          []string
-	ApprovalRequiredRails      []envelope.Rail
-	PerActionLimitAtomic       string
-	AutoApproveThresholdAtomic string
-	TaskBudgetAtomic           string
-	DailyBudgetAtomic          string
+	Version                    string          `json:"version"`
+	Enabled                    bool            `json:"enabled"`
+	AllowedChainIDs            []uint64        `json:"allowedChainIds"`
+	AllowedRails               []envelope.Rail `json:"allowedRails"`
+	AllowedAssets              []string        `json:"allowedAssets"`
+	AllowedRecipients          []string        `json:"allowedRecipients"`
+	BlockedCategories          []string        `json:"blockedCategories"`
+	ApprovalRequiredRails      []envelope.Rail `json:"approvalRequiredRails"`
+	PerActionLimitAtomic       string          `json:"perActionLimitAtomic"`
+	AutoApproveThresholdAtomic string          `json:"autoApproveThresholdAtomic"`
+	TaskBudgetAtomic           string          `json:"taskBudgetAtomic"`
+	DailyBudgetAtomic          string          `json:"dailyBudgetAtomic"`
 }
 
 type Intent struct {

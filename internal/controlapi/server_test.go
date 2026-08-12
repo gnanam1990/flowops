@@ -1,0 +1,450 @@
+package controlapi
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/gnanam1990/flowops/internal/controlplane"
+	"github.com/gnanam1990/flowops/internal/policy"
+	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/pkg/envelope"
+)
+
+const (
+	testUSDC      = "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+	testRecipient = "0x1111111111111111111111111111111111111111"
+	agentTokenA   = "fo_sbx_agent_a_000000000000000000000001"
+	ownerTokenA   = "fo_sbx_owner_a_000000000000000000000001"
+	approverToken = "fo_sbx_approver_000000000000000000000001"
+	weakTokenA    = "fo_sbx_weak_a_000000000000000000000001"
+	viewerTokenB  = "fo_sbx_viewer_b_000000000000000000000001"
+)
+
+type memoryStore struct {
+	mu          sync.Mutex
+	principals  map[[32]byte]Principal
+	agents      map[string]Agent
+	commands    map[string]Command
+	commandKeys map[string]string
+	now         func() time.Time
+}
+
+func newMemoryStore(now func() time.Time) *memoryStore {
+	return &memoryStore{
+		principals: make(map[[32]byte]Principal), agents: make(map[string]Agent),
+		commands: make(map[string]Command), commandKeys: make(map[string]string), now: now,
+	}
+}
+
+func agentKey(organizationID, agentID string) string { return organizationID + "\x00" + agentID }
+
+func (s *memoryStore) Authenticate(_ context.Context, digest [32]byte) (Principal, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	principal, ok := s.principals[digest]
+	if !ok {
+		return Principal{}, ErrUnauthenticated
+	}
+	return principal, nil
+}
+
+func (s *memoryStore) Agent(_ context.Context, organizationID, agentID string) (Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	agent, ok := s.agents[agentKey(organizationID, agentID)]
+	if !ok {
+		return Agent{}, ErrNotFound
+	}
+	return agent, nil
+}
+
+func (s *memoryStore) ListAgents(_ context.Context, organizationID string) ([]Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	agents := make([]Agent, 0)
+	for _, agent := range s.agents {
+		if agent.OrganizationID == organizationID {
+			agents = append(agents, agent)
+		}
+	}
+	return agents, nil
+}
+
+func (s *memoryStore) SetAgentStatus(_ context.Context, organizationID, agentID string, status AgentStatus, _, _ string) (Agent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := agentKey(organizationID, agentID)
+	agent, ok := s.agents[key]
+	if !ok {
+		return Agent{}, ErrNotFound
+	}
+	agent.Status, agent.UpdatedAt = status, s.now().UTC()
+	s.agents[key] = agent
+	return agent, nil
+}
+
+func (s *memoryStore) BeginCommand(_ context.Context, command Command) (Command, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := command.OrganizationID + "\x00" + command.Kind + "\x00" + command.IdempotencyKey
+	if commandID, ok := s.commandKeys[key]; ok {
+		existing := s.commands[commandID]
+		if existing.InputDigest != command.InputDigest {
+			return Command{}, false, ErrIdempotencyConflict
+		}
+		return cloneCommand(existing), false, nil
+	}
+	s.commands[command.ID] = cloneCommand(command)
+	s.commandKeys[key] = command.ID
+	return cloneCommand(command), true, nil
+}
+
+func (s *memoryStore) CompleteCommand(_ context.Context, organizationID, commandID string, state CommandState, result json.RawMessage, errorCode string) (Command, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	command, ok := s.commands[commandID]
+	if !ok || command.OrganizationID != organizationID {
+		return Command{}, ErrNotFound
+	}
+	if command.State != CommandPending {
+		return cloneCommand(command), ErrCommandAlreadyClosed
+	}
+	completed := s.now().UTC()
+	command.State, command.Result, command.ErrorCode, command.CompletedAt = state, append(json.RawMessage(nil), result...), errorCode, &completed
+	s.commands[commandID] = cloneCommand(command)
+	return command, nil
+}
+
+func (s *memoryStore) Command(_ context.Context, organizationID, commandID string) (Command, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	command, ok := s.commands[commandID]
+	if !ok || command.OrganizationID != organizationID {
+		return Command{}, ErrNotFound
+	}
+	return cloneCommand(command), nil
+}
+
+func cloneCommand(command Command) Command {
+	command.Result = append(json.RawMessage(nil), command.Result...)
+	if command.CompletedAt != nil {
+		completed := *command.CompletedAt
+		command.CompletedAt = &completed
+	}
+	return command
+}
+
+type mutableChain struct {
+	mu     sync.Mutex
+	status reconciliation.ChainStatus
+}
+
+func newHealthyChain(now time.Time) *mutableChain {
+	return &mutableChain{status: reconciliation.ChainStatus{
+		State: reconciliation.StateHealthy, StateChangedAt: now.Add(-time.Minute),
+		LastTrusted: &reconciliation.Checkpoint{BlockNumber: 100, BlockHash: "0x" + strings.Repeat("1", 64), BlockTime: now.Add(-time.Second), ObservedAt: now},
+	}}
+}
+
+func (c *mutableChain) CheckChain(context.Context, uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.status.State != reconciliation.StateHealthy {
+		return reconciliation.ErrChainUnavailable
+	}
+	return nil
+}
+
+func (c *mutableChain) Status() reconciliation.ChainStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.status
+}
+
+func (c *mutableChain) halt(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.status.State = reconciliation.StateHalted
+	c.status.StateChangedAt = now
+	c.status.AuthorizationsPaused = true
+}
+
+type sequenceIDs struct{ value atomic.Uint64 }
+
+func (s *sequenceIDs) next(prefix string) (string, error) {
+	return fmt.Sprintf("%s_%d", prefix, s.value.Add(1)), nil
+}
+
+func testLifecycle(t *testing.T, store Store, chain *mutableChain, now time.Time) (*controlplane.Lifecycle, *controlplane.Journal) {
+	t.Helper()
+	engine, err := policy.Compile(policy.Config{
+		Version: "policy_1", Enabled: true, AllowedChainIDs: []uint64{84532},
+		AllowedRails: []envelope.Rail{envelope.RailX402}, AllowedAssets: []string{testUSDC},
+		AllowedRecipients: []string{testRecipient}, PerActionLimitAtomic: "200",
+		AutoApproveThresholdAtomic: "100", TaskBudgetAtomic: "1000", DailyBudgetAtomic: "1000",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := controlplane.OpenJournal(filepath.Join(t.TempDir(), "control.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, _ := hex.DecodeString(strings.Repeat("07", ed25519.SeedSize))
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	var request, authorization, nonce atomic.Uint64
+	lifecycle, err := controlplane.New(controlplane.Config{
+		Policy: engine, ActivePolicyVersion: func() string { return "policy_1" }, Journal: journal,
+		FreezeGate: AgentFreezeGate{Store: store}, ChainGate: chain, Clock: func() time.Time { return now },
+		ApprovalTTL: 10 * time.Minute, AuthorizationTTL: 5 * time.Minute,
+		RequestIDSource:       func() (string, error) { return fmt.Sprintf("req_%d", request.Add(1)), nil },
+		AuthorizationIDSource: func() (string, error) { return fmt.Sprintf("auth_%d", authorization.Add(1)), nil },
+		NonceSource:           func() (string, error) { return fmt.Sprintf("0x%064x", nonce.Add(1)), nil },
+		EnvelopeKeyID:         "flowops_control_1", EnvelopePrivateKey: privateKey,
+	})
+	if err != nil {
+		journal.Close()
+		t.Fatal(err)
+	}
+	return lifecycle, journal
+}
+
+func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *controlplane.Lifecycle, *controlplane.Journal, time.Time) {
+	t.Helper()
+	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	store := newMemoryStore(func() time.Time { return now })
+	stepUp := now.Add(10 * time.Minute)
+	store.principals[TokenDigest(agentTokenA)] = Principal{
+		ID: "credential_agent_a", OrganizationID: "org_a", Kind: PrincipalAgent, Role: RoleAgent, AgentID: "agent_a",
+		Scopes: []string{"intents:create", "authorizations:issue", "commands:read"},
+	}
+	store.principals[TokenDigest(ownerTokenA)] = Principal{ID: "owner_a", OrganizationID: "org_a", Kind: PrincipalHuman, Role: RoleOwner, StepUpUntil: stepUp}
+	store.principals[TokenDigest(approverToken)] = Principal{ID: "approver_a", OrganizationID: "org_a", Kind: PrincipalHuman, Role: RoleApprover, StepUpUntil: stepUp}
+	store.principals[TokenDigest(weakTokenA)] = Principal{ID: "approver_weak", OrganizationID: "org_a", Kind: PrincipalHuman, Role: RoleApprover}
+	store.principals[TokenDigest(viewerTokenB)] = Principal{ID: "viewer_b", OrganizationID: "org_b", Kind: PrincipalHuman, Role: RoleViewer}
+	store.agents[agentKey("org_a", "agent_a")] = Agent{OrganizationID: "org_a", ID: "agent_a", CustomerID: "customer_a", Name: "Research", Status: AgentActive, UpdatedAt: now}
+	store.agents[agentKey("org_b", "agent_b")] = Agent{OrganizationID: "org_b", ID: "agent_b", CustomerID: "customer_b", Name: "Other", Status: AgentActive, UpdatedAt: now}
+	chain := newHealthyChain(now)
+	lifecycle, journal := testLifecycle(t, store, chain, now)
+	ids := &sequenceIDs{}
+	server, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain, Clock: func() time.Time { return now }, IDSource: ids.next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return httptest.NewServer(server), store, chain, lifecycle, journal, now
+}
+
+func doRequest(t *testing.T, client *http.Client, method, url, token, idempotency string, body any) (int, map[string]any) {
+	t.Helper()
+	var reader *bytes.Reader
+	if body == nil {
+		reader = bytes.NewReader(nil)
+	} else {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+	request, err := http.NewRequest(method, url, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if idempotency != "" {
+		request.Header.Set("Idempotency-Key", idempotency)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var decoded map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode status %d: %v", response.StatusCode, err)
+	}
+	return response.StatusCode, decoded
+}
+
+func intent(intentID, organizationID, agentID, amount string) controlplane.PaymentIntent {
+	return controlplane.PaymentIntent{
+		IntentID: intentID, OrganizationID: organizationID, CustomerID: "customer_a", AgentID: agentID,
+		TaskID: "task_research", ActionID: "action_fetch", Rail: envelope.RailX402, ChainID: 84532,
+		Recipient: testRecipient, Asset: testUSDC, AmountAtomic: amount,
+		Resource: "https://evidence.flowops.example/v1/fetch", Category: "research", Purpose: "retrieve evidence",
+	}
+}
+
+func TestServerExactIntentIsolationIdempotencyApprovalPauseAndHalt(t *testing.T) {
+	server, store, chain, lifecycle, journal, now := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	client := server.Client()
+
+	status, _ := doRequest(t, client, http.MethodGet, server.URL+"/v1/approvals", "", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d", status)
+	}
+	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/approvals", agentTokenA, "", nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("agent approval-inbox status = %d", status)
+	}
+
+	crossTenant := intent("intent_cross", "org_b", "agent_b", "150")
+	status, _ = doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_cross", crossTenant)
+	if status != http.StatusNotFound {
+		t.Fatalf("cross-tenant status = %d", status)
+	}
+	if _, ok := lifecycle.Get("req_1"); ok {
+		t.Fatal("cross-tenant request reached the lifecycle")
+	}
+	wrongCustomer := intent("intent_customer_substitution", "org_a", "agent_a", "150")
+	wrongCustomer.CustomerID = "customer_other"
+	status, _ = doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_customer_substitution", wrongCustomer)
+	if status != http.StatusNotFound || len(journal.Events()) != 0 {
+		t.Fatalf("customer substitution status=%d events=%d", status, len(journal.Events()))
+	}
+
+	pendingIntent := intent("intent_pending", "org_a", "agent_a", "150")
+	status, created := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_pending", pendingIntent)
+	if status != http.StatusCreated {
+		t.Fatalf("create status = %d, response = %+v", status, created)
+	}
+	result := created["result"].(map[string]any)
+	requestID, requestDigest := result["requestId"].(string), result["requestDigest"].(string)
+	if result["state"] != string(controlplane.StatePendingApproval) {
+		t.Fatalf("created state = %v", result["state"])
+	}
+	status, replayed := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_pending", pendingIntent)
+	if status != http.StatusOK || replayed["result"].(map[string]any)["requestId"] != requestID || len(journal.Events()) != 1 {
+		t.Fatalf("idempotent replay = %d %+v, events=%d", status, replayed, len(journal.Events()))
+	}
+	changed := pendingIntent
+	changed.AmountAtomic = "151"
+	status, _ = doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_pending", changed)
+	if status != http.StatusConflict || len(journal.Events()) != 1 {
+		t.Fatalf("idempotency conflict status=%d events=%d", status, len(journal.Events()))
+	}
+
+	status, otherApprovals := doRequest(t, client, http.MethodGet, server.URL+"/v1/approvals", viewerTokenB, "", nil)
+	if status != http.StatusOK || len(otherApprovals["approvals"].([]any)) != 0 {
+		t.Fatalf("other org approvals = %d %+v", status, otherApprovals)
+	}
+	decision := approvalDecisionRequest{RequestDigest: requestDigest, Action: controlplane.Approve, Note: "approved"}
+	status, _ = doRequest(t, client, http.MethodPost, server.URL+"/v1/approvals/"+requestID+"/decision", weakTokenA, "approval_weak", decision)
+	if status != http.StatusForbidden || len(journal.Events()) != 1 {
+		t.Fatalf("weak approval status=%d events=%d", status, len(journal.Events()))
+	}
+	wrong := decision
+	wrong.RequestDigest = "0x" + strings.Repeat("0", 64)
+	status, wrongResponse := doRequest(t, client, http.MethodPost, server.URL+"/v1/approvals/"+requestID+"/decision", approverToken, "approval_wrong", wrong)
+	if status != http.StatusConflict || wrongResponse["commandId"] == "" || len(journal.Events()) != 1 {
+		t.Fatalf("digest substitution = %d %+v events=%d", status, wrongResponse, len(journal.Events()))
+	}
+	status, approved := doRequest(t, client, http.MethodPost, server.URL+"/v1/approvals/"+requestID+"/decision", approverToken, "approval_exact", decision)
+	if status != http.StatusOK || approved["result"].(map[string]any)["state"] != string(controlplane.StateApproved) {
+		t.Fatalf("approval = %d %+v", status, approved)
+	}
+	status, issued := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents/"+requestID+"/authorization", agentTokenA, "issue_pending", nil)
+	if status != http.StatusOK || issued["result"].(map[string]any)["authorization"] == nil {
+		t.Fatalf("issuance = %d %+v", status, issued)
+	}
+
+	status, pause := doRequest(t, client, http.MethodPost, server.URL+"/v1/agents/agent_a/pause", ownerTokenA, "pause_agent_a", pauseRequest{Reason: "operator containment"})
+	if status != http.StatusOK || pause["result"].(map[string]any)["status"] != string(AgentPaused) {
+		t.Fatalf("pause = %d %+v", status, pause)
+	}
+	status, pauseReplay := doRequest(t, client, http.MethodPost, server.URL+"/v1/agents/agent_a/pause", ownerTokenA, "pause_agent_a", pauseRequest{Reason: "operator containment"})
+	if status != http.StatusOK || pauseReplay["result"].(map[string]any)["status"] != string(AgentPaused) {
+		t.Fatalf("pause replay = %d %+v", status, pauseReplay)
+	}
+	status, _ = doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_after_pause", intent("intent_after_pause", "org_a", "agent_a", "50"))
+	if status != http.StatusConflict {
+		t.Fatalf("post-pause create status = %d", status)
+	}
+
+	store.mu.Lock()
+	agent := store.agents[agentKey("org_a", "agent_a")]
+	agent.Status = AgentActive
+	store.agents[agentKey("org_a", "agent_a")] = agent
+	store.mu.Unlock()
+	status, auto := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_halt", intent("intent_halt", "org_a", "agent_a", "50"))
+	if status != http.StatusCreated {
+		t.Fatalf("auto create = %d %+v", status, auto)
+	}
+	autoRequestID := auto["result"].(map[string]any)["requestId"].(string)
+	chain.halt(now)
+	status, halted := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents/"+autoRequestID+"/authorization", agentTokenA, "issue_halted", nil)
+	if status != http.StatusServiceUnavailable || halted["error"].(map[string]any)["code"] != "CHAIN_UNAVAILABLE" {
+		t.Fatalf("halted issuance = %d %+v", status, halted)
+	}
+	status, haltedReplay := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents/"+autoRequestID+"/authorization", agentTokenA, "issue_halted", nil)
+	if status != http.StatusServiceUnavailable || haltedReplay["error"].(map[string]any)["code"] != "CHAIN_UNAVAILABLE" {
+		t.Fatalf("halted retry changed the durable failure = %d %+v", status, haltedReplay)
+	}
+
+	commandID := created["command"].(map[string]any)["id"].(string)
+	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/commands/"+commandID, viewerTokenB, "", nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("cross-tenant command status = %d", status)
+	}
+}
+
+func TestServerRejectsUnknownFieldsAndAgentScopeEscalation(t *testing.T) {
+	server, store, _, _, journal, _ := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	client := server.Client()
+
+	store.mu.Lock()
+	principal := store.principals[TokenDigest(agentTokenA)]
+	principal.Scopes = []string{"commands:read"}
+	store.principals[TokenDigest(agentTokenA)] = principal
+	store.mu.Unlock()
+	status, _ := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_scope", intent("intent_scope", "org_a", "agent_a", "50"))
+	if status != http.StatusForbidden {
+		t.Fatalf("scope escalation status = %d", status)
+	}
+
+	raw := []byte(`{"intentId":"intent_unknown","organizationId":"org_a","unknownSecret":"value"}`)
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/v1/intents", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+ownerTokenA)
+	request.Header.Set("Idempotency-Key", "intent_unknown")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d", response.StatusCode)
+	}
+}
+
+func TestClassifyWrappedChainFailure(t *testing.T) {
+	status, code, retriable := classifyError(fmt.Errorf("chain unavailable: %w", reconciliation.ErrChainUnavailable))
+	if status != http.StatusServiceUnavailable || code != "CHAIN_UNAVAILABLE" || !retriable {
+		t.Fatalf("classification = %d %s %v", status, code, retriable)
+	}
+	if !errors.Is(fmt.Errorf("wrapped: %w", reconciliation.ErrChainUnavailable), reconciliation.ErrChainUnavailable) {
+		t.Fatal("test error wrapping is broken")
+	}
+}

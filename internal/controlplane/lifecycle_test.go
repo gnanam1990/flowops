@@ -427,3 +427,23 @@ func TestPaymentIntentDigestGoldenAndValidation(t *testing.T) {
 		t.Fatal("noncanonical recipient accepted")
 	}
 }
+
+func TestIntentIdempotencyIsScopedToOrganization(t *testing.T) {
+	now := time.Date(2026, 8, 11, 14, 0, 0, 0, time.UTC)
+	lifecycle, journal, _ := newLifecycleForTest(t, filepath.Join(t.TempDir(), "control.log"), &fakeClock{now: now}, &fakeFreeze{}, &policyVersion{version: "policy_7"}, &sources{})
+	defer journal.Close()
+
+	first := controlIntent("shared_key", "50")
+	if _, err := lifecycle.Submit(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.OrganizationID = "org_other"
+	second.CustomerID = "cust_other"
+	if _, err := lifecycle.Submit(context.Background(), second); err != nil {
+		t.Fatalf("second organization could not reuse its own idempotency key: %v", err)
+	}
+	if got := len(journal.Events()); got != 2 {
+		t.Fatalf("events = %d, want one independently scoped request per organization", got)
+	}
+}

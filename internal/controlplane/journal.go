@@ -29,6 +29,15 @@ type Event struct {
 	Hash         string          `json:"hash"`
 }
 
+// EventJournal is the durability boundary for intent, approval, issuance, and
+// expiry events. Implementations must append atomically and return events in
+// strict sequence order. The lifecycle replays the complete stream at startup
+// and refuses to start when any hash-chain invariant is broken.
+type EventJournal interface {
+	Append(ctx context.Context, at time.Time, kind, requestID string, payload any) (Event, error)
+	Events() []Event
+}
+
 type eventHashInput struct {
 	Version      int             `json:"version"`
 	Sequence     uint64          `json:"sequence"`

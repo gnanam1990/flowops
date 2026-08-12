@@ -31,7 +31,26 @@ var (
 	ErrApprovalDigest      = errors.New("approval request digest mismatch")
 	ErrApprovalExpired     = errors.New("approval window expired")
 	ErrPolicyChanged       = errors.New("active policy version changed")
+	ErrPolicyUnavailable   = errors.New("active policy is unavailable")
 )
+
+type PolicyProvider interface {
+	Evaluate(ctx context.Context, intent PaymentIntent, spend policy.SpendSnapshot) (policy.Decision, error)
+	ActiveVersion(ctx context.Context, organizationID, agentID string) (string, error)
+}
+
+type staticPolicyProvider struct {
+	engine        *policy.Engine
+	activeVersion func() string
+}
+
+func (p staticPolicyProvider) Evaluate(_ context.Context, intent PaymentIntent, spend policy.SpendSnapshot) (policy.Decision, error) {
+	return p.engine.Evaluate(toPolicyIntent(intent), spend), nil
+}
+
+func (p staticPolicyProvider) ActiveVersion(_ context.Context, _, _ string) (string, error) {
+	return p.activeVersion(), nil
+}
 
 type FreezeGate interface {
 	Check(ctx context.Context, organizationID, taskID, agentID string) error
@@ -46,9 +65,10 @@ type authorizationChainGate interface {
 }
 
 type Config struct {
+	PolicyProvider        PolicyProvider
 	Policy                *policy.Engine
 	ActivePolicyVersion   func() string
-	Journal               *Journal
+	Journal               EventJournal
 	FreezeGate            FreezeGate
 	ChainGate             ChainGate
 	Clock                 func() time.Time
@@ -63,9 +83,8 @@ type Config struct {
 
 type Lifecycle struct {
 	mu                     sync.Mutex
-	policy                 *policy.Engine
-	activePolicyVersion    func() string
-	journal                *Journal
+	policyProvider         PolicyProvider
+	journal                EventJournal
 	freezeGate             FreezeGate
 	chainGate              ChainGate
 	clock                  func() time.Time
@@ -83,8 +102,12 @@ type Lifecycle struct {
 }
 
 func New(cfg Config) (*Lifecycle, error) {
-	if cfg.Policy == nil || cfg.Journal == nil || cfg.FreezeGate == nil || cfg.ChainGate == nil || cfg.ActivePolicyVersion == nil {
-		return nil, errors.New("policy, active policy version, journal, freeze gate, and chain gate are required")
+	provider := cfg.PolicyProvider
+	if provider == nil && cfg.Policy != nil && cfg.ActivePolicyVersion != nil {
+		provider = staticPolicyProvider{engine: cfg.Policy, activeVersion: cfg.ActivePolicyVersion}
+	}
+	if provider == nil || cfg.Journal == nil || cfg.FreezeGate == nil || cfg.ChainGate == nil {
+		return nil, errors.New("policy provider, journal, freeze gate, and chain gate are required")
 	}
 	if cfg.RequestIDSource == nil || cfg.AuthorizationIDSource == nil || cfg.NonceSource == nil {
 		return nil, errors.New("request ID, authorization ID, and nonce sources are required")
@@ -100,7 +123,7 @@ func New(cfg Config) (*Lifecycle, error) {
 		clock = time.Now
 	}
 	l := &Lifecycle{
-		policy: cfg.Policy, activePolicyVersion: cfg.ActivePolicyVersion, journal: cfg.Journal,
+		policyProvider: provider, journal: cfg.Journal,
 		freezeGate: cfg.FreezeGate, chainGate: cfg.ChainGate, clock: clock, approvalTTL: cfg.ApprovalTTL,
 		authorizationTTL: cfg.AuthorizationTTL, requestIDSource: cfg.RequestIDSource,
 		authorizationIDSource: cfg.AuthorizationIDSource, nonceSource: cfg.NonceSource,
@@ -126,7 +149,8 @@ func (l *Lifecycle) Submit(ctx context.Context, intent PaymentIntent) (Record, e
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if requestID, exists := l.requestByIntent[intent.IntentID]; exists {
+	intentKey := scopedIntentKey(intent.OrganizationID, intent.IntentID)
+	if requestID, exists := l.requestByIntent[intentKey]; exists {
 		existing := l.records[requestID]
 		if existing.IntentDigest != intentDigest {
 			return Record{}, ErrIdempotencyConflict
@@ -137,7 +161,10 @@ func (l *Lifecycle) Submit(ctx context.Context, intent PaymentIntent) (Record, e
 		return Record{}, fmt.Errorf("frozen: %w", err)
 	}
 	now := l.clock().UTC()
-	decision := l.policy.Evaluate(toPolicyIntent(intent), l.spendSnapshot(intent, now))
+	decision, err := l.policyProvider.Evaluate(ctx, intent, l.spendSnapshot(intent, now))
+	if err != nil {
+		return Record{}, fmt.Errorf("evaluate active policy: %w", err)
+	}
 	if !idPattern.MatchString(decision.PolicyVersion) {
 		return Record{}, errors.New("policy returned an invalid version identifier")
 	}
@@ -234,7 +261,11 @@ func (l *Lifecycle) Issue(ctx context.Context, requestID string) (envelope.Signe
 		}
 		return envelope.SignedAuthorization{}, ErrApprovalExpired
 	}
-	if active := l.activePolicyVersion(); active != record.Decision.PolicyVersion {
+	active, err := l.policyProvider.ActiveVersion(ctx, record.Intent.OrganizationID, record.Intent.AgentID)
+	if err != nil {
+		return envelope.SignedAuthorization{}, fmt.Errorf("resolve active policy: %w", err)
+	}
+	if active != record.Decision.PolicyVersion {
 		return envelope.SignedAuthorization{}, fmt.Errorf("%w: approved under %s, active is %s", ErrPolicyChanged, record.Decision.PolicyVersion, active)
 	}
 	if err := l.freezeGate.Check(ctx, record.Intent.OrganizationID, record.Intent.TaskID, record.Intent.AgentID); err != nil {
@@ -396,7 +427,8 @@ func (l *Lifecycle) applyEvent(event Event) error {
 		if _, exists := l.records[record.RequestID]; exists {
 			return errors.New("duplicate request ID")
 		}
-		if _, exists := l.requestByIntent[record.Intent.IntentID]; exists {
+		intentKey := scopedIntentKey(record.Intent.OrganizationID, record.Intent.IntentID)
+		if _, exists := l.requestByIntent[intentKey]; exists {
 			return errors.New("duplicate intent ID")
 		}
 		intentDigest, err := record.Intent.Digest()
@@ -412,7 +444,7 @@ func (l *Lifecycle) applyEvent(event Event) error {
 			return errors.New("submitted state does not match decision")
 		}
 		l.records[record.RequestID] = cloneRecord(record)
-		l.requestByIntent[record.Intent.IntentID] = record.RequestID
+		l.requestByIntent[intentKey] = record.RequestID
 		return nil
 	case eventApprovalDecided:
 		var payload approvalPayload
@@ -498,3 +530,7 @@ func decodePayload(event Event, target any) error {
 }
 
 func eventBefore(at, boundary int64) bool { return at < boundary }
+
+func scopedIntentKey(organizationID, intentID string) string {
+	return organizationID + "\x00" + intentID
+}
