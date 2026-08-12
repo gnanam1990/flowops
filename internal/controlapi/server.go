@@ -228,7 +228,11 @@ func (s *Server) handleOperatorHalt(w http.ResponseWriter, r *http.Request) {
 	}
 	status, err := s.chain.ForceHalt(r.Context(), strings.TrimSpace(request.Operator), strings.TrimSpace(request.Reason))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_HALT", err, false, "")
+		if errors.Is(err, reconciliation.ErrInvalidOperator) || errors.Is(err, reconciliation.ErrInvalidHaltReason) {
+			writeError(w, http.StatusBadRequest, "INVALID_HALT", err, false, "")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "CONTROL_EVENT_NOT_COMMITTED", err, true, "")
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"chain": status})
@@ -245,7 +249,11 @@ func (s *Server) handleOperatorResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_RESUME", err, false, "")
+		if errors.Is(err, reconciliation.ErrInvalidOperator) {
+			writeError(w, http.StatusBadRequest, "INVALID_RESUME", err, false, "")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "CONTROL_EVENT_NOT_COMMITTED", err, true, "")
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"chain": status})

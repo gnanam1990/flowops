@@ -44,14 +44,15 @@ type ledgerPayload struct {
 }
 
 type Engine struct {
-	mu              sync.Mutex
-	config          Config
-	journal         *journal
-	status          ChainStatus
-	executions      map[string]Execution
-	executionByHash map[string]string
-	ledger          map[string]LedgerTransaction
-	balances        map[string]map[string]*big.Int
+	mu                 sync.Mutex
+	config             Config
+	journal            *journal
+	status             ChainStatus
+	executions         map[string]Execution
+	executionByHash    map[string]string
+	ledger             map[string]LedgerTransaction
+	balances           map[string]map[string]*big.Int
+	lastResumeOperator string
 }
 
 func Open(path string, config Config) (*Engine, error) {
@@ -212,8 +213,11 @@ func (e *Engine) Observe(ctx context.Context, observations []Observation) (Chain
 }
 
 func (e *Engine) ForceHalt(ctx context.Context, operator, reason string) (ChainStatus, error) {
-	if !identifierPattern.MatchString(operator) || reason == "" || len(reason) > 1024 {
-		return ChainStatus{}, errors.New("operator or halt reason is invalid")
+	if !identifierPattern.MatchString(operator) {
+		return ChainStatus{}, ErrInvalidOperator
+	}
+	if reason == "" || len(reason) > 1024 {
+		return ChainStatus{}, ErrInvalidHaltReason
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -239,11 +243,11 @@ func (e *Engine) ForceHalt(ctx context.Context, operator, reason string) (ChainS
 
 func (e *Engine) Resume(ctx context.Context, operator string) (ChainStatus, error) {
 	if !identifierPattern.MatchString(operator) {
-		return ChainStatus{}, errors.New("operator is invalid")
+		return ChainStatus{}, ErrInvalidOperator
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.status.State == StateHealthy && e.status.Reason == "manual recovery release by "+operator && e.chainUsable(e.config.Clock().UTC()) {
+	if e.status.State == StateHealthy && e.lastResumeOperator == operator && e.chainUsable(e.config.Clock().UTC()) {
 		return cloneStatus(e.status), nil
 	}
 	if !e.recoveryReady(e.config.Clock().UTC()) {
@@ -522,6 +526,7 @@ func (e *Engine) apply(event journalEvent) error {
 			return err
 		}
 		e.status = cloneStatus(payload.Status)
+		e.trackManualRelease(payload.Operator)
 		if e.status.State == StateHalted || payload.MarkBroadcastsPending {
 			e.markBroadcastsPending(&e.status)
 		}
@@ -543,6 +548,7 @@ func (e *Engine) apply(event journalEvent) error {
 		}
 		if payload.Status != nil {
 			e.status = cloneStatus(*payload.Status)
+			e.trackManualRelease("")
 		}
 	case eventLedgerPosted:
 		var payload ledgerPayload
@@ -554,6 +560,20 @@ func (e *Engine) apply(event journalEvent) error {
 		return fmt.Errorf("unsupported reconciliation event kind %q", event.Kind)
 	}
 	return nil
+}
+
+func (e *Engine) trackManualRelease(operator string) {
+	if e.status.RequiredObserverQuorum == 0 {
+		e.status.RequiredObserverQuorum = e.config.ObserverQuorum
+	}
+	if e.status.LastObservationAt.IsZero() && e.status.LastTrusted != nil {
+		e.status.LastObservationAt = e.status.LastTrusted.ObservedAt
+	}
+	if e.status.State != StateHealthy {
+		e.lastResumeOperator = ""
+	} else if operator != "" {
+		e.lastResumeOperator = operator
+	}
 }
 
 func (e *Engine) applyLedger(transaction LedgerTransaction) {

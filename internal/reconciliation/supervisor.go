@@ -64,6 +64,9 @@ func (s *Supervisor) observeOnce(ctx context.Context) error {
 	}
 	status, err := s.sink.Observe(ctx, result.Observations)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("persist Base observer result: %w", err)
 	}
 	if s.config.OnResult != nil {

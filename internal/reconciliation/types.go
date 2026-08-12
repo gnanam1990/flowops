@@ -46,11 +46,13 @@ var (
 )
 
 var (
-	ErrChainUnavailable = errors.New("Base canonical state is not healthy")
-	ErrConflict         = errors.New("idempotency conflict")
-	ErrUnknownExecution = errors.New("unknown execution")
-	ErrUnsafeFinality   = errors.New("canonical finality evidence is insufficient")
-	ErrResumeBlocked    = errors.New("autonomous resume is blocked")
+	ErrChainUnavailable  = errors.New("Base canonical state is not healthy")
+	ErrConflict          = errors.New("idempotency conflict")
+	ErrUnknownExecution  = errors.New("unknown execution")
+	ErrUnsafeFinality    = errors.New("canonical finality evidence is insufficient")
+	ErrResumeBlocked     = errors.New("autonomous resume is blocked")
+	ErrInvalidOperator   = errors.New("operator is invalid")
+	ErrInvalidHaltReason = errors.New("halt reason is invalid")
 )
 
 type Config struct {

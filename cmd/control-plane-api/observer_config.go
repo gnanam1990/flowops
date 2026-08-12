@@ -37,6 +37,9 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	if err != nil {
 		return observerRuntimeConfig{}, err
 	}
+	if chainID != 84532 {
+		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_CHAIN_ID must remain 84532 until the separate Base mainnet gate is approved")
+	}
 	if _, err := reconciliation.NewObserverSet(chainID, providers, nil, nil); err != nil {
 		return observerRuntimeConfig{}, fmt.Errorf("Base observer configuration: %w", err)
 	}
@@ -76,7 +79,7 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	if err != nil {
 		return observerRuntimeConfig{}, err
 	}
-	observationMaxAge, err := parseDurationEnv("FLOWOPS_BASE_OBSERVATION_MAX_AGE", os.Getenv("FLOWOPS_BASE_OBSERVATION_MAX_AGE"), 30*time.Second)
+	observationMaxAge, err := parseDurationEnv("FLOWOPS_BASE_OBSERVATION_MAX_AGE", os.Getenv("FLOWOPS_BASE_OBSERVATION_MAX_AGE"), 45*time.Second)
 	if err != nil {
 		return observerRuntimeConfig{}, err
 	}
@@ -118,6 +121,9 @@ func parseObserverProviders(raw string) ([]reconciliation.RPCProvider, error) {
 	if err := rejectDuplicateJSONFields([]byte(raw)); err != nil {
 		return nil, errors.New("FLOWOPS_BASE_RPC_PROVIDERS_JSON must not contain duplicate object fields")
 	}
+	if err := rejectNonCanonicalProviderFields([]byte(raw)); err != nil {
+		return nil, errors.New("FLOWOPS_BASE_RPC_PROVIDERS_JSON provider fields must be exactly name and url")
+	}
 	decoder := json.NewDecoder(bytes.NewBufferString(raw))
 	decoder.DisallowUnknownFields()
 	var inputs []observerProviderInput
@@ -135,6 +141,21 @@ func parseObserverProviders(raw string) ([]reconciliation.RPCProvider, error) {
 		return nil, fmt.Errorf("FLOWOPS_BASE_RPC_PROVIDERS_JSON: %w", err)
 	}
 	return providers, nil
+}
+
+func rejectNonCanonicalProviderFields(raw []byte) error {
+	var providers []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &providers); err != nil {
+		return err
+	}
+	for _, provider := range providers {
+		for field := range provider {
+			if field != "name" && field != "url" {
+				return errors.New("non-canonical provider field")
+			}
+		}
+	}
+	return nil
 }
 
 func rejectDuplicateJSONFields(raw []byte) error {

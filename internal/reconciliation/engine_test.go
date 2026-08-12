@@ -69,6 +69,54 @@ func bootstrapHealthy(t *testing.T, engine *Engine, clock *testClock, anchor uin
 	}
 }
 
+func TestManualResumeRetrySurvivesHealthyObserverTick(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 100)
+	clock.Add(time.Second)
+	if _, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 102, 103)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Resume(context.Background(), "operator_alice"); err != nil {
+		t.Fatalf("resume retry after observer tick = %v", err)
+	}
+}
+
+func TestLegacyChainStatusReplayNormalizesObserverMetadata(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "reconciliation.log")
+	journal, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedAt := clock.Now().Add(-time.Second)
+	legacy := ChainStatus{
+		State: StateHalted, Reason: "legacy chain halt", StateChangedAt: observedAt,
+		LastTrusted: &Checkpoint{BlockNumber: 99, BlockHash: testHash(99), BlockTime: observedAt, ObservedAt: observedAt},
+	}
+	if _, err := journal.append(context.Background(), observedAt, eventChainStatus, "legacy", chainPayload{Status: legacy}); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	status := engine.Status()
+	if status.RequiredObserverQuorum != 2 || !status.LastObservationAt.Equal(observedAt) {
+		t.Fatalf("normalized legacy status = %+v", status)
+	}
+}
+
 func testExpected() ExpectedExecution {
 	return ExpectedExecution{
 		ExecutionID: "exec_1", OrganizationID: "org_acme", AgentID: "agent_research", TaskID: "task_9",

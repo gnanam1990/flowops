@@ -219,15 +219,20 @@ func cloneCommand(command Command) Command {
 }
 
 type mutableChain struct {
-	mu     sync.Mutex
-	status reconciliation.ChainStatus
+	mu        sync.Mutex
+	status    reconciliation.ChainStatus
+	haltErr   error
+	resumeErr error
 }
 
 func (c *mutableChain) ForceHalt(_ context.Context, _ string, reason string) (reconciliation.ChainStatus, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.haltErr != nil {
+		return reconciliation.ChainStatus{}, c.haltErr
+	}
 	if strings.TrimSpace(reason) == "" {
-		return reconciliation.ChainStatus{}, errors.New("reason is required")
+		return reconciliation.ChainStatus{}, reconciliation.ErrInvalidHaltReason
 	}
 	c.status.State = reconciliation.StateHalted
 	c.status.Reason = "manual halt: " + reason
@@ -238,10 +243,16 @@ func (c *mutableChain) ForceHalt(_ context.Context, _ string, reason string) (re
 func (c *mutableChain) Resume(_ context.Context, operator string) (reconciliation.ChainStatus, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.resumeErr != nil {
+		return reconciliation.ChainStatus{}, c.resumeErr
+	}
+	if operator == "" {
+		return reconciliation.ChainStatus{}, reconciliation.ErrInvalidOperator
+	}
 	if c.status.State == reconciliation.StateHealthy && c.status.Reason == "manual recovery release by "+operator {
 		return c.status, nil
 	}
-	if operator == "" || !c.status.ReadyForManualResume {
+	if !c.status.ReadyForManualResume {
 		return reconciliation.ChainStatus{}, reconciliation.ErrResumeBlocked
 	}
 	c.status.State = reconciliation.StateHealthy
@@ -264,8 +275,16 @@ func TestOperatorChainControlRequiresDedicatedKeyAndRecoveryReadiness(t *testing
 			t.Fatalf("%s operator authentication = %d %+v", name, status, body)
 		}
 	}
+	status, body := doRequest(t, client, http.MethodPost, server.URL+"/v1/operator/chain/halt", operatorToken, "", operatorHaltRequest{Operator: "operator_alice", Reason: ""})
+	if status != http.StatusBadRequest || body["error"].(map[string]any)["code"] != "INVALID_HALT" {
+		t.Fatalf("invalid halt = %d %+v", status, body)
+	}
+	status, body = doRequest(t, client, http.MethodPost, server.URL+"/v1/operator/chain/resume", operatorToken, "", operatorResumeRequest{Operator: ""})
+	if status != http.StatusBadRequest || body["error"].(map[string]any)["code"] != "INVALID_RESUME" {
+		t.Fatalf("invalid resume = %d %+v", status, body)
+	}
 
-	status, body := doRequest(t, client, http.MethodPost, server.URL+"/v1/operator/chain/halt", operatorToken, "", operatorHaltRequest{Operator: "operator_alice", Reason: "provider disagreement drill"})
+	status, body = doRequest(t, client, http.MethodPost, server.URL+"/v1/operator/chain/halt", operatorToken, "", operatorHaltRequest{Operator: "operator_alice", Reason: "provider disagreement drill"})
 	if status != http.StatusOK || body["chain"].(map[string]any)["state"] != string(reconciliation.StateHalted) {
 		t.Fatalf("operator halt = %d %+v", status, body)
 	}
@@ -283,6 +302,26 @@ func TestOperatorChainControlRequiresDedicatedKeyAndRecoveryReadiness(t *testing
 		if status != http.StatusOK || body["chain"].(map[string]any)["state"] != string(reconciliation.StateHealthy) {
 			t.Fatalf("operator resume attempt %d = %d %+v", attempt, status, body)
 		}
+	}
+}
+
+func TestOperatorChainControlClassifiesUncommittedJournalEventsAsRetriable(t *testing.T) {
+	server, _, chain, _, journal, _ := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	operatorToken := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32)))
+	chain.haltErr = errors.New("journal sync failed")
+	status, body := doRequest(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/chain/halt", operatorToken, "", operatorHaltRequest{Operator: "operator_alice", Reason: "drill"})
+	apiError := body["error"].(map[string]any)
+	if status != http.StatusServiceUnavailable || apiError["code"] != "CONTROL_EVENT_NOT_COMMITTED" || apiError["retriable"] != true || apiError["message"] != "request could not be completed" {
+		t.Fatalf("halt journal failure = %d %+v", status, body)
+	}
+	chain.haltErr = nil
+	chain.resumeErr = errors.New("journal sync failed")
+	status, body = doRequest(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/chain/resume", operatorToken, "", operatorResumeRequest{Operator: "operator_alice"})
+	apiError = body["error"].(map[string]any)
+	if status != http.StatusServiceUnavailable || apiError["code"] != "CONTROL_EVENT_NOT_COMMITTED" || apiError["retriable"] != true {
+		t.Fatalf("resume journal failure = %d %+v", status, body)
 	}
 }
 

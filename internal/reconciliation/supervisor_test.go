@@ -29,12 +29,16 @@ type supervisorSink struct {
 	mu           sync.Mutex
 	observations [][]Observation
 	err          error
+	onObserve    func()
 }
 
 func (s *supervisorSink) Observe(_ context.Context, observations []Observation) (ChainStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.observations = append(s.observations, cloneObservations(observations))
+	if s.onObserve != nil {
+		s.onObserve()
+	}
 	return ChainStatus{State: StateRecovering}, s.err
 }
 
@@ -101,5 +105,19 @@ func TestSupervisorRejectsOverlappingOrInvalidTiming(t *testing.T) {
 		if _, err := NewSupervisor(source, sink, config); err == nil {
 			t.Fatalf("accepted config %+v", config)
 		}
+	}
+}
+
+func TestSupervisorTreatsSinkCancellationAsCleanShutdown(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	source := &supervisorSource{results: []SnapshotResult{{Observations: []Observation{{Provider: "rpc_alpha"}}}}}
+	sink := &supervisorSink{err: context.Canceled, onObserve: cancel}
+	supervisor, err := NewSupervisor(source, sink, SupervisorConfig{Interval: time.Second, ObservationTimeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.Run(ctx); err != nil {
+		t.Fatalf("shutdown returned an operational error: %v", err)
 	}
 }
