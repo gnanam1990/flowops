@@ -47,6 +47,14 @@ is a conflict. A valid callback is journaled even if Base is currently stale or
 halted. In that case it enters `PENDING_CHAIN_RECOVERY` and no settlement is
 recognized until the existing independent receipt quorum confirms it.
 
+The journal preserves the exact signed receipt and the exact public key that
+verified it. The reconciliation engine re-verifies that proof and its
+transaction/sender binding before appending the execution. This makes the
+attestation independently auditable after restart or key rotation and prevents
+a future internal caller from bypassing the receipt boundary with bare expected
+transaction fields. The stored public key is historical evidence, not current
+authority to accept another callback.
+
 The customer-side transaction executor remains responsible for durably
 entering a one-way broadcast state before network I/O. Any result after the RPC
 call begins is either submitted or ambiguous and must produce this receipt;

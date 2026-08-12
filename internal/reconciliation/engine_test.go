@@ -2,6 +2,9 @@ package reconciliation
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 )
 
 const (
@@ -125,6 +130,24 @@ func testExpected() ExpectedExecution {
 	}
 }
 
+func testBroadcastAttestation(t *testing.T, expected ExpectedExecution, broadcastAt time.Time) BroadcastAttestation {
+	t.Helper()
+	seed, err := hex.DecodeString(strings.Repeat("29", ed25519.SeedSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	signed, err := broadcastreceipt.Sign(broadcastreceipt.Receipt{
+		Version: broadcastreceipt.Version, OrganizationID: expected.OrganizationID, CustomerID: "customer_acme",
+		AuthorizationID: "auth_1", AuthorizationDigest: testHash(899), TransactionHash: expected.TransactionHash,
+		Sender: expected.Sender, Outcome: broadcastreceipt.OutcomeAmbiguous, BroadcastAt: broadcastAt.Unix(),
+	}, "customer_signer_1", privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return BroadcastAttestation{SignedReceipt: signed, PublicKeyB64: base64.StdEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey))}
+}
+
 func receiptQuorum(expected ExpectedExecution, block uint64, success bool) []ReceiptEvidence {
 	receipt := ReceiptEvidence{
 		ChainID: expected.ChainID, TransactionHash: expected.TransactionHash, BlockNumber: block,
@@ -146,7 +169,8 @@ func TestAttestedBroadcastRegistersDuringHaltAndSurvivesRestart(t *testing.T) {
 	}
 	broadcastAt := clock.Now().Add(-time.Second)
 	expected := testExpected()
-	execution, err := engine.RegisterAttestedBroadcast(context.Background(), expected, broadcastAt)
+	attestation := testBroadcastAttestation(t, expected, broadcastAt)
+	execution, err := engine.RegisterAttestedBroadcast(context.Background(), expected, attestation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,8 +188,8 @@ func TestAttestedBroadcastRegistersDuringHaltAndSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
-	replayed, err := restarted.RegisterAttestedBroadcast(context.Background(), expected, broadcastAt)
-	if err != nil || replayed.State != ExecutionPendingChainRecovery || !replayed.BroadcastAt.Equal(broadcastAt) {
+	replayed, err := restarted.RegisterAttestedBroadcast(context.Background(), expected, attestation)
+	if err != nil || replayed.State != ExecutionPendingChainRecovery || !replayed.BroadcastAt.Equal(broadcastAt) || replayed.BroadcastAttestation == nil || !equalJSON(*replayed.BroadcastAttestation, attestation) {
 		t.Fatalf("replayed registration = %+v, %v", replayed, err)
 	}
 }
@@ -179,18 +203,37 @@ func TestAttestedBroadcastRejectsAuthorizationAndHashConflicts(t *testing.T) {
 	}
 	defer engine.Close()
 	expected := testExpected()
-	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, clock.Now()); err != nil {
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, testBroadcastAttestation(t, expected, clock.Now())); err != nil {
 		t.Fatal(err)
 	}
 	changedHash := expected
 	changedHash.TransactionHash = testHash(902)
-	if _, err := engine.RegisterAttestedBroadcast(context.Background(), changedHash, clock.Now()); !errors.Is(err, ErrConflict) {
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), changedHash, testBroadcastAttestation(t, changedHash, clock.Now())); !errors.Is(err, ErrConflict) {
 		t.Fatalf("authorization rebound to another hash: %v", err)
 	}
 	changedExecution := expected
 	changedExecution.ExecutionID = "exec_other"
-	if _, err := engine.RegisterAttestedBroadcast(context.Background(), changedExecution, clock.Now()); !errors.Is(err, ErrConflict) {
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), changedExecution, testBroadcastAttestation(t, changedExecution, clock.Now())); !errors.Is(err, ErrConflict) {
 		t.Fatalf("hash rebound to another execution: %v", err)
+	}
+}
+
+func TestAttestedBroadcastEngineRejectsUnverifiedProof(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	expected := testExpected()
+	attestation := testBroadcastAttestation(t, expected, clock.Now())
+	attestation.SignedReceipt.Signature = "0x" + strings.Repeat("0", 128)
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, attestation); err == nil {
+		t.Fatal("engine accepted an unverified customer attestation")
+	}
+	if len(engine.Executions()) != 0 {
+		t.Fatal("invalid attestation changed reconciliation state")
 	}
 }
 

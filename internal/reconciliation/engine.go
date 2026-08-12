@@ -308,13 +308,14 @@ func (e *Engine) RegisterBroadcast(ctx context.Context, expected ExpectedExecuti
 // available after Base becomes unhealthy: refusing the callback would discard
 // the only durable handle for an ambiguous payment. An unhealthy chain places
 // the execution directly into PENDING_CHAIN_RECOVERY.
-func (e *Engine) RegisterAttestedBroadcast(ctx context.Context, expected ExpectedExecution, broadcastAt time.Time) (Execution, error) {
+func (e *Engine) RegisterAttestedBroadcast(ctx context.Context, expected ExpectedExecution, attestation BroadcastAttestation) (Execution, error) {
 	if err := expected.validate(e.config.ChainID); err != nil {
 		return Execution{}, err
 	}
-	if broadcastAt.IsZero() {
-		return Execution{}, errors.New("broadcast time is required")
+	if err := attestation.validate(expected); err != nil {
+		return Execution{}, err
 	}
+	broadcastAt := time.Unix(attestation.SignedReceipt.Receipt.BroadcastAt, 0).UTC()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if existing, ok := e.executions[expected.ExecutionID]; ok {
@@ -331,7 +332,8 @@ func (e *Engine) RegisterAttestedBroadcast(ctx context.Context, expected Expecte
 	if !e.chainUsable(now) {
 		state = ExecutionPendingChainRecovery
 	}
-	execution := Execution{Expected: expected, State: state, BroadcastAt: broadcastAt.UTC()}
+	attestationCopy := attestation
+	execution := Execution{Expected: expected, State: state, BroadcastAt: broadcastAt, BroadcastAttestation: &attestationCopy}
 	event, err := e.journal.append(ctx, now, eventExecutionBroadcast, expected.ExecutionID, executionPayload{Execution: execution})
 	if err != nil {
 		return Execution{}, err
@@ -933,6 +935,10 @@ func cloneStatus(status ChainStatus) ChainStatus {
 }
 
 func cloneExecution(execution Execution) Execution {
+	if execution.BroadcastAttestation != nil {
+		attestation := *execution.BroadcastAttestation
+		execution.BroadcastAttestation = &attestation
+	}
 	if execution.ResolvedAt != nil {
 		resolvedAt := *execution.ResolvedAt
 		execution.ResolvedAt = &resolvedAt

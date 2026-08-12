@@ -33,14 +33,15 @@ type captureBroadcastReconciler struct {
 	err         error
 }
 
-func (r *captureBroadcastReconciler) RegisterAttestedBroadcast(_ context.Context, expected reconciliation.ExpectedExecution, broadcastAt time.Time) (reconciliation.Execution, error) {
+func (r *captureBroadcastReconciler) RegisterAttestedBroadcast(_ context.Context, expected reconciliation.ExpectedExecution, attestation reconciliation.BroadcastAttestation) (reconciliation.Execution, error) {
 	r.calls++
 	r.expected = expected
+	broadcastAt := time.Unix(attestation.SignedReceipt.Receipt.BroadcastAt, 0).UTC()
 	r.broadcastAt = broadcastAt
 	if r.err != nil {
 		return reconciliation.Execution{}, r.err
 	}
-	return reconciliation.Execution{Expected: expected, State: reconciliation.ExecutionBroadcast, BroadcastAt: broadcastAt}, nil
+	return reconciliation.Execution{Expected: expected, State: reconciliation.ExecutionBroadcast, BroadcastAt: broadcastAt, BroadcastAttestation: &attestation}, nil
 }
 
 func broadcastKeypair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
@@ -113,6 +114,9 @@ func TestSignerBroadcastDerivesExpectedExecutionOnlyFromIssuedAuthorization(t *t
 	}
 	if got.ExecutionID == "" || !reconciler.broadcastAt.Equal(now) {
 		t.Fatalf("execution ID/time = %q %s", got.ExecutionID, reconciler.broadcastAt)
+	}
+	if execution.BroadcastAttestation == nil || execution.BroadcastAttestation.SignedReceipt.Receipt.AuthorizationID != receipt.AuthorizationID || execution.BroadcastAttestation.PublicKeyB64 == "" {
+		t.Fatalf("durable attestation = %+v", execution.BroadcastAttestation)
 	}
 }
 

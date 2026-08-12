@@ -83,6 +83,10 @@ and amount itself; the signer supplies only its signed transaction hash, sender,
 outcome, and broadcast time. One authorization deterministically maps to one
 execution. A callback arriving after a chain halt is retained as
 `PENDING_CHAIN_RECOVERY`, because the wallet may already have submitted it.
+The hash-chained execution event preserves the exact signed receipt and
+verifying public key; the reconciliation engine independently re-verifies both
+before accepting the event. Key removal stops new callbacks but does not erase
+historical proof.
 
 The runtime worker scans only journaled `BROADCAST` and
 `PENDING_CHAIN_RECOVERY` executions; it cannot create a payment attempt and

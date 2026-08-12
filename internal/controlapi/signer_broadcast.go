@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -28,7 +29,7 @@ type BroadcastRegistrar interface {
 }
 
 type BroadcastReconciler interface {
-	RegisterAttestedBroadcast(context.Context, reconciliation.ExpectedExecution, time.Time) (reconciliation.Execution, error)
+	RegisterAttestedBroadcast(context.Context, reconciliation.ExpectedExecution, reconciliation.BroadcastAttestation) (reconciliation.Execution, error)
 }
 
 // BroadcastKey identifies one customer-controlled receipt attestation key.
@@ -131,7 +132,8 @@ func (r *SignerBroadcastRegistrar) Register(ctx context.Context, signed broadcas
 		Recipient:       authorization.Recipient,
 		AmountAtomic:    authorization.AmountAtomic,
 	}
-	return r.reconciler.RegisterAttestedBroadcast(ctx, expected, broadcastAt)
+	attestation := reconciliation.BroadcastAttestation{SignedReceipt: signed, PublicKeyB64: base64.StdEncoding.EncodeToString(publicKey)}
+	return r.reconciler.RegisterAttestedBroadcast(ctx, expected, attestation)
 }
 
 func executionID(authorizationID string) string {
