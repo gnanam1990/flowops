@@ -25,8 +25,8 @@ const (
 )
 
 type RPCProvider struct {
-	Name string
-	URL  string
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 type ObserverSet struct {

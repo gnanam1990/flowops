@@ -1,0 +1,46 @@
+{
+  "version": "flowops.reference-signer.v1",
+  "organizationId": "replace-org",
+  "customerId": "replace-customer",
+  "trustKeys": [
+    {
+      "keyId": "replace-flowops-key",
+      "publicKeyB64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    }
+  ],
+  "chainId": 84532,
+  "asset": "0x1111111111111111111111111111111111111111",
+  "allowedRecipients": [
+    "0x2222222222222222222222222222222222222222"
+  ],
+  "maxAmountAtomic": "1000000",
+  "maxTtlSeconds": 300,
+  "maxFutureSkewSeconds": 5,
+  "baseRpcProviders": [
+    {
+      "name": "provider-a",
+      "url": "https://replace-provider-a.example"
+    },
+    {
+      "name": "provider-b",
+      "url": "https://replace-provider-b.example"
+    }
+  ],
+  "primaryBaseRpc": "provider-a",
+  "observerQuorum": 2,
+  "maxHeadSkew": 2,
+  "stallThresholdSeconds": 120,
+  "maxFutureBlockSkewSeconds": 5,
+  "walletRpcUrl": "http://127.0.0.1:8550",
+  "sender": "0x3333333333333333333333333333333333333333",
+  "maxGasLimit": 100000,
+  "maxFeePerGasWei": "10000000000",
+  "maxPriorityFeePerGasWei": "2000000000",
+  "nonceJournalPath": "/var/lib/flowops/nonces.log",
+  "attemptJournalPath": "/var/lib/flowops/attempts.log",
+  "freezeFilePath": "/etc/flowops/freeze.json",
+  "receiptKeyId": "replace-receipt-key",
+  "receiptPrivateKeyPath": "/run/secrets/flowops-receipt-key",
+  "controlApiUrl": "https://replace-control-api.example",
+  "requestTimeoutSeconds": 10
+}

@@ -1,10 +1,11 @@
 # Customer reference signer
 
-Status: verifier, durable nonce store, one-way executor, signed receipt, and
-strict callback transport implemented; wallet adapter, runnable packaging, and
-live Base Sepolia execution remain open
+Status: verifier, durable nonce store, one-way executor, signed receipt,
+strict callback transport, Clef direct-USDC adapter, and runnable command
+implemented; live Base Sepolia execution remains separately approved and open
 
-Package: `pkg/referencesigner`
+Packages: `pkg/referencesigner`, `pkg/referencewallet`
+Command: `cmd/reference-signer`
 
 ## Why it exists
 
@@ -18,8 +19,8 @@ and a Base transaction.
 - customer-configured FlowOps public trust roots;
 - exact local organization/customer identity, chain, rail, asset, recipient,
   amount, TTL, freeze, and chain-health policy;
-- a customer wallet adapter that prepares and broadcasts one exact signed
-  direct-USDC transaction; and
+- a customer-run Clef-compatible wallet that prepares one exact signed
+  direct-USDC transaction without exposing its key; and
 - a separate customer Ed25519 key used only to attest the broadcast result.
 
 ## Internal behavior
@@ -53,16 +54,17 @@ evidence before recognizing settlement.
 ## Verification
 
 ```sh
-go test -race ./pkg/referencesigner ./pkg/broadcastreceipt
-make smoke-signer-executor
+go test -race ./cmd/reference-signer ./pkg/referencesigner ./pkg/referencewallet ./pkg/broadcastreceipt
+make smoke-reference-signer
 ```
 
-The smoke target uses deterministic fake wallet and callback adapters. It never
-loads a wallet key, contacts Base, or moves funds.
+The smoke target executes the full command wiring against in-memory Base, Clef,
+and FlowOps transports. It validates a real signed EIP-1559 transaction but
+never contacts Base or moves funds.
 
 ## Remaining integration gate
 
-Implement and independently review a concrete customer wallet adapter and
-runnable sidecar. Then execute a separately approved, capped Base Sepolia test
-with a designated customer wallet and configured receipt public key. This
-module does not authorize that funded test by itself.
+Independently review the adapter and runnable command, then execute a separately
+approved, capped Base Sepolia test with a designated customer wallet and
+configured receipt public key. This module does not authorize that funded test
+by itself, and mainnet remains blocked.

@@ -36,9 +36,15 @@ func OpenFileNonceStore(path string) (*FileNonceStore, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("nonce journal path is required")
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	file, created, err := openNonceJournalFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open nonce journal: %w", err)
+	}
+	if created {
+		if err := syncParentDirectory(path); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("sync nonce journal directory: %w", err)
+		}
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = file.Close()
@@ -56,6 +62,27 @@ func OpenFileNonceStore(path string) (*FileNonceStore, error) {
 		return nil, fmt.Errorf("seek nonce journal: %w", err)
 	}
 	return store, nil
+}
+
+func openNonceJournalFile(path string) (*os.File, bool, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	created := err == nil
+	if errors.Is(err, os.ErrExist) {
+		file, err = os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, false, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		_ = file.Close()
+		return nil, false, errors.New("journal must be a regular file inaccessible to group and other users")
+	}
+	return file, created, nil
 }
 
 func (s *FileNonceStore) replay() error {
