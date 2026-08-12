@@ -25,7 +25,7 @@ export type DashboardSnapshot = {
     spentToday: string;
     monthlySpent: string;
     monthlyBudget: string;
-    monthlySpentPercent: number;
+    monthlySpentPercent: number | null;
   };
   approvals: Approval[];
   agents: Agent[];
@@ -44,7 +44,7 @@ export type Approval = {
   expires: string;
   reason: string;
   risk: "low" | "medium" | "high";
-  rail: "Direct x402" | "Escrowed call";
+  rail: "Direct x402" | "Direct payment" | "Escrowed call";
   policyVersion?: string;
   requestDigest?: string;
   evidenceRefs?: string;

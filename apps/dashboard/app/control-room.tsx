@@ -263,7 +263,7 @@ function Overview({
         <div className="balance-card primary-balance">
           <span>Observed treasury / USDC</span>
           <strong>{snapshot.money.total}</strong>
-          <small><i /> Read-only aggregate across customer-controlled signers</small>
+          <small><i /> {snapshot.mode === "live" ? "Ledger aggregates are not exposed by this snapshot" : "Read-only aggregate across customer-controlled signers"}</small>
           <div className="balance-signal" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /></div>
         </div>
         <MoneyCard label="Available" value={snapshot.money.available} tone="good" />
@@ -299,17 +299,17 @@ function Overview({
         </section>
 
         <section className="panel budget-panel">
-          <PanelHeader kicker="Budget" title="August spend" meta="On track" />
+          <PanelHeader kicker="Budget" title="August spend" meta={snapshot.money.monthlySpentPercent === null ? "Unavailable" : "On track"} />
           <div className="budget-total">
             <strong>{snapshot.money.spentToday}</strong>
             <span>spent today</span>
           </div>
           <div className="progress-label">
             <span>Monthly usage</span>
-            <strong>{snapshot.money.monthlySpentPercent}%</strong>
+            <strong>{snapshot.money.monthlySpentPercent === null ? "Unavailable" : `${snapshot.money.monthlySpentPercent}%`}</strong>
           </div>
-          <div className="progress-track" aria-label={`${snapshot.money.monthlySpentPercent}% of monthly budget used`}>
-            <i style={{ width: `${snapshot.money.monthlySpentPercent}%` }} />
+          <div className="progress-track" aria-label={snapshot.money.monthlySpentPercent === null ? "Monthly budget usage is unavailable" : `${snapshot.money.monthlySpentPercent}% of monthly budget used`}>
+            <i style={{ width: `${snapshot.money.monthlySpentPercent ?? 0}%` }} />
           </div>
           <div className="budget-foot">
             <span>{snapshot.money.monthlySpent} spent</span>
@@ -537,7 +537,8 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
 }
 
 function MoneyCard({ label, value, tone }: { label: string; value: string; tone: string }) {
-  return <div className={`balance-card compact ${tone}`}><span>{label}</span><strong>{value}</strong><small><i /> {tone === "good" ? "Spendable now" : tone === "risk" ? "Needs review" : "Tracked separately"}</small></div>;
+  const detail = value === "Not available" ? "Not exposed by control plane" : tone === "good" ? "Spendable now" : tone === "risk" ? "Needs review" : "Tracked separately";
+  return <div className={`balance-card compact ${tone}`}><span>{label}</span><strong>{value}</strong><small><i /> {detail}</small></div>;
 }
 
 function AgentMark({ mark }: { mark: string }) { return <span className="agent-mark" aria-hidden="true">{mark}</span>; }

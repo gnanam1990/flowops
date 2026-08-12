@@ -117,6 +117,8 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.match(html, /Buy verified dataset/);
   assert.match(html, /1\.25 USDC/);
   assert.match(html, /Ledger aggregates not exposed/);
+  assert.match(html, /Monthly usage<\/span><strong>Unavailable/);
+  assert.doesNotMatch(html, /On track|Spendable now/);
   assert.doesNotMatch(html, /Northstar Labs|\$15,140\.00|Signal Harbor/);
   assert.doesNotMatch(html, new RegExp(exchangeToken));
   assert.doesNotMatch(html, new RegExp(sessionToken.replaceAll(".", "\\.")));

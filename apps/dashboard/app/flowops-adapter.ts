@@ -165,7 +165,9 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     raw?.live !== true ||
     raw.organizationId !== sessionOrganizationId ||
     raw.organization?.id !== sessionOrganizationId ||
-    !raw.organization?.name?.trim() ||
+    typeof raw.organization?.name !== "string" ||
+    !raw.organization.name.trim() ||
+    raw.organization.name.length > 200 ||
     !Array.isArray(raw.pendingApprovals) ||
     !Array.isArray(raw.agents) ||
     !isChainState(raw.chain?.state)
@@ -186,6 +188,9 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   }));
   const risks = liveRisks(raw, agents, generatedAt);
   const checkpoint = raw.chain.lastTrusted;
+  if (checkpoint && (!Number.isSafeInteger(checkpoint.blockNumber) || checkpoint.blockNumber < 0)) {
+    throw new Error("invalid checkpoint");
+  }
   const checkpointTime = checkpoint ? parseDate(checkpoint.observedAt) : null;
   const unavailable = "Not available";
   return {
@@ -212,7 +217,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
       spentToday: unavailable,
       monthlySpent: unavailable,
       monthlyBudget: unavailable,
-      monthlySpentPercent: 0,
+      monthlySpentPercent: null,
     },
     approvals,
     agents,
@@ -222,7 +227,15 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
 }
 
 function mapAgent(raw: ControlAgent): Agent {
-  if (!isIdentifier(raw?.id) || !raw.name?.trim() || !isAgentStatus(raw.status)) throw new Error("invalid agent");
+  if (
+    !isIdentifier(raw?.id) ||
+    typeof raw.name !== "string" ||
+    !raw.name.trim() ||
+    raw.name.length > 200 ||
+    typeof raw.purpose !== "string" ||
+    raw.purpose.length > 1_024 ||
+    !isAgentStatus(raw.status)
+  ) throw new Error("invalid agent");
   return {
     id: raw.id,
     name: raw.name,
@@ -238,7 +251,20 @@ function mapAgent(raw: ControlAgent): Agent {
 }
 
 function mapApproval(raw: ControlApproval, names: Map<string, string>, observedAt: Date): Approval {
-  if (!isIdentifier(raw?.requestId) || !isIdentifier(raw.intent?.agentId) || !/^\d+$/.test(raw.intent?.amountAtomic ?? "")) {
+  if (
+    !isIdentifier(raw?.requestId) ||
+    !/^0x[0-9a-f]{64}$/.test(raw.requestDigest) ||
+    !Number.isSafeInteger(raw.submittedAt) ||
+    raw.submittedAt <= 0 ||
+    !Number.isSafeInteger(raw.approvalExpiresAt) ||
+    raw.approvalExpiresAt <= raw.submittedAt ||
+    !isIdentifier(raw.intent?.agentId) ||
+    !isIdentifier(raw.intent?.taskId) ||
+    typeof raw.intent.purpose !== "string" ||
+    raw.intent.purpose.length > 1_024 ||
+    !/^0x[0-9a-f]{40}$/.test(raw.intent.recipient) ||
+    !/^\d{1,78}$/.test(raw.intent.amountAtomic ?? "")
+  ) {
     throw new Error("invalid approval");
   }
   const agent = names.get(raw.intent.agentId) ?? raw.intent.agentId;
@@ -254,7 +280,7 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
     expires: durationUntil(raw.approvalExpiresAt, observedAt),
     reason: humanize(raw.decision?.reason || "POLICY_REQUIRES_APPROVAL"),
     risk: riskForReason(raw.decision?.reason),
-    rail: raw.intent.rail === "ESCROW" ? "Escrowed call" : "Direct x402",
+    rail: mapRail(raw.intent.rail),
     policyVersion: raw.decision?.policyVersion || "Not exposed",
     requestDigest: shortDigest(raw.requestDigest),
     evidenceRefs: "Not issued before decision",
@@ -357,4 +383,11 @@ function humanize(value: string): string {
 function riskForReason(value: string | undefined): Approval["risk"] {
   if (value === "DAILY_BUDGET_EXCEEDED" || value === "TASK_BUDGET_EXCEEDED") return "high";
   return value === "HUMAN_APPROVAL_THRESHOLD" ? "medium" : "low";
+}
+
+function mapRail(value: string): Approval["rail"] {
+  if (value === "X402") return "Direct x402";
+  if (value === "DIRECT") return "Direct payment";
+  if (value === "ESCROW") return "Escrowed call";
+  throw new Error("invalid rail");
 }
