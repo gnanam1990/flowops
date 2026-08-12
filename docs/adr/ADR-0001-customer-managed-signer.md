@@ -12,7 +12,9 @@ The reference signer is a P0 product artifact, not example code. It must be inst
 ## Mandatory local checks
 
 - FlowOps tenant and signer trust root
-- organization, agent, task, action, and rail IDs
+- an exact locally configured organization and customer identity; a valid
+  FlowOps envelope for any other tenant or customer is refused
+- agent, task, action, and rail IDs
 - canonical intent digest and policy version
 - recipient, asset, amount ceiling, chain ID, and contract/resource
 - issued-at, expiry, and one-time nonce

@@ -11,17 +11,21 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
+var localIdentifierPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
+
 type RefusalCode string
 
 const (
 	RefusalUnknownTrustKey RefusalCode = "UNKNOWN_TRUST_KEY"
 	RefusalBadSignature    RefusalCode = "BAD_SIGNATURE"
+	RefusalIdentity        RefusalCode = "IDENTITY_NOT_ALLOWED"
 	RefusalNotYetValid     RefusalCode = "NOT_YET_VALID"
 	RefusalExpired         RefusalCode = "EXPIRED"
 	RefusalTTLTooLong      RefusalCode = "TTL_TOO_LONG"
@@ -57,6 +61,8 @@ type FreezeGate interface {
 }
 
 type Config struct {
+	OrganizationID    string
+	CustomerID        string
 	TrustKeys         map[string]ed25519.PublicKey
 	AllowedChainIDs   []uint64
 	AllowedRails      []envelope.Rail
@@ -72,18 +78,20 @@ type Config struct {
 }
 
 type Verifier struct {
-	trustKeys     map[string]ed25519.PublicKey
-	chains        map[uint64]struct{}
-	rails         map[envelope.Rail]struct{}
-	assets        map[string]struct{}
-	recipients    map[string]struct{}
-	maxAmount     *big.Int
-	maxTTL        time.Duration
-	maxFutureSkew time.Duration
-	clock         func() time.Time
-	chainGate     ChainGate
-	freezeGate    FreezeGate
-	nonces        NonceStore
+	organizationID string
+	customerID     string
+	trustKeys      map[string]ed25519.PublicKey
+	chains         map[uint64]struct{}
+	rails          map[envelope.Rail]struct{}
+	assets         map[string]struct{}
+	recipients     map[string]struct{}
+	maxAmount      *big.Int
+	maxTTL         time.Duration
+	maxFutureSkew  time.Duration
+	clock          func() time.Time
+	chainGate      ChainGate
+	freezeGate     FreezeGate
+	nonces         NonceStore
 }
 
 type Authorized struct {
@@ -94,6 +102,9 @@ type Authorized struct {
 }
 
 func New(cfg Config) (*Verifier, error) {
+	if !localIdentifierPattern.MatchString(cfg.OrganizationID) || !localIdentifierPattern.MatchString(cfg.CustomerID) {
+		return nil, errors.New("local organization and customer identities are required")
+	}
 	if len(cfg.TrustKeys) == 0 {
 		return nil, errors.New("at least one FlowOps trust key is required")
 	}
@@ -111,18 +122,20 @@ func New(cfg Config) (*Verifier, error) {
 		return nil, fmt.Errorf("max amount: %w", err)
 	}
 	v := &Verifier{
-		trustKeys:     make(map[string]ed25519.PublicKey, len(cfg.TrustKeys)),
-		chains:        make(map[uint64]struct{}, len(cfg.AllowedChainIDs)),
-		rails:         make(map[envelope.Rail]struct{}, len(cfg.AllowedRails)),
-		assets:        make(map[string]struct{}, len(cfg.AllowedAssets)),
-		recipients:    make(map[string]struct{}, len(cfg.AllowedRecipients)),
-		maxAmount:     maxAmount,
-		maxTTL:        cfg.MaxTTL,
-		maxFutureSkew: cfg.MaxFutureSkew,
-		clock:         cfg.Clock,
-		chainGate:     cfg.ChainGate,
-		freezeGate:    cfg.FreezeGate,
-		nonces:        cfg.Nonces,
+		organizationID: cfg.OrganizationID,
+		customerID:     cfg.CustomerID,
+		trustKeys:      make(map[string]ed25519.PublicKey, len(cfg.TrustKeys)),
+		chains:         make(map[uint64]struct{}, len(cfg.AllowedChainIDs)),
+		rails:          make(map[envelope.Rail]struct{}, len(cfg.AllowedRails)),
+		assets:         make(map[string]struct{}, len(cfg.AllowedAssets)),
+		recipients:     make(map[string]struct{}, len(cfg.AllowedRecipients)),
+		maxAmount:      maxAmount,
+		maxTTL:         cfg.MaxTTL,
+		maxFutureSkew:  cfg.MaxFutureSkew,
+		clock:          cfg.Clock,
+		chainGate:      cfg.ChainGate,
+		freezeGate:     cfg.FreezeGate,
+		nonces:         cfg.Nonces,
 	}
 	if v.clock == nil {
 		v.clock = time.Now
@@ -171,6 +184,9 @@ func (v *Verifier) Authorize(ctx context.Context, signed envelope.SignedAuthoriz
 		return Authorized{}, refuse(RefusalBadSignature, err)
 	}
 	a := signed.Authorization
+	if a.OrganizationID != v.organizationID || a.CustomerID != v.customerID {
+		return Authorized{}, refuse(RefusalIdentity, errors.New("authorization is not bound to this customer signer"))
+	}
 	now := v.clock().UTC()
 	issuedAt := time.Unix(a.IssuedAt, 0)
 	expiresAt := time.Unix(a.ExpiresAt, 0)

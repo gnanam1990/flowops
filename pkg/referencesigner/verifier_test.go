@@ -80,6 +80,7 @@ func newTestVerifier(t *testing.T, now time.Time, chainGate, freezeGate *mutable
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	verifier, err := New(Config{
+		OrganizationID: "org_demo", CustomerID: "cust_acme",
 		TrustKeys:         map[string]ed25519.PublicKey{"flowops_control_1": publicKey},
 		AllowedChainIDs:   []uint64{84532},
 		AllowedRails:      []envelope.Rail{envelope.RailX402},
@@ -135,6 +136,7 @@ func TestAuthorizeClaimsNonceExactlyOnceAndSurvivesRestart(t *testing.T) {
 	}
 	defer replayedStore.Close()
 	restarted, err := New(Config{
+		OrganizationID: "org_demo", CustomerID: "cust_acme",
 		TrustKeys: map[string]ed25519.PublicKey{"flowops_control_1": publicKey}, AllowedChainIDs: []uint64{84532},
 		AllowedRails: []envelope.Rail{envelope.RailX402}, AllowedAssets: []string{testUSDC}, AllowedRecipients: []string{testRecipient},
 		MaxAmountAtomic: "100000", MaxTTL: 10 * time.Minute, MaxFutureSkew: 30 * time.Second, Clock: func() time.Time { return now },
@@ -168,6 +170,25 @@ func TestConcurrentReplayAdmitsExactlyOne(t *testing.T) {
 	wg.Wait()
 	if got := admitted.Load(); got != 1 {
 		t.Fatalf("admitted %d, want exactly 1", got)
+	}
+}
+
+func TestSignerRejectsValidFlowOpsEnvelopeForAnotherCustomer(t *testing.T) {
+	now := time.Date(2026, 8, 11, 14, 0, 0, 0, time.UTC)
+	verifier, privateKey, _ := newTestVerifier(t, now, &mutableGate{}, &mutableGate{})
+
+	for name, mutate := range map[string]func(*envelope.Authorization){
+		"organization": func(a *envelope.Authorization) { a.OrganizationID = "org_other" },
+		"customer":     func(a *envelope.Authorization) { a.CustomerID = "cust_other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			authorization := testAuthorization(now)
+			mutate(&authorization)
+			signed := signTest(t, authorization, privateKey)
+			if _, err := verifier.Authorize(context.Background(), signed); !RefusalIs(err, RefusalIdentity) {
+				t.Fatalf("identity substitution error = %v, want %s", err, RefusalIdentity)
+			}
+		})
 	}
 }
 
