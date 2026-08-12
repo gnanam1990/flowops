@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -30,8 +32,29 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.address != defaultAddress || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 {
+	if cfg.address != defaultAddress || cfg.trustProxy || !cfg.applyMigrations || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 {
 		t.Fatalf("configuration was not normalized: %+v", cfg)
+	}
+}
+
+func TestLoadConfigCanDisableRuntimeMigrations(t *testing.T) {
+	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("m", ed25519.SeedSize)))
+	t.Setenv("FLOWOPS_DATABASE_URL", "postgres://flowops@localhost/flowops?sslmode=require")
+	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
+	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
+	t.Setenv("FLOWOPS_SITE_SESSION_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
+	t.Setenv("FLOWOPS_RECONCILIATION_JOURNAL", "/var/lib/flowops/reconciliation.log")
+	t.Setenv("FLOWOPS_APPLY_MIGRATIONS", "false")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.applyMigrations {
+		t.Fatal("runtime migrations remained enabled")
+	}
+	t.Setenv("FLOWOPS_APPLY_MIGRATIONS", "yes")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("invalid migration toggle was accepted")
 	}
 }
 
@@ -46,14 +69,66 @@ func TestDecodeSymmetricKeyRejectsWrongLengthAndEncoding(t *testing.T) {
 
 func TestControlPlaneListenAddressIsLoopbackOnly(t *testing.T) {
 	for _, address := range []string{"127.0.0.1:8080", "127.1.2.3:8080", "[::1]:8080"} {
-		if err := validateListenAddress(address); err != nil {
+		if err := validateListenAddress(address, false); err != nil {
 			t.Errorf("accepted address %q: %v", address, err)
 		}
 	}
 	for _, address := range []string{"0.0.0.0:8080", "[::]:8080", "192.0.2.1:8080", "localhost:8080", "example.com:8080", ":8080", "not-an-address"} {
-		if err := validateListenAddress(address); err == nil {
+		if err := validateListenAddress(address, false); err == nil {
 			t.Errorf("non-loopback address %q was accepted", address)
 		}
+	}
+	for _, address := range []string{"0.0.0.0:8080", "[::]:8080"} {
+		if err := validateListenAddress(address, true); err != nil {
+			t.Errorf("trusted proxy address %q: %v", address, err)
+		}
+	}
+}
+
+func TestProxyTransportBoundaryRejectsUntrustedPlaintext(t *testing.T) {
+	next := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) })
+	handler := enforceTransportSecurity(next, true)
+
+	tests := []struct {
+		path, forwarded string
+		want            int
+	}{
+		{path: "/health", want: http.StatusNoContent},
+		{path: "/v1/dashboard/snapshot", forwarded: "https", want: http.StatusNoContent},
+		{path: "/v1/dashboard/snapshot", forwarded: "HTTPS, http", want: http.StatusNoContent},
+		{path: "/v1/dashboard/snapshot", forwarded: "http", want: http.StatusBadRequest},
+		{path: "/v1/dashboard/snapshot", want: http.StatusBadRequest},
+	}
+	for _, item := range tests {
+		request := httptest.NewRequest(http.MethodGet, item.path, nil)
+		request.Header.Set("X-Forwarded-Proto", item.forwarded)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != item.want {
+			t.Errorf("%s forwarded=%q status=%d want=%d", item.path, item.forwarded, recorder.Code, item.want)
+		}
+	}
+}
+
+func TestLoadConfigUsesPlatformPortOnlyWithExplicitProxyTrust(t *testing.T) {
+	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", ed25519.SeedSize)))
+	t.Setenv("FLOWOPS_DATABASE_URL", "postgres://flowops@localhost/flowops?sslmode=require")
+	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
+	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
+	t.Setenv("FLOWOPS_SITE_SESSION_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
+	t.Setenv("FLOWOPS_RECONCILIATION_JOURNAL", "/var/lib/flowops/reconciliation.log")
+	t.Setenv("FLOWOPS_CONTROL_ADDR", "")
+	t.Setenv("PORT", "9090")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("platform port accepted without explicit trusted proxy mode")
+	}
+	t.Setenv("FLOWOPS_TRUST_PROXY_HEADERS", "true")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.address != "0.0.0.0:9090" || !cfg.trustProxy {
+		t.Fatalf("platform config = %+v", cfg)
 	}
 }
 

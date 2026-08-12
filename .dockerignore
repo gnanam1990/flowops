@@ -1,0 +1,15 @@
+.git
+.github
+.openai
+apps
+contracts
+docs
+lib
+out
+testdata
+**/node_modules
+**/dist
+**/.next
+**/.wrangler
+*.log
+.env*
