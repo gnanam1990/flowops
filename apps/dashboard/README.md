@@ -4,10 +4,11 @@ The dashboard is the human control surface for FlowOps. It keeps agent budgets,
 exact-intent approvals, Base chain health, economic evidence, and emergency
 controls visible in one place.
 
-The current module deliberately renders an immutable preview snapshot. Actions
-that would change economic state are disabled until the authenticated FlowOps
-control-plane adapter is connected; the UI never reports a preview action as a
-real approval, denial, payment, refund, or pause.
+The module renders membership-authorized live control-plane reads when its
+server environment is configured, and otherwise falls back to an immutable,
+explicitly labelled preview. Actions that would change economic state remain
+disabled because the short-lived dashboard session deliberately has no step-up
+authority.
 
 ## Local development
 
@@ -19,6 +20,10 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+Copy `.env.example` to an ignored local environment file only when testing
+against an authorized control plane. The exchange token is server-only and must
+be configured through Sites environment variables in hosted deployments.
 
 ## Verification
 
@@ -34,8 +39,8 @@ starter copy or fabricated preview success states.
 
 ## Boundaries
 
-- ChatGPT/Sites identity headers may personalize the viewer display. They do
-  not grant FlowOps organization membership or authorization by themselves.
+- ChatGPT/Sites identity headers never grant FlowOps membership by themselves.
+  Live reads require the exact server-side exchange defined by ADR-0011.
 - The Go control plane remains the canonical application-data and write path.
 - No D1 or R2 binding is configured for this module.
 - Runtime dependencies must pass the high-severity audit gate. The vinext build

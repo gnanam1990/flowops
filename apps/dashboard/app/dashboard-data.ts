@@ -1,5 +1,9 @@
 export type DashboardSnapshot = {
   mode: "preview" | "live";
+  connection: {
+    label: string;
+    detail: string;
+  };
   generatedAt: string;
   organization: {
     name: string;
@@ -19,6 +23,7 @@ export type DashboardSnapshot = {
     pending: string;
     unresolved: string;
     spentToday: string;
+    monthlySpent: string;
     monthlyBudget: string;
     monthlySpentPercent: number;
   };
@@ -40,6 +45,9 @@ export type Approval = {
   reason: string;
   risk: "low" | "medium" | "high";
   rail: "Direct x402" | "Escrowed call";
+  policyVersion?: string;
+  requestDigest?: string;
+  evidenceRefs?: string;
 };
 
 export type Agent = {
@@ -47,7 +55,7 @@ export type Agent = {
   name: string;
   mark: string;
   purpose: string;
-  status: "ACTIVE" | "PAUSED" | "QUARANTINED";
+  status: "DRAFT" | "ACTIVE" | "PAUSED" | "QUARANTINED" | "REVOKED" | "ARCHIVED";
   available: string;
   spent: string;
   limit: string;
@@ -74,6 +82,10 @@ export type Risk = {
 
 export const dashboardSnapshot: DashboardSnapshot = {
   mode: "preview",
+  connection: {
+    label: "Preview data",
+    detail: "The authenticated FlowOps control plane is not connected.",
+  },
   generatedAt: "18 seconds ago",
   organization: {
     name: "Northstar Labs",
@@ -93,6 +105,7 @@ export const dashboardSnapshot: DashboardSnapshot = {
     pending: "$840.00",
     unresolved: "$200.00",
     spentToday: "$428.40",
+    monthlySpent: "$7,428",
     monthlyBudget: "$20,000",
     monthlySpentPercent: 37,
   },
@@ -109,6 +122,9 @@ export const dashboardSnapshot: DashboardSnapshot = {
       reason: "New vendor and amount exceeds the agent’s $100 auto-limit.",
       risk: "medium",
       rail: "Escrowed call",
+      policyVersion: "pol_v14.2",
+      requestDigest: "0x83b1…0ca9",
+      evidenceRefs: "EV-APR-2048-02 · BASE-OBS-03",
     },
     {
       id: "APR-2047",
@@ -122,6 +138,9 @@ export const dashboardSnapshot: DashboardSnapshot = {
       reason: "First purchase from this endpoint version.",
       risk: "low",
       rail: "Direct x402",
+      policyVersion: "pol_v14.2",
+      requestDigest: "0x83b1…0ca9",
+      evidenceRefs: "EV-APR-2047-02 · BASE-OBS-03",
     },
     {
       id: "APR-2044",
@@ -135,6 +154,9 @@ export const dashboardSnapshot: DashboardSnapshot = {
       reason: "Daily vendor cap requires a Finance approver.",
       risk: "medium",
       rail: "Escrowed call",
+      policyVersion: "pol_v14.2",
+      requestDigest: "0x83b1…0ca9",
+      evidenceRefs: "EV-APR-2044-02 · BASE-OBS-03",
     },
   ],
   agents: [
