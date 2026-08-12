@@ -25,6 +25,10 @@ The reference signer is a P0 product artifact, not example code. It must be inst
 
 The customer can revoke FlowOps trust by removing the trust root or disabling the signer without FlowOps cooperation.
 
+ADR-0016 makes that revocation effective through the last pre-broadcast gate:
+the signed authorization and current trust root are re-verified after wallet
+preparation and immediately before the durable one-way broadcast boundary.
+
 ## Consequences
 
 - Avoids FlowOps operational control of customer wallets.

@@ -1,6 +1,7 @@
 // Package referencesigner provides the customer-run enforcement boundary for
-// FlowOps authorization envelopes. It verifies but never stores private keys and
-// does not implement broadcasting; wallet adapters consume successful results.
+// FlowOps authorization envelopes. It verifies but never stores private keys.
+// The one-way executor consumes successful results through a customer wallet
+// adapter without exposing wallet material to FlowOps.
 package referencesigner
 
 import (
@@ -173,57 +174,11 @@ func New(cfg Config) (*Verifier, error) {
 }
 
 func (v *Verifier) Authorize(ctx context.Context, signed envelope.SignedAuthorization) (Authorized, error) {
-	publicKey, ok := v.trustKeys[signed.KeyID]
-	if !ok {
-		return Authorized{}, refuse(RefusalUnknownTrustKey, errors.New("authorization key is not trusted"))
-	}
-	if err := envelope.Verify(signed, publicKey); err != nil {
-		return Authorized{}, refuse(RefusalBadSignature, err)
-	}
 	a := signed.Authorization
-	if a.OrganizationID != v.organizationID || a.CustomerID != v.customerID {
-		return Authorized{}, refuse(RefusalIdentity, errors.New("authorization is not bound to this customer signer"))
+	if err := v.CheckExecution(ctx, signed); err != nil {
+		return Authorized{}, err
 	}
 	now := v.clock().UTC()
-	issuedAt := time.Unix(a.IssuedAt, 0)
-	expiresAt := time.Unix(a.ExpiresAt, 0)
-	if issuedAt.After(now.Add(v.maxFutureSkew)) {
-		return Authorized{}, refuse(RefusalNotYetValid, errors.New("authorization issued in the future"))
-	}
-	if !now.Before(expiresAt) {
-		return Authorized{}, refuse(RefusalExpired, errors.New("authorization window elapsed"))
-	}
-	if expiresAt.Sub(issuedAt) > v.maxTTL {
-		return Authorized{}, refuse(RefusalTTLTooLong, errors.New("authorization window exceeds local maximum"))
-	}
-	if _, ok := v.chains[a.ChainID]; !ok {
-		return Authorized{}, refuse(RefusalChain, errors.New("chain is not locally allowed"))
-	}
-	if _, ok := v.rails[a.Rail]; !ok {
-		return Authorized{}, refuse(RefusalRail, errors.New("rail is not locally allowed"))
-	}
-	if _, ok := v.assets[a.Asset]; !ok {
-		return Authorized{}, refuse(RefusalAsset, errors.New("asset is not locally allowed"))
-	}
-	if _, ok := v.recipients[a.Recipient]; !ok {
-		return Authorized{}, refuse(RefusalRecipient, errors.New("recipient is not locally allowed"))
-	}
-	amount, err := parsePositive(a.AmountAtomic)
-	if err != nil || amount.Cmp(v.maxAmount) > 0 {
-		return Authorized{}, refuse(RefusalAmount, errors.New("amount exceeds local cap"))
-	}
-	var chainErr error
-	if strictGate, ok := v.chainGate.(authorizationChainGate); ok {
-		chainErr = strictGate.CheckAuthorizationChain(ctx, a)
-	} else {
-		chainErr = v.chainGate.CheckChain(ctx, a.ChainID)
-	}
-	if chainErr != nil {
-		return Authorized{}, refuse(RefusalChainUnhealthy, chainErr)
-	}
-	if err := v.freezeGate.CheckFrozen(ctx, a); err != nil {
-		return Authorized{}, refuse(RefusalFrozen, err)
-	}
 	digest, err := a.Digest()
 	if err != nil {
 		return Authorized{}, refuse(RefusalBadSignature, err)
@@ -241,6 +196,68 @@ func (v *Verifier) Authorize(ctx context.Context, signed envelope.SignedAuthoriz
 		KeyID:         signed.KeyID,
 		ClaimedAt:     now.Unix(),
 	}, nil
+}
+
+// CheckExecution repeats trust-root verification and every local policy, time,
+// freeze, and chain gate without claiming the nonce again. The executor calls
+// it immediately before durably entering BROADCASTING, so removing FlowOps
+// trust or observing a halt/freeze during preparation still stops network I/O.
+func (v *Verifier) CheckExecution(ctx context.Context, signed envelope.SignedAuthorization) error {
+	publicKey, ok := v.trustKeys[signed.KeyID]
+	if !ok {
+		return refuse(RefusalUnknownTrustKey, errors.New("authorization key is not trusted"))
+	}
+	if err := envelope.Verify(signed, publicKey); err != nil {
+		return refuse(RefusalBadSignature, err)
+	}
+	return v.checkAuthorization(ctx, signed.Authorization)
+}
+
+func (v *Verifier) checkAuthorization(ctx context.Context, a envelope.Authorization) error {
+	if a.OrganizationID != v.organizationID || a.CustomerID != v.customerID {
+		return refuse(RefusalIdentity, errors.New("authorization is not bound to this customer signer"))
+	}
+	now := v.clock().UTC()
+	issuedAt := time.Unix(a.IssuedAt, 0)
+	expiresAt := time.Unix(a.ExpiresAt, 0)
+	if issuedAt.After(now.Add(v.maxFutureSkew)) {
+		return refuse(RefusalNotYetValid, errors.New("authorization issued in the future"))
+	}
+	if !now.Before(expiresAt) {
+		return refuse(RefusalExpired, errors.New("authorization window elapsed"))
+	}
+	if expiresAt.Sub(issuedAt) > v.maxTTL {
+		return refuse(RefusalTTLTooLong, errors.New("authorization window exceeds local maximum"))
+	}
+	if _, ok := v.chains[a.ChainID]; !ok {
+		return refuse(RefusalChain, errors.New("chain is not locally allowed"))
+	}
+	if _, ok := v.rails[a.Rail]; !ok {
+		return refuse(RefusalRail, errors.New("rail is not locally allowed"))
+	}
+	if _, ok := v.assets[a.Asset]; !ok {
+		return refuse(RefusalAsset, errors.New("asset is not locally allowed"))
+	}
+	if _, ok := v.recipients[a.Recipient]; !ok {
+		return refuse(RefusalRecipient, errors.New("recipient is not locally allowed"))
+	}
+	amount, err := parsePositive(a.AmountAtomic)
+	if err != nil || amount.Cmp(v.maxAmount) > 0 {
+		return refuse(RefusalAmount, errors.New("amount exceeds local cap"))
+	}
+	var chainErr error
+	if strictGate, ok := v.chainGate.(authorizationChainGate); ok {
+		chainErr = strictGate.CheckAuthorizationChain(ctx, a)
+	} else {
+		chainErr = v.chainGate.CheckChain(ctx, a.ChainID)
+	}
+	if chainErr != nil {
+		return refuse(RefusalChainUnhealthy, chainErr)
+	}
+	if err := v.freezeGate.CheckFrozen(ctx, a); err != nil {
+		return refuse(RefusalFrozen, err)
+	}
+	return nil
 }
 
 func claimKey(keyID string, a envelope.Authorization) string {

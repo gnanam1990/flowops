@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-escrow
+.PHONY: test check fmt-check solidity-fmt-check dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-escrow
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -39,6 +39,9 @@ smoke-evidence-fetch:
 
 smoke-reconciliation:
 	go test -race -run '^(TestHaltDrillPreservesAmbiguousExecutionAndRecoversOnce|TestCanonicalReorgReversesLedgerAndRequiresFreshOutcome|TestWorkerFinalizesCanonicalReceiptExactlyOnce|TestWorkerPersistsPositiveFinalityAndDoesNotPollItAgain|TestWorkerReorgAtomicallyReversesSettlement|TestSmokeChainHaltStopsBothAuthorizationBoundaries)$$' ./internal/reconciliation ./internal/controlplane
+
+smoke-signer-executor:
+	go test -race -run '^(TestExecutorBroadcastsAndRegistersExactlyOnce|TestExecutorBroadcastErrorBecomesDurableAmbiguousWithoutRetry|TestLostLocalRegistrationAckRetriesReceiptOnlyAfterRestart|TestRestartFromPreparedBroadcastsOnce|TestRestartFromBroadcastingMarksAmbiguousWithoutWallet|TestRemovingFlowOpsTrustStopsPreparedAttempt)$$' ./pkg/referencesigner
 
 smoke-escrow:
 	forge test --match-path contracts/test/CallEscrow.t.sol --match-test 'test_(acceptDeliveryOnlyBuyerAndPaysOnlyProvider|refundAcknowledgedButUndeliveredOnlyAfterDeliveryDeadline|reentrancyCannotFinalizeAnotherExpiredPosition)' -vv

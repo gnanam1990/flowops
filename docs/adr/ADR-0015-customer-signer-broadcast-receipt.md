@@ -68,11 +68,11 @@ restores the proof from the original broadcast event if that legacy binary
 later appends a resolution without it. This prevents a rollback-and-roll-forward
 cycle from erasing the attestation.
 
-The customer-side transaction executor remains responsible for durably
-entering a one-way broadcast state before network I/O. Any result after the RPC
-call begins is either submitted or ambiguous and must produce this receipt;
-neither outcome authorizes a second broadcast. That executor and concrete
-EOA/HSM adapters are a separate module.
+The customer-side transaction executor defined by ADR-0016 durably enters a
+one-way broadcast state before network I/O. Any result after that boundary is
+either submitted or ambiguous and must produce this receipt; neither outcome
+authorizes a second broadcast. Concrete EOA/HSM adapters and runnable packaging
+remain separate modules.
 
 ## Trust and rotation
 
