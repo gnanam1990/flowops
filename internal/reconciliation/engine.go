@@ -303,6 +303,45 @@ func (e *Engine) RegisterBroadcast(ctx context.Context, expected ExpectedExecuti
 	return cloneExecution(execution), nil
 }
 
+// RegisterAttestedBroadcast records a transaction that the customer-controlled
+// signer may already have submitted. Unlike RegisterBroadcast, it must remain
+// available after Base becomes unhealthy: refusing the callback would discard
+// the only durable handle for an ambiguous payment. An unhealthy chain places
+// the execution directly into PENDING_CHAIN_RECOVERY.
+func (e *Engine) RegisterAttestedBroadcast(ctx context.Context, expected ExpectedExecution, broadcastAt time.Time) (Execution, error) {
+	if err := expected.validate(e.config.ChainID); err != nil {
+		return Execution{}, err
+	}
+	if broadcastAt.IsZero() {
+		return Execution{}, errors.New("broadcast time is required")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if existing, ok := e.executions[expected.ExecutionID]; ok {
+		if equalJSON(existing.Expected, expected) {
+			return cloneExecution(existing), nil
+		}
+		return Execution{}, ErrConflict
+	}
+	if other, ok := e.executionByHash[expected.TransactionHash]; ok && other != expected.ExecutionID {
+		return Execution{}, ErrConflict
+	}
+	now := e.config.Clock().UTC()
+	state := ExecutionBroadcast
+	if !e.chainUsable(now) {
+		state = ExecutionPendingChainRecovery
+	}
+	execution := Execution{Expected: expected, State: state, BroadcastAt: broadcastAt.UTC()}
+	event, err := e.journal.append(ctx, now, eventExecutionBroadcast, expected.ExecutionID, executionPayload{Execution: execution})
+	if err != nil {
+		return Execution{}, err
+	}
+	if err := e.apply(event); err != nil {
+		return Execution{}, err
+	}
+	return cloneExecution(execution), nil
+}
+
 func (e *Engine) ReconcileReceipt(ctx context.Context, executionID string, evidence []ReceiptEvidence, settlement *LedgerTransaction) (Execution, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

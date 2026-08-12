@@ -136,6 +136,64 @@ func receiptQuorum(expected ExpectedExecution, block uint64, success bool) []Rec
 	return []ReceiptEvidence{alpha, beta}
 }
 
+func TestAttestedBroadcastRegistersDuringHaltAndSurvivesRestart(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "reconciliation.log")
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	broadcastAt := clock.Now().Add(-time.Second)
+	expected := testExpected()
+	execution, err := engine.RegisterAttestedBroadcast(context.Background(), expected, broadcastAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.State != ExecutionPendingChainRecovery || !execution.BroadcastAt.Equal(broadcastAt) {
+		t.Fatalf("halt registration = %+v", execution)
+	}
+	if _, err := engine.RegisterBroadcast(context.Background(), ExpectedExecution{ExecutionID: "exec_other", OrganizationID: expected.OrganizationID, AgentID: expected.AgentID, TaskID: expected.TaskID, IntentDigest: expected.IntentDigest, TransactionHash: testHash(902), ChainID: expected.ChainID, Sender: expected.Sender, Asset: expected.Asset, Recipient: expected.Recipient, AmountAtomic: expected.AmountAtomic}); !errors.Is(err, ErrChainUnavailable) {
+		t.Fatalf("ordinary broadcast during halt = %v", err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	replayed, err := restarted.RegisterAttestedBroadcast(context.Background(), expected, broadcastAt)
+	if err != nil || replayed.State != ExecutionPendingChainRecovery || !replayed.BroadcastAt.Equal(broadcastAt) {
+		t.Fatalf("replayed registration = %+v, %v", replayed, err)
+	}
+}
+
+func TestAttestedBroadcastRejectsAuthorizationAndHashConflicts(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	expected := testExpected()
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	changedHash := expected
+	changedHash.TransactionHash = testHash(902)
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), changedHash, clock.Now()); !errors.Is(err, ErrConflict) {
+		t.Fatalf("authorization rebound to another hash: %v", err)
+	}
+	changedExecution := expected
+	changedExecution.ExecutionID = "exec_other"
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), changedExecution, clock.Now()); !errors.Is(err, ErrConflict) {
+		t.Fatalf("hash rebound to another execution: %v", err)
+	}
+}
+
 func settlement(now time.Time, executionID string) LedgerTransaction {
 	return LedgerTransaction{
 		TransactionID: "ledger_settlement_1", OrganizationID: "org_acme", Kind: LedgerSettlement,

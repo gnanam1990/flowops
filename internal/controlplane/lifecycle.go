@@ -388,6 +388,19 @@ func (l *Lifecycle) Get(requestID string) (Record, bool) {
 	return cloneRecord(record), ok
 }
 
+// GetByAuthorization resolves an issued authorization without trusting any
+// request metadata supplied by a customer signer callback.
+func (l *Lifecycle) GetByAuthorization(authorizationID string) (Record, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	requestID, ok := l.requestByAuthorization[authorizationID]
+	if !ok {
+		return Record{}, false
+	}
+	record, ok := l.records[requestID]
+	return cloneRecord(record), ok
+}
+
 func (l *Lifecycle) PendingApprovals() []Record {
 	l.mu.Lock()
 	defer l.mu.Unlock()

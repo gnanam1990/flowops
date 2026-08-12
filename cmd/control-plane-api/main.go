@@ -46,6 +46,7 @@ type startupConfig struct {
 	observerTimeout        time.Duration
 	reconciliationInterval time.Duration
 	reconciliationTimeout  time.Duration
+	signerReceiptKeys      []controlapi.BroadcastKey
 }
 
 func main() {
@@ -115,6 +116,17 @@ func run(ctx context.Context) error {
 	if _, err := lifecycle.SweepExpired(startupCtx); err != nil {
 		return fmt.Errorf("sweep expired approvals at startup: %w", err)
 	}
+	var signerBroadcasts controlapi.BroadcastRegistrar
+	if len(cfg.signerReceiptKeys) > 0 {
+		keys, err := controlapi.NewStaticBroadcastKeys(cfg.signerReceiptKeys)
+		if err != nil {
+			return fmt.Errorf("create customer signer receipt key registry: %w", err)
+		}
+		signerBroadcasts, err = controlapi.NewSignerBroadcastRegistrar(lifecycle, keys, reconciliationEngine, nil)
+		if err != nil {
+			return fmt.Errorf("create customer signer broadcast registrar: %w", err)
+		}
+	}
 	observers, err := reconciliation.NewObserverSet(cfg.observerConfig.ChainID, cfg.observerRPCs, nil, nil)
 	if err != nil {
 		return fmt.Errorf("create Base observer set: %w", err)
@@ -139,7 +151,7 @@ func run(ctx context.Context) error {
 	}
 	api, err := controlapi.NewServer(controlapi.ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
-		OperatorControlKey: cfg.operatorKey,
+		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts,
 	})
 	if err != nil {
 		return err
@@ -235,6 +247,11 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, err
 	}
 	cfg.operatorKey = operatorKey
+	signerReceiptKeys, err := parseSignerKeys(os.Getenv("FLOWOPS_SIGNER_RECEIPT_KEYS_JSON"))
+	if err != nil {
+		return startupConfig{}, err
+	}
+	cfg.signerReceiptKeys = signerReceiptKeys
 	observerRuntime, err := loadObserverRuntimeConfig()
 	if err != nil {
 		return startupConfig{}, err

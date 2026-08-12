@@ -29,8 +29,10 @@ For each journaled `BROADCAST` or `PENDING_CHAIN_RECOVERY` execution, the worker
 5. records a canonical revert without a ledger transaction.
 
 The worker never signs, broadcasts, replaces, or retries an onchain transaction.
-Only a future cryptographically bound customer-signer adapter may call
-`RegisterBroadcast` with the expected transaction data.
+Only the cryptographically bound customer-signer receipt registrar may add
+already-submitted expected transaction data. It uses the halt-safe attested
+registration path defined by ADR-0015; the worker itself still cannot create an
+execution.
 
 For each settled execution, the worker waits until the last trusted checkpoint
 is at least the configured reorg-lookback depth beyond the settlement. It then
@@ -63,10 +65,11 @@ preserve the settled execution instead of refusing the journal.
 ## Consequences
 
 The capped pilot now has an end-to-end durable reconciliation coordinator for
-already registered direct-USDC broadcasts. It does not yet have the signer
-adapter that supplies those broadcasts, escrow event decoding, transaction
-replacement/dropped handling, or dashboard exception controls. Those are
-separate modules and must not be inferred from an idle worker deployment.
+already registered direct-USDC broadcasts. It now accepts signer-attested
+transaction handles, but it does not yet have the customer-side one-way wallet
+executor, escrow event decoding, transaction replacement/dropped handling, or
+dashboard exception controls. Those are separate modules and must not be
+inferred from an idle no-funds worker deployment.
 
 ## Acceptance evidence
 
