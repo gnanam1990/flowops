@@ -193,6 +193,43 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.doesNotMatch(missingBindingsHtml, /Acme Operators|Live control plane/);
 });
 
+test("does not replay the Sites exchange credential across an upstream redirect", async (t) => {
+  let redirectedRequests = 0;
+  const redirectTarget = createServer((_request, response) => {
+    redirectedRequests += 1;
+    response.writeHead(500).end();
+  });
+  await new Promise((resolve) => redirectTarget.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => redirectTarget.close(resolve)));
+  const targetAddress = redirectTarget.address();
+  assert.ok(targetAddress && typeof targetAddress !== "string");
+
+  const upstream = createServer((_request, response) => {
+    response.writeHead(307, {
+      location: `http://127.0.0.1:${targetAddress.port}/credential-capture`,
+    }).end();
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => upstream.close(resolve)));
+  const upstreamAddress = upstream.address();
+  assert.ok(upstreamAddress && typeof upstreamAddress !== "string");
+
+  const response = await render({
+    headers: {
+      "oai-authenticated-user-id": "sites-user-opaque",
+      "oai-authenticated-user-email": "owner@example.com",
+    },
+    env: {
+      FLOWOPS_CONTROL_API_URL: `http://127.0.0.1:${upstreamAddress.port}`,
+      FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test",
+      FLOWOPS_SITES_EXCHANGE_TOKEN: "sites-exchange-test-credential-000000000002",
+    },
+  });
+  const html = await response.text();
+  assert.match(html, /Preview data/);
+  assert.equal(redirectedRequests, 0);
+});
+
 test("removes starter content and never claims preview controls executed", async () => {
   const response = await render();
   const html = await response.text();

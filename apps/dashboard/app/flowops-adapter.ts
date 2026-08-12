@@ -156,7 +156,10 @@ async function requestJSON<T>(request: typeof fetch, url: string, init: RequestI
     const response = await request(url, {
       ...init,
       cache: "no-store",
-      redirect: "error",
+      // Cloudflare Workers reject `redirect: "error"`. Manual mode keeps
+      // authorization headers from being replayed to a redirected origin;
+      // every 3xx response then fails the non-2xx check below.
+      redirect: "manual",
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`upstream status ${response.status}`);
