@@ -58,6 +58,10 @@ state. It never accepts a raw transaction or wallet key.
 | `GET` | `/v1/dashboard/snapshot` | human organization member | Live tenant-scoped agents, approvals, and chain state |
 | `POST` | `/v1/signer/broadcasts` | customer signer receipt signature | Authorization-bound expected execution awaiting Base reconciliation |
 
+Signer broadcast intake currently accepts only `direct_usdc` authorizations.
+x402 facilitator responses and escrow calls are not routed through the direct
+USDC receipt worker.
+
 ## Persistence
 
 Migration `0001_control_plane.sql` creates organizations, governed agents,

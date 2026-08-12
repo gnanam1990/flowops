@@ -13,6 +13,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
 var (
@@ -20,6 +21,7 @@ var (
 	ErrBroadcastSignature  = errors.New("customer signer receipt signature is invalid")
 	ErrBroadcastBinding    = errors.New("broadcast receipt does not match an issued authorization")
 	ErrBroadcastTime       = errors.New("broadcast receipt time is outside the authorization window")
+	ErrBroadcastRail       = errors.New("authorization rail is not supported by signer broadcast registration")
 )
 
 const maxBroadcastFutureSkew = 30 * time.Second
@@ -114,6 +116,9 @@ func (r *SignerBroadcastRegistrar) Register(ctx context.Context, signed broadcas
 	canonicalDigest := "0x" + hex.EncodeToString(digest[:])
 	if receipt.OrganizationID != authorization.OrganizationID || receipt.CustomerID != authorization.CustomerID || receipt.AuthorizationDigest != canonicalDigest {
 		return reconciliation.Execution{}, ErrBroadcastBinding
+	}
+	if authorization.Rail != envelope.RailDirect {
+		return reconciliation.Execution{}, ErrBroadcastRail
 	}
 	broadcastAt := time.Unix(receipt.BroadcastAt, 0).UTC()
 	if broadcastAt.Before(time.Unix(authorization.IssuedAt, 0)) || !broadcastAt.Before(time.Unix(authorization.ExpiresAt, 0)) || broadcastAt.After(r.clock().UTC().Add(maxBroadcastFutureSkew)) {

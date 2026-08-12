@@ -231,7 +231,7 @@ func (s *Server) handleSignerBroadcast(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrBroadcastKeyUnknown), errors.Is(err, ErrBroadcastSignature):
 			writeError(w, http.StatusUnauthorized, "INVALID_SIGNER_RECEIPT", errors.New("signer receipt authentication failed"), false, "")
-		case errors.Is(err, ErrBroadcastBinding), errors.Is(err, ErrBroadcastTime), errors.Is(err, reconciliation.ErrConflict):
+		case errors.Is(err, ErrBroadcastBinding), errors.Is(err, ErrBroadcastTime), errors.Is(err, ErrBroadcastRail), errors.Is(err, reconciliation.ErrConflict):
 			writeError(w, http.StatusConflict, "BROADCAST_BINDING_REJECTED", err, false, "")
 		default:
 			writeError(w, http.StatusServiceUnavailable, "BROADCAST_REGISTRATION_UNRESOLVED", err, true, "")

@@ -279,6 +279,33 @@ func TestAttestedBroadcastEngineRejectsAuthorizationFieldSubstitution(t *testing
 	}
 }
 
+func TestAttestedBroadcastEngineRejectsProtocolRailSubstitution(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	expected := testExpected()
+	attestation := testBroadcastAttestation(t, expected, clock.Now())
+	attestation.Authorization.Rail = envelope.RailX402
+	digest, err := attestation.Authorization.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := attestation.SignedReceipt.Receipt
+	receipt.AuthorizationDigest = "0x" + hex.EncodeToString(digest[:])
+	seed, _ := hex.DecodeString(strings.Repeat("29", ed25519.SeedSize))
+	attestation.SignedReceipt, err = broadcastreceipt.Sign(receipt, "customer_signer_1", ed25519.NewKeyFromSeed(seed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, attestation); err == nil {
+		t.Fatal("x402 authorization entered the direct-USDC reconciler")
+	}
+}
+
 func TestAttestationSurvivesLegacyResolutionAfterRollback(t *testing.T) {
 	t.Parallel()
 	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}

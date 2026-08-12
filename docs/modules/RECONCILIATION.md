@@ -83,6 +83,8 @@ and amount itself; the signer supplies only its signed transaction hash, sender,
 outcome, and broadcast time. One authorization deterministically maps to one
 execution. A callback arriving after a chain halt is retained as
 `PENDING_CHAIN_RECOVERY`, because the wallet may already have submitted it.
+This intake is restricted to `direct_usdc`; x402 facilitator settlements and
+escrow calls require their own protocol-aware registration and event decoders.
 The hash-chained execution event preserves the exact authorization, signed
 receipt, and verifying public key. The reconciliation engine independently
 recomputes the authorization digest, re-verifies the signature, and matches all

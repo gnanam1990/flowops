@@ -41,6 +41,11 @@ authorization window, and derives organization, agent, task, intent digest,
 chain, asset, recipient, and amount from that record. Only the signed
 transaction hash and sender come from the customer signer.
 
+This endpoint accepts only `direct_usdc` authorizations. The current worker
+validates direct native-USDC transfer receipts and must not silently interpret
+an x402 facilitator settlement or escrow contract call as that rail. x402 and
+escrow transaction intake remain owned by their protocol-specific adapters.
+
 One authorization maps to one deterministic execution ID. Registering the
 same authorization and hash is idempotent; rebinding the authorization or hash
 is a conflict. A valid callback is journaled even if Base is currently stale or
@@ -88,6 +93,7 @@ EOA/HSM adapters are a separate module.
 - Unknown key and bad signature are unauthenticated.
 - Cross-tenant, cross-customer, authorization-digest, timestamp, execution, or
   transaction-hash substitution is refused before reconciliation state changes.
+- x402 and escrow authorizations are refused before the direct-USDC reconciler.
 - Unknown JSON fields, duplicate configuration fields, non-canonical hashes,
   and non-canonical addresses fail closed.
 - Journal failure is unresolved and retriable at the callback layer; it never

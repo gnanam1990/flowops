@@ -15,6 +15,7 @@ import (
 
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
 type stubBroadcastRegistrar struct {
@@ -55,12 +56,18 @@ func broadcastKeypair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 }
 
 func issuedBroadcastFixture(t *testing.T, now time.Time) (*SignerBroadcastRegistrar, broadcastreceipt.Receipt, ed25519.PrivateKey, *captureBroadcastReconciler, func()) {
+	return issuedBroadcastFixtureForRail(t, now, envelope.RailDirect)
+}
+
+func issuedBroadcastFixtureForRail(t *testing.T, now time.Time, rail envelope.Rail) (*SignerBroadcastRegistrar, broadcastreceipt.Receipt, ed25519.PrivateKey, *captureBroadcastReconciler, func()) {
 	t.Helper()
 	store := newMemoryStore(func() time.Time { return now })
 	store.agents[agentKey("org_a", "agent_a")] = Agent{OrganizationID: "org_a", ID: "agent_a", CustomerID: "customer_a", Status: AgentActive}
 	chain := newHealthyChain(now)
 	lifecycle, journal := testLifecycle(t, store, chain, now)
-	record, err := lifecycle.Submit(context.Background(), intent("intent_broadcast", "org_a", "agent_a", "100"))
+	paymentIntent := intent("intent_broadcast", "org_a", "agent_a", "100")
+	paymentIntent.Rail = rail
+	record, err := lifecycle.Submit(context.Background(), paymentIntent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +96,18 @@ func issuedBroadcastFixture(t *testing.T, now time.Time) (*SignerBroadcastRegist
 		Sender: "0x2222222222222222222222222222222222222222", Outcome: broadcastreceipt.OutcomeAmbiguous, BroadcastAt: now.Unix(),
 	}
 	return registrar, receipt, privateKey, reconciler, func() { _ = journal.Close() }
+}
+
+func TestSignerBroadcastRejectsNonDirectRails(t *testing.T) {
+	now := time.Date(2026, 8, 12, 16, 0, 0, 0, time.UTC)
+	registrar, receipt, privateKey, reconciler, closeFixture := issuedBroadcastFixtureForRail(t, now, envelope.RailX402)
+	defer closeFixture()
+	if _, err := registrar.Register(context.Background(), signBroadcast(t, receipt, privateKey)); !errors.Is(err, ErrBroadcastRail) {
+		t.Fatalf("x402 registration error = %v, want %v", err, ErrBroadcastRail)
+	}
+	if reconciler.calls != 0 {
+		t.Fatalf("x402 authorization reached direct reconciler %d times", reconciler.calls)
+	}
 }
 
 func signBroadcast(t *testing.T, receipt broadcastreceipt.Receipt, privateKey ed25519.PrivateKey) broadcastreceipt.SignedReceipt {

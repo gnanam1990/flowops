@@ -250,6 +250,9 @@ func (a BroadcastAttestation) validate(expected ExpectedExecution) error {
 	if receipt.AuthorizationID != a.Authorization.AuthorizationID || receipt.AuthorizationDigest != canonicalAuthorizationDigest || receipt.OrganizationID != a.Authorization.OrganizationID || receipt.CustomerID != a.Authorization.CustomerID {
 		return errors.New("broadcast receipt does not match its authorization")
 	}
+	if a.Authorization.Rail != envelope.RailDirect {
+		return errors.New("broadcast attestation requires a direct_usdc authorization")
+	}
 	broadcastAt := time.Unix(receipt.BroadcastAt, 0)
 	if broadcastAt.Before(time.Unix(a.Authorization.IssuedAt, 0)) || !broadcastAt.Before(time.Unix(a.Authorization.ExpiresAt, 0)) {
 		return errors.New("broadcast receipt time is outside its authorization window")
