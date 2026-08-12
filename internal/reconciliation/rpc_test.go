@@ -183,6 +183,33 @@ func TestObserverSetBuildsCanonicalReorgEvidence(t *testing.T) {
 	}
 }
 
+func TestObserverSetBuildsPositiveCanonicalBlockEvidence(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 11, 20, 30, 0, 0, time.UTC)
+	execution := Execution{Expected: testExpected(), State: ExecutionSettled, BlockNumber: 101, BlockHash: testHash(101)}
+	fixtures := map[string]*rpcFixture{
+		"alpha.rpc.example": {chainID: "0x14a34", blocks: map[string]rpcBlock{"0x65": rpcBlockFixture(101, now), "latest": rpcBlockFixture(113, now)}},
+		"beta.rpc.example":  {chainID: "0x14a34", blocks: map[string]rpcBlock{"0x65": rpcBlockFixture(101, now), "latest": rpcBlockFixture(114, now)}},
+	}
+	observers, err := NewObserverSet(84532, observerProviders(), rpcClient(fixtures), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := observers.CanonicalBlockQuorum(context.Background(), execution)
+	if len(result.Failures) != 0 || len(result.Evidence) != 2 {
+		t.Fatalf("CanonicalBlockQuorum() = %+v", result)
+	}
+	for _, evidence := range result.Evidence {
+		if evidence.CanonicalBlockHash != execution.BlockHash || evidence.ObservedHead < 113 {
+			t.Fatalf("canonical evidence = %+v", evidence)
+		}
+	}
+	legacy := observers.ReorgQuorum(context.Background(), execution)
+	if len(legacy.Evidence) != 0 || len(legacy.Failures) != 2 {
+		t.Fatalf("ReorgQuorum() = %+v", legacy)
+	}
+}
+
 func TestObserverSetRejectsMissingDuplicateOrRemovedTransfer(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 11, 20, 30, 0, 0, time.UTC)

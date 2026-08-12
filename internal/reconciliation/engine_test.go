@@ -491,6 +491,10 @@ func TestCanonicalReorgReversesLedgerAndRequiresFreshOutcome(t *testing.T) {
 	if _, err := engine.ReconcileReceipt(context.Background(), expected.ExecutionID, receiptQuorum(expected, 601, true), &firstLedger); err != nil {
 		t.Fatal(err)
 	}
+	clock.Add(time.Second)
+	if _, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 613, 614)); err != nil {
+		t.Fatal(err)
+	}
 	reorg := []ReorgEvidence{
 		{Provider: "rpc_alpha", ChainID: 84532, TransactionHash: expected.TransactionHash, OriginalBlockNumber: 601, OriginalBlockHash: testHash(601), CanonicalBlockHash: testHash(1601), ObservedHead: 613},
 		{Provider: "rpc_beta", ChainID: 84532, TransactionHash: expected.TransactionHash, OriginalBlockNumber: 601, OriginalBlockHash: testHash(601), CanonicalBlockHash: testHash(1601), ObservedHead: 614},
@@ -523,7 +527,7 @@ func TestCanonicalReorgReversesLedgerAndRequiresFreshOutcome(t *testing.T) {
 		t.Fatalf("resume with reorg unresolved = %v", err)
 	}
 	clock.Add(time.Second)
-	if _, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 602, 603)); err != nil {
+	if _, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 614, 615)); err != nil {
 		t.Fatal(err)
 	}
 	secondLedger := settlement(clock.Now(), expected.ExecutionID)
@@ -535,7 +539,7 @@ func TestCanonicalReorgReversesLedgerAndRequiresFreshOutcome(t *testing.T) {
 		t.Fatal("post-reorg settlement balance is not exactly one payment")
 	}
 	clock.Add(time.Second)
-	status, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 603, 604))
+	status, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 615, 616))
 	if err != nil || !status.ReadyForManualResume {
 		t.Fatalf("post-reorg recovery = %+v, %v", status, err)
 	}

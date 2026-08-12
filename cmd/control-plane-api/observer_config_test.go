@@ -39,18 +39,19 @@ func TestLoadObserverRuntimeConfigValidatesTimingThresholdsAndChain(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.engine.ChainID != 84532 || cfg.engine.ObserverQuorum != 2 || cfg.engine.ObservationMaxAge != 45*time.Second || cfg.interval != 15*time.Second || cfg.timeout != 10*time.Second {
+	if cfg.engine.ChainID != 84532 || cfg.engine.ObserverQuorum != 2 || cfg.engine.ObservationMaxAge != 45*time.Second || cfg.interval != 15*time.Second || cfg.timeout != 10*time.Second || cfg.reconciliationInterval != 20*time.Second || cfg.reconciliationTimeout != 10*time.Second {
 		t.Fatalf("observer config = %+v", cfg)
 	}
 
 	for name, value := range map[string]string{
-		"FLOWOPS_BASE_CHAIN_ID":              "1",
-		"FLOWOPS_BASE_OBSERVER_QUORUM":       "3",
-		"FLOWOPS_BASE_OBSERVER_TIMEOUT":      "15s",
-		"FLOWOPS_BASE_OBSERVATION_MAX_AGE":   "15s",
-		"FLOWOPS_BASE_STALL_THRESHOLD":       "15s",
-		"FLOWOPS_BASE_HALT_CONFIRMATIONS":    "0",
-		"FLOWOPS_BASE_RECOVERY_OBSERVATIONS": "-1",
+		"FLOWOPS_BASE_CHAIN_ID":               "1",
+		"FLOWOPS_BASE_OBSERVER_QUORUM":        "3",
+		"FLOWOPS_BASE_OBSERVER_TIMEOUT":       "15s",
+		"FLOWOPS_BASE_RECONCILIATION_TIMEOUT": "20s",
+		"FLOWOPS_BASE_OBSERVATION_MAX_AGE":    "15s",
+		"FLOWOPS_BASE_STALL_THRESHOLD":        "15s",
+		"FLOWOPS_BASE_HALT_CONFIRMATIONS":     "0",
+		"FLOWOPS_BASE_RECOVERY_OBSERVATIONS":  "-1",
 	} {
 		t.Run(name, func(t *testing.T) {
 			setObserverRuntime(t)

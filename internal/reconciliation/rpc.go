@@ -253,6 +253,22 @@ func (s *ObserverSet) ReceiptQuorum(ctx context.Context, expected ExpectedExecut
 }
 
 func (s *ObserverSet) ReorgQuorum(ctx context.Context, execution Execution) ReorgResult {
+	result := s.CanonicalBlockQuorum(ctx, execution)
+	filtered := ReorgResult{Failures: result.Failures}
+	for _, evidence := range result.Evidence {
+		if evidence.CanonicalBlockHash == execution.BlockHash {
+			if filtered.Failures == nil {
+				filtered.Failures = make(map[string]string)
+			}
+			filtered.Failures[evidence.Provider] = "provider still reports the original settlement block as canonical"
+			continue
+		}
+		filtered.Evidence = append(filtered.Evidence, evidence)
+	}
+	return filtered
+}
+
+func (s *ObserverSet) CanonicalBlockQuorum(ctx context.Context, execution Execution) ReorgResult {
 	type providerResult struct {
 		provider string
 		evidence ReorgEvidence
@@ -277,10 +293,6 @@ func (s *ObserverSet) ReorgQuorum(ctx context.Context, execution Execution) Reor
 			latest, err := s.block(ctx, provider, "latest")
 			if err != nil {
 				results <- providerResult{provider: provider.Name, err: err}
-				return
-			}
-			if canonical.hash == execution.BlockHash {
-				results <- providerResult{provider: provider.Name, err: errors.New("provider still reports the original settlement block as canonical")}
 				return
 			}
 			results <- providerResult{provider: provider.Name, evidence: ReorgEvidence{

@@ -31,19 +31,21 @@ const (
 )
 
 type startupConfig struct {
-	address          string
-	databaseURL      string
-	envelopeKeyID    string
-	envelopeKey      ed25519.PrivateKey
-	siteSessionKey   []byte
-	reconciliation   string
-	trustProxy       bool
-	applyMigrations  bool
-	operatorKey      []byte
-	observerRPCs     []reconciliation.RPCProvider
-	observerConfig   reconciliation.Config
-	observerInterval time.Duration
-	observerTimeout  time.Duration
+	address                string
+	databaseURL            string
+	envelopeKeyID          string
+	envelopeKey            ed25519.PrivateKey
+	siteSessionKey         []byte
+	reconciliation         string
+	trustProxy             bool
+	applyMigrations        bool
+	operatorKey            []byte
+	observerRPCs           []reconciliation.RPCProvider
+	observerConfig         reconciliation.Config
+	observerInterval       time.Duration
+	observerTimeout        time.Duration
+	reconciliationInterval time.Duration
+	reconciliationTimeout  time.Duration
 }
 
 func main() {
@@ -126,6 +128,15 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create Base observer supervisor: %w", err)
 	}
+	reconciliationWorker, err := reconciliation.NewWorker(observers, reconciliationEngine, reconciliation.WorkerConfig{
+		Interval: cfg.reconciliationInterval, QueryTimeout: cfg.reconciliationTimeout,
+		OnCycle: func(cycle reconciliation.WorkerCycle) {
+			slog.Info("Base reconciliation cycle completed", "examined", cycle.Examined, "receiptCandidates", cycle.ReceiptCandidates, "settled", cycle.Settled, "reverted", cycle.Reverted, "finalityConfirmed", cycle.FinalityConfirmed, "reorgsReopened", cycle.ReorgsReopened, "deferred", cycle.Deferred, "skippedForChain", cycle.SkippedForChain)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create Base reconciliation worker: %w", err)
+	}
 	api, err := controlapi.NewServer(controlapi.ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
 		OperatorControlKey: cfg.operatorKey,
@@ -158,6 +169,10 @@ func run(ctx context.Context) error {
 	go func() {
 		observerErrors <- observerSupervisor.Run(shutdownSignal)
 	}()
+	reconciliationErrors := make(chan error, 1)
+	go func() {
+		reconciliationErrors <- reconciliationWorker.Run(shutdownSignal)
+	}()
 	select {
 	case <-shutdownSignal.Done():
 	case err := <-serverErrors:
@@ -169,6 +184,10 @@ func run(ctx context.Context) error {
 			return err
 		}
 	case err := <-observerErrors:
+		if err != nil {
+			return err
+		}
+	case err := <-reconciliationErrors:
 		if err != nil {
 			return err
 		}
@@ -224,6 +243,8 @@ func loadConfig() (startupConfig, error) {
 	cfg.observerConfig = observerRuntime.engine
 	cfg.observerInterval = observerRuntime.interval
 	cfg.observerTimeout = observerRuntime.timeout
+	cfg.reconciliationInterval = observerRuntime.reconciliationInterval
+	cfg.reconciliationTimeout = observerRuntime.reconciliationTimeout
 	trustProxy, err := parseStrictBool("FLOWOPS_TRUST_PROXY_HEADERS", os.Getenv("FLOWOPS_TRUST_PROXY_HEADERS"))
 	if err != nil {
 		return startupConfig{}, err

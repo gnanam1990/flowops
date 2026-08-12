@@ -1,12 +1,15 @@
 # Base reconciliation and halt-safety module
 
-Status: production runtime wiring implemented; dedicated provider selection and Sepolia measurement remain open
+Status: production observer and receipt/finality worker wiring implemented; signer registration, dedicated provider selection, and Sepolia measurement remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
 Read-only observer: `cmd/base-observer`
 
 Continuous runtime: `internal/reconciliation.Supervisor`, started by
+`cmd/control-plane-api`
+
+Receipt/finality runtime: `internal/reconciliation.Worker`, started by
 `cmd/control-plane-api`
 
 Operator client: `cmd/flowops-operator`
@@ -19,6 +22,7 @@ This module keeps FlowOps honest when an RPC is reachable but Base is stale, dis
 - a fail-closed chain gate shared by authorization issuance and the customer reference signer;
 - durable broadcast and ambiguous-execution state;
 - quorum receipt validation for native-USDC transfers;
+- continuous durable receipt finalization and bounded reorg monitoring;
 - balanced, append-only operational ledger postings;
 - explicit manual halt and recovery release.
 
@@ -70,6 +74,23 @@ The settlement ledger transaction is written in the same durable event as the re
 
 If the configured quorum later reports a different canonical hash at the original settlement height beyond the reorg lookback, FlowOps atomically reopens the execution, appends an exact correction that reverses the prior ledger entry, enters `RECOVERING`, and requires a fresh canonical outcome or quarantine before manual resume. The original settlement and its timestamps remain in the journal.
 
+The runtime worker scans only journaled `BROADCAST` and
+`PENDING_CHAIN_RECOVERY` executions; it cannot create a payment attempt and
+never rebroadcasts one. Missing receipts, timeouts, partial responses, and
+provider disagreement leave the execution unresolved. A successful direct-USDC
+receipt produces a deterministic settlement transaction over
+`agent_service_expense` and `pending_settlement`; a reverted receipt produces no
+ledger entry. Both paths still pass through the engine's quorum validation and
+single durable append.
+
+Settled executions remain under reorg watch until independent providers confirm
+the original block hash at the configured lookback depth. That positive
+canonical evidence and the minimum agreed head are journaled on the execution,
+so restart does not poll old settlements forever. A conflicting canonical hash
+at that depth triggers the exact correction path. Reorganizations deeper than
+the configured lookback remain an explicitly accepted residual risk for the
+capped pilot and require operator incident handling.
+
 ## Ledger invariants
 
 - All amounts are canonical signed integer base units; zero, decimals, floats, and non-canonical encodings are rejected.
@@ -98,6 +119,9 @@ make smoke-reconciliation
 
 The smoke drill enters healthy state, registers a broadcast, simulates responsive-but-stale observers, reaches `HALTED`, proves stale finalization/refund/rebroadcast are refused, resumes observations, reconciles one canonical outcome, and requires manual release without double-posting.
 
+The worker smoke cases additionally prove deterministic receipt settlement,
+durable positive-finality checkpoints, and atomic reorg reversal.
+
 For a read-only live snapshot using public endpoints:
 
 ```sh
@@ -116,6 +140,9 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
 - add contract-specific escrow event reconciliation after the escrow state machine is finalized;
 - add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
+- connect the customer signer receipt to `RegisterBroadcast`; the deployed
+  no-funds pilot worker is intentionally idle until a cryptographically bound
+  signer adapter supplies expected transaction data;
 - expose status, exceptions, backfill progress, and manual gates in the dashboard;
 - execute the live halt/recovery acceptance run with the customer signer and a real Sepolia transaction.
 

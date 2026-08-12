@@ -212,6 +212,8 @@ type Execution struct {
 	LedgerTransactionID     string            `json:"ledgerTransactionId,omitempty"`
 	CorrectionTransactionID string            `json:"correctionTransactionId,omitempty"`
 	ReorgEvidenceDigest     string            `json:"reorgEvidenceDigest,omitempty"`
+	FinalityCheckedAt       *time.Time        `json:"finalityCheckedAt,omitempty"`
+	FinalityCheckedHead     uint64            `json:"finalityCheckedHead,omitempty"`
 }
 
 type ReorgEvidence struct {
