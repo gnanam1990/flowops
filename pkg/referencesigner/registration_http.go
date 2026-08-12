@@ -72,8 +72,23 @@ func (s *HTTPRegistrationSink) Register(ctx context.Context, receipt broadcastre
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("FlowOps receipt registration returned HTTP %d", response.StatusCode)
 	}
-	if !json.Valid(raw) {
+	var acknowledgement struct {
+		Execution struct {
+			Expected struct {
+				TransactionHash string `json:"transactionHash"`
+			} `json:"expected"`
+			BroadcastAttestation *struct {
+				SignedReceipt broadcastreceipt.SignedReceipt `json:"signedReceipt"`
+			} `json:"broadcastAttestation"`
+		} `json:"execution"`
+	}
+	if err := json.Unmarshal(raw, &acknowledgement); err != nil {
 		return errors.New("FlowOps receipt registration returned invalid JSON")
+	}
+	if acknowledgement.Execution.Expected.TransactionHash != receipt.Receipt.TransactionHash ||
+		acknowledgement.Execution.BroadcastAttestation == nil ||
+		acknowledgement.Execution.BroadcastAttestation.SignedReceipt != receipt {
+		return errors.New("FlowOps receipt registration acknowledgement is not bound to the submitted receipt")
 	}
 	return nil
 }

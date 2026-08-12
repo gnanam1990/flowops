@@ -41,6 +41,10 @@ registration is retried. If FlowOps accepts the callback but the local
 `REGISTERED` append fails, restart repeats the same signed callback and never
 the transaction.
 
+Transaction-hash validation uses `golang.org/x/crypto/sha3` for Ethereum's
+legacy Keccak-256 padding. This is a hashing-only dependency: it performs no
+wallet, signing, RPC, transaction construction, or network operation.
+
 The attempt journal is process-locked, append-only, hash-chained, mode `0600`,
 and synchronized before state becomes visible. Corruption, invalid transition,
 identity mutation, or concurrent ownership fails closed. Raw transaction bytes
@@ -65,9 +69,10 @@ sensitive operational data.
 
 The HTTP registration sink requires HTTPS except for loopback development,
 requires a positive client timeout, refuses redirects and URL credentials,
-bounds response bodies, and does not expose server response bodies in errors.
-An HTTP success is only callback acceptance; Base reconciliation remains the
-source of settlement truth.
+bounds response bodies, requires the success acknowledgement to contain the
+exact submitted signed receipt and transaction hash, and does not expose server
+response bodies in errors. An HTTP success is only callback acceptance; Base
+reconciliation remains the source of settlement truth.
 
 ## Consequences
 

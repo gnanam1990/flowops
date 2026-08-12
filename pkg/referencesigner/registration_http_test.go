@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +46,10 @@ func TestHTTPRegistrationSinkPostsExactReceipt(t *testing.T) {
 			t.Error("signed receipt was not posted")
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"status":"accepted"}`))
+		_ = json.NewEncoder(writer).Encode(map[string]any{"execution": map[string]any{
+			"expected":             map[string]any{"transactionHash": want.Receipt.TransactionHash},
+			"broadcastAttestation": map[string]any{"signedReceipt": want},
+		}})
 	}))
 	defer server.Close()
 	sink, err := NewHTTPRegistrationSink(server.URL, &http.Client{Timeout: time.Second})
@@ -68,6 +72,18 @@ func TestHTTPRegistrationSinkFailsClosed(t *testing.T) {
 		},
 		"invalid json": func(writer http.ResponseWriter, _ *http.Request) {
 			_, _ = writer.Write([]byte("accepted"))
+		},
+		"unbound success": func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusCreated)
+			_, _ = writer.Write([]byte(`{}`))
+		},
+		"wrong receipt": func(writer http.ResponseWriter, _ *http.Request) {
+			wrong := receipt
+			wrong.Signature = "0x" + strings.Repeat("0", ed25519.SignatureSize*2)
+			_ = json.NewEncoder(writer).Encode(map[string]any{"execution": map[string]any{
+				"expected":             map[string]any{"transactionHash": receipt.Receipt.TransactionHash},
+				"broadcastAttestation": map[string]any{"signedReceipt": wrong},
+			}})
 		},
 		"oversized": func(writer http.ResponseWriter, _ *http.Request) {
 			_, _ = writer.Write([]byte(`{"padding":"` + strings.Repeat("a", maxRegistrationResponseBytes) + `"}`))

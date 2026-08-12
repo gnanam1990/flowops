@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -48,7 +49,7 @@ type attemptHashInput struct {
 type AttemptJournal struct {
 	mu       sync.Mutex
 	file     *os.File
-	events   []attemptEvent
+	sequence uint64
 	attempts map[string]Attempt
 	lastHash string
 	fault    error
@@ -124,21 +125,25 @@ func (j *AttemptJournal) replay() error {
 	scanner := bufio.NewScanner(j.file)
 	scanner.Buffer(make([]byte, 64<<10), 2<<20)
 	for scanner.Scan() {
+		if j.sequence == math.MaxUint64 {
+			return errors.New("signer attempt journal sequence exhausted")
+		}
+		lineNumber := j.sequence + 1
 		var event attemptEvent
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return fmt.Errorf("signer attempt journal line %d: %w", len(j.events)+1, err)
+			return fmt.Errorf("signer attempt journal line %d: %w", lineNumber, err)
 		}
-		if err := validateAttemptEvent(event, uint64(len(j.events)+1), j.lastHash); err != nil {
-			return fmt.Errorf("signer attempt journal line %d: %w", len(j.events)+1, err)
+		if err := validateAttemptEvent(event, lineNumber, j.lastHash); err != nil {
+			return fmt.Errorf("signer attempt journal line %d: %w", lineNumber, err)
 		}
 		var attempt Attempt
 		if err := json.Unmarshal(event.Payload, &attempt); err != nil {
-			return fmt.Errorf("signer attempt journal line %d payload: %w", len(j.events)+1, err)
+			return fmt.Errorf("signer attempt journal line %d payload: %w", lineNumber, err)
 		}
 		if err := j.apply(event.AuthorizationID, attempt); err != nil {
-			return fmt.Errorf("signer attempt journal line %d transition: %w", len(j.events)+1, err)
+			return fmt.Errorf("signer attempt journal line %d transition: %w", lineNumber, err)
 		}
-		j.events = append(j.events, cloneAttemptEvent(event))
+		j.sequence = event.Sequence
 		j.lastHash = event.Hash
 	}
 	if err := scanner.Err(); err != nil {
@@ -200,10 +205,13 @@ func (j *AttemptJournal) Append(ctx context.Context, at time.Time, attempt Attem
 	if j.fault != nil {
 		return Attempt{}, fmt.Errorf("signer attempt journal is faulted: %w", j.fault)
 	}
+	if j.sequence == math.MaxUint64 {
+		return Attempt{}, errors.New("signer attempt journal sequence exhausted")
+	}
 	if err := j.validateTransition(authorizationID, attempt); err != nil {
 		return Attempt{}, err
 	}
-	event := attemptEvent{Version: attemptJournalVersion, Sequence: uint64(len(j.events) + 1), At: at.UTC(), AuthorizationID: authorizationID, PreviousHash: j.lastHash, Payload: raw}
+	event := attemptEvent{Version: attemptJournalVersion, Sequence: j.sequence + 1, At: at.UTC(), AuthorizationID: authorizationID, PreviousHash: j.lastHash, Payload: raw}
 	event.Hash, err = attemptEventHash(attemptHashInput{Version: event.Version, Sequence: event.Sequence, At: event.At, AuthorizationID: event.AuthorizationID, PreviousHash: event.PreviousHash, Payload: event.Payload})
 	if err != nil {
 		return Attempt{}, err
@@ -232,7 +240,7 @@ func (j *AttemptJournal) Append(ctx context.Context, at time.Time, attempt Attem
 		j.fault = err
 		return Attempt{}, fmt.Errorf("apply durable signer attempt event: %w", err)
 	}
-	j.events = append(j.events, cloneAttemptEvent(event))
+	j.sequence = event.Sequence
 	j.lastHash = event.Hash
 	return cloneAttempt(attempt), nil
 }
@@ -304,11 +312,6 @@ func (j *AttemptJournal) Attempts() []Attempt {
 		return result[i].Authorized.Authorization.AuthorizationID < result[k].Authorized.Authorization.AuthorizationID
 	})
 	return result
-}
-
-func cloneAttemptEvent(event attemptEvent) attemptEvent {
-	event.Payload = append(json.RawMessage(nil), event.Payload...)
-	return event
 }
 
 func (j *AttemptJournal) Close() error {

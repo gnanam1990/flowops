@@ -9,7 +9,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
 2. Canonical authorization-envelope module.
 3. Deterministic policy engine.
 4. Customer reference signer with durable nonce-once enforcement. **Verifier,
-   hash-chained nonce and attempt journals, one-way at-most-once executor, signed
+   durable nonce journal, hash-chained attempt journal, one-way at-most-once executor, signed
    callback, and no-funds conformance smoke are implemented; concrete wallet
    adapter, runnable sidecar, and funded Sepolia proof remain open.**
 5. Control-plane intent and approval lifecycle.
