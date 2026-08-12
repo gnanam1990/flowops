@@ -35,6 +35,7 @@ type startupConfig struct {
 	databaseURL    string
 	envelopeKeyID  string
 	envelopeKey    ed25519.PrivateKey
+	siteSessionKey []byte
 	reconciliation string
 }
 
@@ -66,7 +67,11 @@ func run(ctx context.Context) error {
 	if err := controlapi.ApplyMigrations(startupCtx, db); err != nil {
 		return err
 	}
-	store, err := controlapi.NewPostgresStore(db)
+	siteSessions, err := controlapi.NewSiteSessionCodec(cfg.siteSessionKey, 2*time.Minute, nil)
+	if err != nil {
+		return fmt.Errorf("create site session codec: %w", err)
+	}
+	store, err := controlapi.NewPostgresStore(db, siteSessions)
 	if err != nil {
 		return err
 	}
@@ -99,7 +104,7 @@ func run(ctx context.Context) error {
 	if _, err := lifecycle.SweepExpired(startupCtx); err != nil {
 		return fmt.Errorf("sweep expired approvals at startup: %w", err)
 	}
-	api, err := controlapi.NewServer(controlapi.ServerConfig{Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine})
+	api, err := controlapi.NewServer(controlapi.ServerConfig{Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions})
 	if err != nil {
 		return err
 	}
@@ -163,10 +168,15 @@ func loadConfig() (startupConfig, error) {
 	if err != nil {
 		return startupConfig{}, err
 	}
+	siteSessionKey, err := decodeSymmetricKey("FLOWOPS_SITE_SESSION_KEY_B64", os.Getenv("FLOWOPS_SITE_SESSION_KEY_B64"))
+	if err != nil {
+		return startupConfig{}, err
+	}
 	cfg := startupConfig{
 		address: strings.TrimSpace(os.Getenv("FLOWOPS_CONTROL_ADDR")), databaseURL: strings.TrimSpace(os.Getenv("FLOWOPS_DATABASE_URL")),
 		envelopeKeyID: strings.TrimSpace(os.Getenv("FLOWOPS_ENVELOPE_KEY_ID")),
-		envelopeKey:   key, reconciliation: strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
+		envelopeKey:   key, siteSessionKey: siteSessionKey,
+		reconciliation: strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
 	}
 	if cfg.address == "" {
 		cfg.address = defaultAddress
@@ -175,9 +185,20 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, err
 	}
 	if cfg.databaseURL == "" || cfg.envelopeKeyID == "" || cfg.reconciliation == "" {
-		return startupConfig{}, errors.New("FLOWOPS_DATABASE_URL, FLOWOPS_ENVELOPE_KEY_ID, FLOWOPS_ENVELOPE_PRIVATE_KEY_B64, and FLOWOPS_RECONCILIATION_JOURNAL are required")
+		return startupConfig{}, errors.New("FLOWOPS_DATABASE_URL, FLOWOPS_ENVELOPE_KEY_ID, FLOWOPS_ENVELOPE_PRIVATE_KEY_B64, FLOWOPS_SITE_SESSION_KEY_B64, and FLOWOPS_RECONCILIATION_JOURNAL are required")
 	}
 	return cfg, nil
+}
+
+func decodeSymmetricKey(name, value string) ([]byte, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, fmt.Errorf("%s is required", name)
+	}
+	raw, err := base64.StdEncoding.DecodeString(value)
+	if err != nil || len(raw) != 32 {
+		return nil, fmt.Errorf("%s must encode exactly 32 bytes", name)
+	}
+	return append([]byte(nil), raw...), nil
 }
 
 func validateListenAddress(address string) error {

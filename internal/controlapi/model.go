@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -57,6 +58,7 @@ type Principal struct {
 	AgentID        string        `json:"agentId,omitempty"`
 	Scopes         []string      `json:"scopes,omitempty"`
 	StepUpUntil    time.Time     `json:"stepUpUntil,omitempty"`
+	ReadOnly       bool          `json:"readOnly,omitempty"`
 }
 
 func (p Principal) Valid() bool {
@@ -84,6 +86,12 @@ func (p Principal) Can(permission Permission) bool {
 	switch permission {
 	case PermissionRead, PermissionReadCommand:
 		return true
+	case PermissionCreateIntent, PermissionIssue, PermissionDecide, PermissionPause:
+		if p.ReadOnly {
+			return false
+		}
+	}
+	switch permission {
 	case PermissionCreateIntent, PermissionIssue:
 		return p.Role == RoleAgent || p.Role == RoleDeveloper || p.Role == RoleAdmin || p.Role == RoleOwner
 	case PermissionDecide:
@@ -120,6 +128,15 @@ type Agent struct {
 	Purpose        string      `json:"purpose"`
 	Status         AgentStatus `json:"status"`
 	UpdatedAt      time.Time   `json:"updatedAt"`
+}
+
+type Organization struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (o Organization) Valid() bool {
+	return identifierPattern.MatchString(o.ID) && strings.TrimSpace(o.Name) != "" && len(o.Name) <= 200
 }
 
 func (a Agent) Valid() bool {

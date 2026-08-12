@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,13 +92,58 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 		        'agent_integration', $1, '["intents:create"]'::jsonb, now() + interval '1 hour')`, digest[:]); err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewPostgresStore(db)
+	siteSessions, err := NewSiteSessionCodec([]byte(strings.Repeat("s", 32)), 2*time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := store.Authenticate(ctx, digest)
+	store, err := NewPostgresStore(db, siteSessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := store.Authenticate(ctx, token)
 	if err != nil || principal.OrganizationID != "org_integration" || principal.AgentID != "agent_integration" {
 		t.Fatalf("authenticated principal = %+v, %v", principal, err)
+	}
+	siteProjectID := "appgprj_integration"
+	siteUserKey, err := SiteUserKey(siteProjectID, "opaque_integration_user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchangeToken := "flowops_sites_exchange_integration_0000000001"
+	exchangeDigest := TokenDigest(exchangeToken)
+	emailDigest, err := normalizedEmailDigest("owner@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO sites_identity_providers (site_project_id, exchange_token_digest)
+		VALUES ($1, $2)`, siteProjectID, exchangeDigest[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO sites_memberships
+			(id, site_project_id, site_user_key, email_digest, organization_id, principal_id, role, status)
+		VALUES ('membership_integration', $1, $2, $3, 'org_integration', 'owner_integration', 'OWNER', 'ACTIVE')`,
+		siteProjectID, siteUserKey, emailDigest[:]); err != nil {
+		t.Fatal(err)
+	}
+	membership, err := store.ExchangeSiteIdentity(ctx, siteProjectID, siteUserKey, "Owner@Example.com", exchangeToken)
+	if err != nil || membership.OrganizationID != "org_integration" || membership.Role != RoleOwner {
+		t.Fatalf("site membership = %+v, %v", membership, err)
+	}
+	siteToken, _, err := siteSessions.Mint(membership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sitePrincipal, err := store.Authenticate(ctx, siteToken)
+	if err != nil || sitePrincipal.OrganizationID != "org_integration" || !sitePrincipal.StepUpUntil.IsZero() || !sitePrincipal.ReadOnly || sitePrincipal.Can(PermissionCreateIntent) {
+		t.Fatalf("site principal = %+v, %v", sitePrincipal, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE sites_memberships SET status = 'REVOKED' WHERE id = 'membership_integration'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Authenticate(ctx, siteToken); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("revoked site membership authenticated: %v", err)
 	}
 	provider, err := NewPostgresPolicyProvider(db)
 	if err != nil {
@@ -177,7 +223,7 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE agents SET status = 'REVOKED' WHERE organization_id = 'org_integration' AND id = 'agent_integration'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Authenticate(ctx, digest); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := store.Authenticate(ctx, token); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("credential for revoked agent authenticated: %v", err)
 	}
 

@@ -6,7 +6,9 @@ import (
 )
 
 type Store interface {
-	Authenticate(ctx context.Context, tokenDigest [32]byte) (Principal, error)
+	Authenticate(ctx context.Context, token string) (Principal, error)
+	ExchangeSiteIdentity(ctx context.Context, siteProjectID, siteUserKey, email, exchangeToken string) (SiteMembership, error)
+	Organization(ctx context.Context, organizationID string) (Organization, error)
 	Agent(ctx context.Context, organizationID, agentID string) (Agent, error)
 	ListAgents(ctx context.Context, organizationID string) ([]Agent, error)
 	SetAgentStatus(ctx context.Context, organizationID, agentID string, status AgentStatus, actorID, auditID string) (Agent, error)

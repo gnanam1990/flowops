@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,20 +39,87 @@ func TestPostgresAuthenticationReturnsValidatedClaimsAndHidesMisses(t *testing.T
 	mock.ExpectQuery(`SELECT c.principal_id, c.organization_id, c.principal_kind`).WithArgs(digest[:]).WillReturnRows(
 		sqlmock.NewRows(columns).AddRow("credential_a", "org_a", "AGENT", "AGENT", "agent_a", []byte(`["intents:create"]`), nil),
 	)
-	principal, err := store.Authenticate(context.Background(), digest)
+	principal, err := store.Authenticate(context.Background(), "fo_sbx_test_000000000000000000000000")
 	if err != nil || principal.AgentID != "agent_a" || !principal.Can(PermissionCreateIntent) {
 		t.Fatalf("principal = %+v, %v", principal, err)
 	}
 
-	missing := TokenDigest("fo_sbx_missing_000000000000000000000")
+	missingToken := "fo_sbx_missing_000000000000000000000"
+	missing := TokenDigest(missingToken)
 	mock.ExpectQuery(`SELECT c.principal_id, c.organization_id, c.principal_kind`).WithArgs(missing[:]).WillReturnError(sql.ErrNoRows)
-	if _, err := store.Authenticate(context.Background(), missing); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := store.Authenticate(context.Background(), missingToken); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("missing credential error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
 	_ = now
+}
+
+func TestPostgresSiteExchangeAndSessionAreMembershipBound(t *testing.T) {
+	store, mock, db := newMockStore(t)
+	defer db.Close()
+	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	codec, err := NewSiteSessionCodec([]byte(strings.Repeat("k", 32)), 2*time.Minute, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.siteSessions = codec
+	membership := testSiteMembership()
+	exchangeToken := "flowops_sites_exchange_00000000000000000001"
+	tokenDigest := TokenDigest(exchangeToken)
+	emailDigest, _ := normalizedEmailDigest("owner@example.com")
+	mock.ExpectQuery(`SELECT m.id, m.site_project_id, m.site_user_key`).WithArgs(
+		membership.SiteProjectID, tokenDigest[:], membership.SiteUserKey, emailDigest[:],
+	).WillReturnRows(sqlmock.NewRows([]string{"id", "site_project_id", "site_user_key", "organization_id", "principal_id", "role"}).AddRow(
+		membership.ID, membership.SiteProjectID, membership.SiteUserKey, membership.OrganizationID, membership.PrincipalID, membership.Role,
+	))
+	stored, err := store.ExchangeSiteIdentity(context.Background(), membership.SiteProjectID, membership.SiteUserKey, "Owner@Example.com", exchangeToken)
+	if err != nil || stored != membership {
+		t.Fatalf("exchange = %+v, %v", stored, err)
+	}
+	token, _, err := codec.Mint(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`SELECT m.id, m.site_project_id, m.site_user_key, m.organization_id, m.principal_id, m.role, m.status`).WithArgs(
+		membership.ID, membership.SiteProjectID, membership.SiteUserKey, membership.OrganizationID, membership.PrincipalID, membership.Role,
+	).WillReturnRows(sqlmock.NewRows([]string{"id", "site_project_id", "site_user_key", "organization_id", "principal_id", "role", "status"}).AddRow(
+		membership.ID, membership.SiteProjectID, membership.SiteUserKey, membership.OrganizationID, membership.PrincipalID, membership.Role, "ACTIVE",
+	))
+	principal, err := store.Authenticate(context.Background(), token)
+	if err != nil || principal.OrganizationID != membership.OrganizationID || principal.Role != RoleOwner || !principal.StepUpUntil.IsZero() || !principal.ReadOnly || principal.Can(PermissionCreateIntent) {
+		t.Fatalf("site principal = %+v, %v", principal, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresSiteSessionFailsAfterMembershipRevocation(t *testing.T) {
+	store, mock, db := newMockStore(t)
+	defer db.Close()
+	codec, err := NewSiteSessionCodec([]byte(strings.Repeat("k", 32)), 2*time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.siteSessions = codec
+	membership := testSiteMembership()
+	token, _, err := codec.Mint(membership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`SELECT m.id, m.site_project_id, m.site_user_key, m.organization_id, m.principal_id, m.role, m.status`).WillReturnRows(
+		sqlmock.NewRows([]string{"id", "site_project_id", "site_user_key", "organization_id", "principal_id", "role", "status"}).AddRow(
+			membership.ID, membership.SiteProjectID, membership.SiteUserKey, membership.OrganizationID, membership.PrincipalID, membership.Role, "REVOKED",
+		),
+	)
+	if _, err := store.Authenticate(context.Background(), token); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("revoked membership error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPostgresCommandIdempotencyIsOrganizationScoped(t *testing.T) {

@@ -26,6 +26,12 @@ signing key.
 6. The exact result or typed failure is recorded with a bounded server-owned
    completion context before it is returned, even if the client disconnects.
 
+Sites dashboard reads use a separate entry flow. `POST /v1/sites/session`
+matches a project credential and exact provisioned identity to an ACTIVE
+organization membership, then issues a two-minute signed session. Each read
+revalidates that membership. The session is marked read-only, has no step-up
+claim, and cannot reach any economic write route.
+
 The client never supplies an authoritative organization header. An agent
 credential can act only for its bound agent, and an intent's customer identity
 must equal that agent's registered customer signer. Cross-tenant or
@@ -36,6 +42,7 @@ cross-customer identifiers are reported as not found.
 | Method | Route | Permission | Result |
 |---|---|---|---|
 | `GET` | `/health` | public, non-sensitive | Control-plane and Base authorization state |
+| `POST` | `/v1/sites/session` | Sites server exchange credential plus exact membership | Short-lived organization-bound read session |
 | `POST` | `/v1/intents` | agent scope `intents:create` or authorized human | Durable command plus policy record |
 | `POST` | `/v1/intents/{requestID}/authorization` | agent scope `authorizations:issue` or authorized human | Exact signed FlowOps authorization envelope |
 | `GET` | `/v1/approvals` | human organization member | Tenant-filtered pending approvals |
@@ -54,6 +61,11 @@ checksums are immutable. Hash-chained payloads are stored as `bytea`, because
 the chain commits to exact JSON bytes and `jsonb` normalization would change
 them during replay. Domain event replay refuses malformed, reordered,
 substituted, or externally advanced event streams.
+
+Migration `0002_sites_memberships.sql` adds project-specific exchange-token
+digests and Sites identity memberships. It stores only a site-bound user hash
+and normalized email digest. Session authentication compares every signed claim
+to the current ACTIVE row so revocation takes effect immediately.
 
 Authorization issuance holds the governed agent row lock from the final ACTIVE
 check through the durable authorization append. A concurrent pause therefore
@@ -81,6 +93,8 @@ the live view.
   the caller polls by command ID rather than resubmitting payment work.
 - Another control-plane writer advanced the event stream: process faults closed
   with `ErrJournalStale` and must replay from PostgreSQL before serving writes.
+- Sites project, user, email, exchange credential, membership, role, or session
+  substitution: generic `UNAUTHENTICATED`; no organization existence is leaked.
 
 ## Verification
 
@@ -97,7 +111,9 @@ step-up enforcement, expiry sweeping, pause/issuance serialization, invalid
 pause transitions, Base halt rejection, client-cancellation-safe command
 completion, durable failure replay, PostgreSQL tenant predicates, exact-byte
 event replay, audited pause transactions, JSON command results, and
-concurrent-writer journal refusal.
+concurrent-writer journal refusal. Sites tests additionally cover project/user/
+email substitution, session tampering and expiry, membership revocation,
+organization-bound snapshot reads, and absence of step-up authority.
 
 ## Remaining live gates
 
@@ -110,13 +126,14 @@ concurrent-writer journal refusal.
   stability window before issuing any authorization.
 - Store the FlowOps envelope key in an approved secret manager. This is a
   FlowOps capability-signing key, never a customer wallet key.
-- Add the server-side Sites identity-to-membership session exchange before the
-  dashboard can leave preview mode.
+- Implement the owner-mediated Sites membership provisioning and exchange-token
+  rotation workflow; integration tests seed isolated schemas, but operators
+  must not hand-edit production rows.
 
 ## Runtime configuration
 
 The executable requires `FLOWOPS_DATABASE_URL`, `FLOWOPS_ENVELOPE_KEY_ID`,
-`FLOWOPS_ENVELOPE_PRIVATE_KEY_B64`, and
+`FLOWOPS_ENVELOPE_PRIVATE_KEY_B64`, `FLOWOPS_SITE_SESSION_KEY_B64`, and
 `FLOWOPS_RECONCILIATION_JOURNAL`. `FLOWOPS_CONTROL_ADDR` is optional and
 defaults to `127.0.0.1:8080`; non-loopback binds are rejected because the
 service carries bearer credentials over plain HTTP. Remote deployments must
@@ -124,3 +141,5 @@ terminate TLS at a trusted local proxy that connects over loopback. Policy
 limits, Base chain/USDC rules, rails, recipients,
 and versions are loaded from the active PostgreSQL policy row for the governed
 agent; they are not shared process-wide environment variables.
+`FLOWOPS_SITE_SESSION_KEY_B64` must encode exactly 32 random bytes and must be
+stored separately from the FlowOps envelope key.

@@ -6,22 +6,35 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gnanam1990/flowops/internal/controlplane"
 )
 
 type PostgresStore struct {
-	db *sql.DB
+	db           *sql.DB
+	siteSessions *SiteSessionCodec
 }
 
-func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
+func NewPostgresStore(db *sql.DB, siteSessions ...*SiteSessionCodec) (*PostgresStore, error) {
 	if db == nil {
 		return nil, errors.New("database is required")
 	}
-	return &PostgresStore{db: db}, nil
+	var codec *SiteSessionCodec
+	if len(siteSessions) > 1 {
+		return nil, errors.New("at most one site session codec is allowed")
+	}
+	if len(siteSessions) == 1 {
+		codec = siteSessions[0]
+	}
+	return &PostgresStore{db: db, siteSessions: codec}, nil
 }
 
-func (s *PostgresStore) Authenticate(ctx context.Context, tokenDigest [32]byte) (Principal, error) {
+func (s *PostgresStore) Authenticate(ctx context.Context, token string) (Principal, error) {
+	if strings.HasPrefix(token, siteSessionPrefix) {
+		return s.authenticateSiteSession(ctx, token)
+	}
+	tokenDigest := TokenDigest(token)
 	var principal Principal
 	var kind, role string
 	var agentID sql.NullString
@@ -55,6 +68,85 @@ func (s *PostgresStore) Authenticate(ctx context.Context, tokenDigest [32]byte) 
 		return Principal{}, errors.New("stored credential claims are invalid")
 	}
 	return principal, nil
+}
+
+func (s *PostgresStore) authenticateSiteSession(ctx context.Context, token string) (Principal, error) {
+	if s.siteSessions == nil {
+		return Principal{}, ErrUnauthenticated
+	}
+	claims, err := s.siteSessions.Verify(token)
+	if err != nil {
+		return Principal{}, ErrUnauthenticated
+	}
+	var membership SiteMembership
+	var status string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT m.id, m.site_project_id, m.site_user_key, m.organization_id, m.principal_id, m.role, m.status
+		FROM sites_memberships m
+		JOIN sites_identity_providers p ON p.site_project_id = m.site_project_id
+		WHERE m.id = $1 AND m.site_project_id = $2 AND m.site_user_key = $3
+		  AND m.organization_id = $4 AND m.principal_id = $5 AND m.role = $6
+		  AND p.enabled = true`,
+		claims.ID, claims.SiteProjectID, claims.SiteUserKey, claims.OrganizationID, claims.PrincipalID, claims.Role,
+	).Scan(&membership.ID, &membership.SiteProjectID, &membership.SiteUserKey, &membership.OrganizationID, &membership.PrincipalID, &membership.Role, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Principal{}, ErrUnauthenticated
+	}
+	if err != nil {
+		return Principal{}, fmt.Errorf("authenticate site membership: %w", err)
+	}
+	if status != "ACTIVE" || !membership.Valid() || membership != claims {
+		return Principal{}, ErrUnauthenticated
+	}
+	return Principal{
+		ID: membership.PrincipalID, OrganizationID: membership.OrganizationID,
+		Kind: PrincipalHuman, Role: membership.Role, ReadOnly: true,
+	}, nil
+}
+
+func (s *PostgresStore) ExchangeSiteIdentity(ctx context.Context, siteProjectID, siteUserKey, email, exchangeToken string) (SiteMembership, error) {
+	if !identifierPattern.MatchString(siteProjectID) || !validDigestHex(siteUserKey) || len(exchangeToken) < 32 || len(exchangeToken) > 512 {
+		return SiteMembership{}, ErrUnauthenticated
+	}
+	emailDigest, err := normalizedEmailDigest(email)
+	if err != nil {
+		return SiteMembership{}, ErrUnauthenticated
+	}
+	tokenDigest := TokenDigest(exchangeToken)
+	var membership SiteMembership
+	err = s.db.QueryRowContext(ctx, `
+		SELECT m.id, m.site_project_id, m.site_user_key, m.organization_id, m.principal_id, m.role
+		FROM sites_identity_providers p
+		JOIN sites_memberships m ON m.site_project_id = p.site_project_id
+		WHERE p.site_project_id = $1 AND p.exchange_token_digest = $2 AND p.enabled = true
+		  AND m.site_user_key = $3 AND m.email_digest = $4 AND m.status = 'ACTIVE'`,
+		siteProjectID, tokenDigest[:], siteUserKey, emailDigest[:],
+	).Scan(&membership.ID, &membership.SiteProjectID, &membership.SiteUserKey, &membership.OrganizationID, &membership.PrincipalID, &membership.Role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SiteMembership{}, ErrUnauthenticated
+	}
+	if err != nil {
+		return SiteMembership{}, fmt.Errorf("exchange site identity: %w", err)
+	}
+	if !membership.Valid() {
+		return SiteMembership{}, ErrUnauthenticated
+	}
+	return membership, nil
+}
+
+func (s *PostgresStore) Organization(ctx context.Context, organizationID string) (Organization, error) {
+	var organization Organization
+	err := s.db.QueryRowContext(ctx, `SELECT id, name FROM organizations WHERE id = $1`, organizationID).Scan(&organization.ID, &organization.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Organization{}, ErrNotFound
+	}
+	if err != nil {
+		return Organization{}, fmt.Errorf("read organization: %w", err)
+	}
+	if !organization.Valid() {
+		return Organization{}, errors.New("stored organization is invalid")
+	}
+	return organization, nil
 }
 
 func (s *PostgresStore) Agent(ctx context.Context, organizationID, agentID string) (Agent, error) {
