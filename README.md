@@ -13,7 +13,9 @@ FlowOps owns policy, authorization, approvals, evidence, and reconciliation. Cus
 ```text
 pkg/envelope/          signed authorization envelope and canonical digest
 internal/policy/       deterministic allow, deny, or approval decision engine
+internal/controlapi/   authenticated tenant, command, and PostgreSQL boundary
 cmd/reference-signer/  customer-run verifier and broadcast boundary
+cmd/control-plane-api/ authenticated HTTP control-plane service
 services/              x402, evidence, and reconciliation services
 contracts/             Base escrow and related contracts
 apps/dashboard/        operator and customer UI

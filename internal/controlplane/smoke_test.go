@@ -48,6 +48,7 @@ func TestSmokeApprovalToCustomerSigner(t *testing.T) {
 	}
 	defer nonces.Close()
 	customerSigner, err := referencesigner.New(referencesigner.Config{
+		OrganizationID: "org_demo", CustomerID: "cust_acme",
 		TrustKeys:       map[string]ed25519.PublicKey{"flowops_control_1": controlPublicKey},
 		AllowedChainIDs: []uint64{84532}, AllowedRails: []envelope.Rail{envelope.RailX402},
 		AllowedAssets: []string{controlTestUSDC}, AllowedRecipients: []string{controlTestRecipient},
