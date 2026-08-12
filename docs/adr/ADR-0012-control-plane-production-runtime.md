@@ -56,6 +56,11 @@ The exact ACTIVE owner may atomically disable the provider and append an audit
 event. Existing dashboard sessions are rejected on their next API request.
 Re-enablement is deliberately absent from the capped-pilot command surface.
 
+Each Sites identity provider is structurally bound to exactly one organization.
+Bootstrap rejects reuse of a project across organizations, and session exchange,
+session authentication, rotation, and disablement all require the membership's
+organization to equal the provider binding.
+
 The private Sites app exposes `/api/flowops/enrollment` to an authenticated
 viewer. It returns the project ID, email supplied by Sites, and the
 SHA-256 site-user key required by the bootstrap command. It never returns the

@@ -132,6 +132,22 @@ func TestLoadConfigUsesPlatformPortOnlyWithExplicitProxyTrust(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsEveryZeroValuedPlatformPort(t *testing.T) {
+	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("z", ed25519.SeedSize)))
+	t.Setenv("FLOWOPS_DATABASE_URL", "postgres://flowops@localhost/flowops?sslmode=require")
+	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
+	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
+	t.Setenv("FLOWOPS_SITE_SESSION_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
+	t.Setenv("FLOWOPS_RECONCILIATION_JOURNAL", "/var/lib/flowops/reconciliation.log")
+	t.Setenv("FLOWOPS_TRUST_PROXY_HEADERS", "true")
+	for _, port := range []string{"0", "00", "00000"} {
+		t.Setenv("PORT", port)
+		if _, err := loadConfig(); err == nil {
+			t.Errorf("zero-valued PORT %q was accepted", port)
+		}
+	}
+}
+
 func TestExpirySweeperRejectsInvalidConfiguration(t *testing.T) {
 	if err := runExpirySweeper(context.Background(), nil, time.Second); err == nil {
 		t.Fatal("nil lifecycle was accepted")

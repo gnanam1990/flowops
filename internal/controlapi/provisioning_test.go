@@ -20,8 +20,8 @@ func TestBootstrapSiteOwnerCreatesAllRowsInOneAuditedTransaction(t *testing.T) {
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(siteProvisioningLock).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT name FROM organizations`).WithArgs(input.OrganizationID).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO organizations`).WithArgs(input.OrganizationID, input.OrganizationName).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectQuery(`SELECT exchange_token_digest, enabled`).WithArgs(input.SiteProjectID).WillReturnError(sql.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO sites_identity_providers`).WithArgs(input.SiteProjectID, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`SELECT exchange_token_digest, enabled, organization_id`).WithArgs(input.SiteProjectID).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO sites_identity_providers`).WithArgs(input.SiteProjectID, sqlmock.AnyArg(), input.OrganizationID).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT id, site_project_id, site_user_key, email_digest`).WithArgs(input.SiteProjectID, input.SiteUserKey).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO sites_memberships`).WithArgs(
 		input.MembershipID, input.SiteProjectID, input.SiteUserKey, sqlmock.AnyArg(), input.OrganizationID, input.PrincipalID,
@@ -55,6 +55,31 @@ func TestBootstrapSiteOwnerRefusesImplicitIdentityOrTokenReplacement(t *testing.
 	mock.ExpectRollback()
 	if _, err := BootstrapSiteOwner(context.Background(), db, input); !errors.Is(err, ErrProvisioningConflict) {
 		t.Fatalf("identity conflict error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBootstrapSiteOwnerRefusesCrossOrganizationProjectReuse(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	input := siteOwnerBootstrapFixture()
+	tokenDigest := TokenDigest(input.ExchangeToken)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(siteProvisioningLock).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT name FROM organizations`).WithArgs(input.OrganizationID).WillReturnRows(
+		sqlmock.NewRows([]string{"name"}).AddRow(input.OrganizationName),
+	)
+	mock.ExpectQuery(`SELECT exchange_token_digest, enabled, organization_id`).WithArgs(input.SiteProjectID).WillReturnRows(
+		sqlmock.NewRows([]string{"exchange_token_digest", "enabled", "organization_id"}).AddRow(tokenDigest[:], true, "org_different"),
+	)
+	mock.ExpectRollback()
+	if _, err := BootstrapSiteOwner(context.Background(), db, input); !errors.Is(err, ErrProvisioningConflict) {
+		t.Fatalf("cross-organization project error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

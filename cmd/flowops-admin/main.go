@@ -107,6 +107,10 @@ func decodeStrictJSON(input io.Reader, target any) error {
 	if len(raw) > maxAdminInputBytes {
 		return errors.New("admin request exceeds 32 KiB")
 	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return errors.New("admin request must contain exactly one JSON object")
+	}
 	if err := rejectDuplicateJSONKeys(raw); err != nil {
 		return err
 	}

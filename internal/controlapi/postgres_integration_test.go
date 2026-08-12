@@ -128,6 +128,21 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 	if err != nil || idempotent != (SiteOwnerBootstrapResult{}) {
 		t.Fatalf("idempotent Sites owner bootstrap = %+v, %v", idempotent, err)
 	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO organizations (id, name) VALUES ('org_sites_other', 'Other')`); err != nil {
+		t.Fatal(err)
+	}
+	otherUserKey, err := SiteUserKey(siteProjectID, "opaque_other_user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BootstrapSiteOwner(ctx, db, SiteOwnerBootstrap{
+		AuditID: "audit_sites_cross_org", ActorID: "owner_sites_other",
+		OrganizationID: "org_sites_other", OrganizationName: "Other",
+		SiteProjectID: siteProjectID, SiteUserKey: otherUserKey, Email: "other@example.com",
+		PrincipalID: "owner_sites_other", MembershipID: "membership_sites_other", ExchangeToken: exchangeToken,
+	}); !errors.Is(err, ErrProvisioningConflict) {
+		t.Fatalf("cross-organization Sites project reuse error = %v", err)
+	}
 	rotatedExchangeToken := "flowops_sites_exchange_rotated_0000000000000001"
 	rotated, err := RotateSiteExchangeToken(ctx, db, SiteExchangeTokenRotation{
 		AuditID: "audit_sites_rotate_integration", ActorID: "owner_integration", OrganizationID: "org_integration",

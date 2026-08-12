@@ -198,7 +198,8 @@ func loadConfig() (startupConfig, error) {
 		if port == "" {
 			cfg.address = defaultAddress
 		} else {
-			if _, err := strconv.ParseUint(port, 10, 16); err != nil || port == "0" {
+			parsedPort, err := strconv.ParseUint(port, 10, 16)
+			if err != nil || parsedPort == 0 {
 				return startupConfig{}, errors.New("PORT must be a positive TCP port")
 			}
 			cfg.address = "0.0.0.0:" + port

@@ -87,17 +87,18 @@ func BootstrapSiteOwner(ctx context.Context, db *sql.DB, input SiteOwnerBootstra
 	}
 
 	var storedTokenDigest []byte
+	var providerOrganization string
 	var providerEnabled bool
 	err = tx.QueryRowContext(ctx, `
-		SELECT exchange_token_digest, enabled
+		SELECT exchange_token_digest, enabled, organization_id
 		FROM sites_identity_providers
 		WHERE site_project_id = $1
-		FOR UPDATE`, input.SiteProjectID).Scan(&storedTokenDigest, &providerEnabled)
+		FOR UPDATE`, input.SiteProjectID).Scan(&storedTokenDigest, &providerEnabled, &providerOrganization)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO sites_identity_providers (site_project_id, exchange_token_digest)
-			VALUES ($1, $2)`, input.SiteProjectID, tokenDigest[:]); err != nil {
+			INSERT INTO sites_identity_providers (site_project_id, exchange_token_digest, organization_id)
+			VALUES ($1, $2, $3)`, input.SiteProjectID, tokenDigest[:], input.OrganizationID); err != nil {
 			return SiteOwnerBootstrapResult{}, fmt.Errorf("create Sites identity provider: %w", err)
 		}
 		result.ProviderCreated = true
@@ -105,6 +106,8 @@ func BootstrapSiteOwner(ctx context.Context, db *sql.DB, input SiteOwnerBootstra
 		return SiteOwnerBootstrapResult{}, fmt.Errorf("read Sites identity provider: %w", err)
 	case !providerEnabled:
 		return SiteOwnerBootstrapResult{}, fmt.Errorf("%w: Sites identity provider is disabled", ErrProvisioningConflict)
+	case providerOrganization != input.OrganizationID:
+		return SiteOwnerBootstrapResult{}, fmt.Errorf("%w: Sites project belongs to another organization", ErrProvisioningConflict)
 	case len(storedTokenDigest) != len(tokenDigest) || subtle.ConstantTimeCompare(storedTokenDigest, tokenDigest[:]) != 1:
 		return SiteOwnerBootstrapResult{}, fmt.Errorf("%w: exchange token rotation must use the rotation command", ErrProvisioningConflict)
 	}
@@ -187,7 +190,7 @@ func RotateSiteExchangeToken(ctx context.Context, db *sql.DB, input SiteExchange
 	err = tx.QueryRowContext(ctx, `
 		SELECT p.exchange_token_digest, p.enabled, m.organization_id, m.principal_id, m.role, m.status
 		FROM sites_identity_providers p
-		JOIN sites_memberships m ON m.site_project_id = p.site_project_id
+		JOIN sites_memberships m ON m.site_project_id = p.site_project_id AND m.organization_id = p.organization_id
 		WHERE p.site_project_id = $1 AND m.id = $2
 		FOR UPDATE OF p, m`, input.SiteProjectID, input.MembershipID).Scan(
 		&storedDigest, &providerEnabled, &storedOrganization, &storedPrincipal, &storedRole, &membershipStatus,
@@ -254,7 +257,7 @@ func DisableSiteIdentityProvider(ctx context.Context, db *sql.DB, input SiteProv
 	err = tx.QueryRowContext(ctx, `
 		SELECT p.enabled, m.organization_id, m.principal_id, m.role, m.status
 		FROM sites_identity_providers p
-		JOIN sites_memberships m ON m.site_project_id = p.site_project_id
+		JOIN sites_memberships m ON m.site_project_id = p.site_project_id AND m.organization_id = p.organization_id
 		WHERE p.site_project_id = $1 AND m.id = $2
 		FOR UPDATE OF p, m`, input.SiteProjectID, input.MembershipID).Scan(
 		&providerEnabled, &storedOrganization, &storedPrincipal, &storedRole, &membershipStatus,
