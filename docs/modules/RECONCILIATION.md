@@ -1,10 +1,15 @@
 # Base reconciliation and halt-safety module
 
-Status: implemented locally; live provider selection and Sepolia measurement remain open
+Status: production runtime wiring implemented; dedicated provider selection and Sepolia measurement remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
 Read-only observer: `cmd/base-observer`
+
+Continuous runtime: `internal/reconciliation.Supervisor`, started by
+`cmd/control-plane-api`
+
+Operator client: `cmd/flowops-operator`
 
 ## Purpose
 
@@ -28,6 +33,10 @@ It is an operational subledger and settlement-safety boundary, not complete stat
 
 Recovery requires the configured consecutive healthy-observation window, zero unresolved broadcasts, and an explicit named operator release. A process restart from `HEALTHY` returns to `SUSPECTED_STALL`; stale in-memory health is never inherited.
 
+Global halt and resume are protected by a dedicated operator-control key, not a
+tenant credential or Sites membership. The `flowops-operator` client reads that
+key from the environment, refuses redirects, and sends strict JSON over HTTPS.
+
 ## Independent observer contract
 
 Two to five HTTPS providers with distinct names and hostnames are configured. For every snapshot the observer set:
@@ -39,6 +48,12 @@ Two to five HTTPS providers with distinct names and hostnames are configured. Fo
 5. emits provider-specific head and anchor number, hash, block time, and observation time.
 
 The engine rejects duplicate providers, stale observations, future timestamps, excessive head skew, anchor disagreement, and regression/conflict with the last trusted checkpoint. Distinct hostnames are a configuration floor; operators must still verify that the providers are operationally independent.
+
+The production supervisor runs once immediately and then on a fixed interval.
+It persists empty or partial observations so provider outages advance the same
+fail-closed state machine as disagreements. It reports only provider counts;
+secret-bearing URLs and detailed transport errors are not API fields or
+supervisor log attributes. Durable journal failure stops the service.
 
 ## Receipt and USDC verification
 
@@ -97,7 +112,8 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
 ## Explicit remaining work
 
 - select and contractually assess at least two production Base RPC providers;
-- measure and record confirmation, stall-age, head-skew, reorg-lookback, and recovery-window values on Base Sepolia;
+- complete and record the multi-hour Sepolia confirmation, stall-age,
+  head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
 - add contract-specific escrow event reconciliation after the escrow state machine is finalized;
 - add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
 - expose status, exceptions, backfill progress, and manual gates in the dashboard;

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,28 +24,32 @@ const (
 	defaultCommandCompletionTimeout = 5 * time.Second
 )
 
-type ChainStatusSource interface {
+type ChainController interface {
 	Status() reconciliation.ChainStatus
+	ForceHalt(context.Context, string, string) (reconciliation.ChainStatus, error)
+	Resume(context.Context, string) (reconciliation.ChainStatus, error)
 }
 
 type ServerConfig struct {
 	Store                    Store
 	Lifecycle                *controlplane.Lifecycle
-	Chain                    ChainStatusSource
+	Chain                    ChainController
 	Clock                    func() time.Time
 	IDSource                 func(prefix string) (string, error)
 	CommandCompletionTimeout time.Duration
 	SiteSessions             *SiteSessionCodec
+	OperatorControlKey       []byte
 }
 
 type Server struct {
 	store                    Store
 	lifecycle                *controlplane.Lifecycle
-	chain                    ChainStatusSource
+	chain                    ChainController
 	clock                    func() time.Time
 	idSource                 func(string) (string, error)
 	commandCompletionTimeout time.Duration
 	siteSessions             *SiteSessionCodec
+	operatorControlKey       []byte
 	handler                  http.Handler
 }
 
@@ -68,6 +74,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s := &Server{
 		store: cfg.Store, lifecycle: cfg.Lifecycle, chain: cfg.Chain, clock: clock, idSource: idSource,
 		commandCompletionTimeout: completionTimeout, siteSessions: cfg.SiteSessions,
+		operatorControlKey: append([]byte(nil), cfg.OperatorControlKey...),
+	}
+	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
+		return nil, errors.New("operator control key must contain exactly 32 bytes")
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
@@ -79,8 +89,24 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST /v1/agents/{agentID}/pause", s.authenticate(http.HandlerFunc(s.handlePauseAgent)))
 	mux.Handle("GET /v1/commands/{commandID}", s.authenticate(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("GET /v1/dashboard/snapshot", s.authenticate(http.HandlerFunc(s.handleDashboardSnapshot)))
+	if len(s.operatorControlKey) == 32 {
+		mux.Handle("POST /v1/operator/chain/halt", s.authenticateOperator(http.HandlerFunc(s.handleOperatorHalt)))
+		mux.Handle("POST /v1/operator/chain/resume", s.authenticateOperator(http.HandlerFunc(s.handleOperatorResume)))
+	}
 	s.handler = securityHeaders(mux)
 	return s, nil
+}
+
+func (s *Server) authenticateOperator(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, ok := bearerToken(r.Header.Get("Authorization"))
+		decoded, err := base64.StdEncoding.DecodeString(token)
+		if !ok || err != nil || len(decoded) != len(s.operatorControlKey) || subtle.ConstantTimeCompare(decoded, s.operatorControlKey) != 1 {
+			writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", ErrUnauthenticated, false, "")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
@@ -178,8 +204,59 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"controlPlane":         "AVAILABLE",
 		"chainState":           status.State,
 		"authorizationsPaused": status.AuthorizationsPaused,
+		"requiredObservers":    status.RequiredObserverQuorum,
+		"respondingObservers":  status.RespondingObservers,
+		"lastObservationAt":    status.LastObservationAt,
+		"readyForManualResume": status.ReadyForManualResume,
 		"lastTrusted":          status.LastTrusted,
 	})
+}
+
+type operatorHaltRequest struct {
+	Operator string `json:"operator"`
+	Reason   string `json:"reason"`
+}
+
+type operatorResumeRequest struct {
+	Operator string `json:"operator"`
+}
+
+func (s *Server) handleOperatorHalt(w http.ResponseWriter, r *http.Request) {
+	var request operatorHaltRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	status, err := s.chain.ForceHalt(r.Context(), strings.TrimSpace(request.Operator), strings.TrimSpace(request.Reason))
+	if err != nil {
+		if errors.Is(err, reconciliation.ErrInvalidOperator) || errors.Is(err, reconciliation.ErrInvalidHaltReason) {
+			writeError(w, http.StatusBadRequest, "INVALID_HALT", err, false, "")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "CONTROL_EVENT_NOT_COMMITTED", err, true, "")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chain": status})
+}
+
+func (s *Server) handleOperatorResume(w http.ResponseWriter, r *http.Request) {
+	var request operatorResumeRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	status, err := s.chain.Resume(r.Context(), strings.TrimSpace(request.Operator))
+	if errors.Is(err, reconciliation.ErrResumeBlocked) {
+		writeError(w, http.StatusConflict, "RESUME_BLOCKED", err, false, "")
+		return
+	}
+	if err != nil {
+		if errors.Is(err, reconciliation.ErrInvalidOperator) {
+			writeError(w, http.StatusBadRequest, "INVALID_RESUME", err, false, "")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "CONTROL_EVENT_NOT_COMMITTED", err, true, "")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chain": status})
 }
 
 func (s *Server) handleCreateIntent(w http.ResponseWriter, r *http.Request) {

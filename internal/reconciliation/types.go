@@ -46,11 +46,13 @@ var (
 )
 
 var (
-	ErrChainUnavailable = errors.New("Base canonical state is not healthy")
-	ErrConflict         = errors.New("idempotency conflict")
-	ErrUnknownExecution = errors.New("unknown execution")
-	ErrUnsafeFinality   = errors.New("canonical finality evidence is insufficient")
-	ErrResumeBlocked    = errors.New("autonomous resume is blocked")
+	ErrChainUnavailable  = errors.New("Base canonical state is not healthy")
+	ErrConflict          = errors.New("idempotency conflict")
+	ErrUnknownExecution  = errors.New("unknown execution")
+	ErrUnsafeFinality    = errors.New("canonical finality evidence is insufficient")
+	ErrResumeBlocked     = errors.New("autonomous resume is blocked")
+	ErrInvalidOperator   = errors.New("operator is invalid")
+	ErrInvalidHaltReason = errors.New("halt reason is invalid")
 )
 
 type Config struct {
@@ -134,6 +136,9 @@ type ChainStatus struct {
 	State                   ChainState  `json:"state"`
 	Reason                  string      `json:"reason"`
 	LastTrusted             *Checkpoint `json:"lastTrusted,omitempty"`
+	RequiredObserverQuorum  int         `json:"requiredObserverQuorum"`
+	RespondingObservers     int         `json:"respondingObservers"`
+	LastObservationAt       time.Time   `json:"lastObservationAt,omitempty"`
 	StateChangedAt          time.Time   `json:"stateChangedAt"`
 	ConsecutiveUnhealthy    int         `json:"consecutiveUnhealthy"`
 	ConsecutiveRecovery     int         `json:"consecutiveRecovery"`

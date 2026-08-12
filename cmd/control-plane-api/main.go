@@ -27,19 +27,23 @@ import (
 )
 
 const (
-	baseSepoliaChainID = 84532
-	defaultAddress     = "127.0.0.1:8080"
+	defaultAddress = "127.0.0.1:8080"
 )
 
 type startupConfig struct {
-	address         string
-	databaseURL     string
-	envelopeKeyID   string
-	envelopeKey     ed25519.PrivateKey
-	siteSessionKey  []byte
-	reconciliation  string
-	trustProxy      bool
-	applyMigrations bool
+	address          string
+	databaseURL      string
+	envelopeKeyID    string
+	envelopeKey      ed25519.PrivateKey
+	siteSessionKey   []byte
+	reconciliation   string
+	trustProxy       bool
+	applyMigrations  bool
+	operatorKey      []byte
+	observerRPCs     []reconciliation.RPCProvider
+	observerConfig   reconciliation.Config
+	observerInterval time.Duration
+	observerTimeout  time.Duration
 }
 
 func main() {
@@ -88,7 +92,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	reconciliationEngine, err := reconciliation.Open(cfg.reconciliation, reconciliation.Config{ChainID: baseSepoliaChainID})
+	reconciliationEngine, err := reconciliation.Open(cfg.reconciliation, cfg.observerConfig)
 	if err != nil {
 		return fmt.Errorf("open reconciliation state: %w", err)
 	}
@@ -109,7 +113,23 @@ func run(ctx context.Context) error {
 	if _, err := lifecycle.SweepExpired(startupCtx); err != nil {
 		return fmt.Errorf("sweep expired approvals at startup: %w", err)
 	}
-	api, err := controlapi.NewServer(controlapi.ServerConfig{Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions})
+	observers, err := reconciliation.NewObserverSet(cfg.observerConfig.ChainID, cfg.observerRPCs, nil, nil)
+	if err != nil {
+		return fmt.Errorf("create Base observer set: %w", err)
+	}
+	observerSupervisor, err := reconciliation.NewSupervisor(observers, reconciliationEngine, reconciliation.SupervisorConfig{
+		Interval: cfg.observerInterval, ObservationTimeout: cfg.observerTimeout,
+		OnResult: func(status reconciliation.ChainStatus, result reconciliation.SnapshotResult) {
+			slog.Info("Base observer snapshot persisted", "state", status.State, "responding", len(result.Observations), "failed", len(result.Failures), "required", status.RequiredObserverQuorum)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create Base observer supervisor: %w", err)
+	}
+	api, err := controlapi.NewServer(controlapi.ServerConfig{
+		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
+		OperatorControlKey: cfg.operatorKey,
+	})
 	if err != nil {
 		return err
 	}
@@ -120,7 +140,7 @@ func run(ctx context.Context) error {
 	}
 	serverErrors := make(chan error, 1)
 	go func() {
-		slog.Info("control plane listening", "address", cfg.address, "chainId", baseSepoliaChainID)
+		slog.Info("control plane listening", "address", cfg.address, "chainId", cfg.observerConfig.ChainID, "observerCount", len(cfg.observerRPCs))
 		err := httpServer.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErrors <- err
@@ -134,6 +154,10 @@ func run(ctx context.Context) error {
 	go func() {
 		maintenanceErrors <- runExpirySweeper(shutdownSignal, lifecycle, 30*time.Second)
 	}()
+	observerErrors := make(chan error, 1)
+	go func() {
+		observerErrors <- observerSupervisor.Run(shutdownSignal)
+	}()
 	select {
 	case <-shutdownSignal.Done():
 	case err := <-serverErrors:
@@ -141,6 +165,10 @@ func run(ctx context.Context) error {
 			return fmt.Errorf("serve control-plane API: %w", err)
 		}
 	case err := <-maintenanceErrors:
+		if err != nil {
+			return err
+		}
+	case err := <-observerErrors:
 		if err != nil {
 			return err
 		}
@@ -183,6 +211,19 @@ func loadConfig() (startupConfig, error) {
 		envelopeKey:   key, siteSessionKey: siteSessionKey,
 		reconciliation: strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
 	}
+	operatorKey, err := decodeSymmetricKey("FLOWOPS_OPERATOR_CONTROL_KEY_B64", os.Getenv("FLOWOPS_OPERATOR_CONTROL_KEY_B64"))
+	if err != nil {
+		return startupConfig{}, err
+	}
+	cfg.operatorKey = operatorKey
+	observerRuntime, err := loadObserverRuntimeConfig()
+	if err != nil {
+		return startupConfig{}, err
+	}
+	cfg.observerRPCs = observerRuntime.providers
+	cfg.observerConfig = observerRuntime.engine
+	cfg.observerInterval = observerRuntime.interval
+	cfg.observerTimeout = observerRuntime.timeout
 	trustProxy, err := parseStrictBool("FLOWOPS_TRUST_PROXY_HEADERS", os.Getenv("FLOWOPS_TRUST_PROXY_HEADERS"))
 	if err != nil {
 		return startupConfig{}, err
@@ -209,7 +250,7 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, err
 	}
 	if cfg.databaseURL == "" || cfg.envelopeKeyID == "" || cfg.reconciliation == "" {
-		return startupConfig{}, errors.New("FLOWOPS_DATABASE_URL, FLOWOPS_ENVELOPE_KEY_ID, FLOWOPS_ENVELOPE_PRIVATE_KEY_B64, FLOWOPS_SITE_SESSION_KEY_B64, and FLOWOPS_RECONCILIATION_JOURNAL are required")
+		return startupConfig{}, errors.New("database, signing, session, operator-control, observer, and reconciliation configuration are required")
 	}
 	return cfg, nil
 }

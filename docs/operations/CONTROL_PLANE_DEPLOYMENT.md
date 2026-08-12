@@ -14,11 +14,12 @@ production Base value as part of this procedure.
 - one persistent volume mounted for the reconciliation journal;
 - one public HTTPS edge whose service port is not directly reachable;
 - a secret manager for the database URL, Ed25519 envelope private key, 32-byte
-  Sites session key, and Sites exchange token; and
+  Sites session key, Sites exchange token, Base RPC provider URLs, and 32-byte
+  operator-control key; and
 - the private owner-only Sites project recorded in `.openai/hosting.json`.
 
-The checked-in `Dockerfile` builds both `/flowops/control-plane-api` and
-`/flowops/flowops-admin`. `railway.json` selects that image, checks `/health`,
+The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
+`/flowops/flowops-admin`, and `/flowops/flowops-operator`. `railway.json` selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
 before the API starts.
@@ -37,6 +38,20 @@ The API service requires:
 | `FLOWOPS_APPLY_MIGRATIONS` | `false` for the least-privilege API runtime after an operator applies migrations |
 | `PORT` | Injected or fixed positive service port |
 | `RAILWAY_VOLUME_MOUNT_PATH` | Injected persistent mount; the entrypoint derives the journal path |
+| `FLOWOPS_BASE_RPC_PROVIDERS_JSON` | Secret strict JSON array of 2–5 unique names and HTTPS hosts |
+| `FLOWOPS_BASE_CHAIN_ID` | `84532` for the capped Sepolia pilot; `8453` requires a separate mainnet gate |
+| `FLOWOPS_BASE_OBSERVER_INTERVAL` | Poll interval; must exceed the per-poll timeout |
+| `FLOWOPS_BASE_OBSERVER_TIMEOUT` | Overall timeout for one concurrent provider snapshot |
+| `FLOWOPS_BASE_OBSERVER_QUORUM` | Required independent responses, 2–5 and no greater than provider count |
+| `FLOWOPS_BASE_HALT_CONFIRMATIONS` | Consecutive unhealthy observations before `HALTED` |
+| `FLOWOPS_BASE_RECOVERY_OBSERVATIONS` | Consecutive healthy observations before manual resume is permitted |
+| `FLOWOPS_BASE_MIN_CONFIRMATIONS` | Sealed-block receipt confirmation floor |
+| `FLOWOPS_BASE_REORG_LOOKBACK` | Canonical reorg evidence depth |
+| `FLOWOPS_BASE_MAX_HEAD_SKEW` | Maximum provider sealed-head difference |
+| `FLOWOPS_BASE_STALL_THRESHOLD` | Maximum age of a provider's latest sealed block |
+| `FLOWOPS_BASE_OBSERVATION_MAX_AGE` | Maximum trusted observer-heartbeat age |
+| `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` | Maximum tolerated future timestamp skew |
+| `FLOWOPS_OPERATOR_CONTROL_KEY_B64` | Exactly 32 random bytes, base64; global halt/resume authority |
 
 Do not set `FLOWOPS_CONTROL_ADDR` on the selected runtime; `PORT` produces the
 required `0.0.0.0:PORT` listener and still requires explicit trusted-proxy
@@ -45,6 +60,37 @@ mode. Apply migrations with a transient privileged database credential through
 then run the API with `FLOWOPS_APPLY_MIGRATIONS=false`. The default remains
 `true` for local development and upgrades must not rely on that default. Do not
 place secret-bearing URLs or tokens in process arguments.
+
+## Base observer activation and manual release
+
+1. Store the observer JSON and operator key in the deployment secret manager.
+   Never put a credential-bearing RPC URL in a command, log, issue, or commit.
+2. Deploy one replica. `/health` must report the configured required observer
+   count and a recent observation time. `HTTP 200` alone is not a pass.
+3. Wait for `RECOVERING`, the expected responding count, a progressing trusted
+   checkpoint, and `readyForManualResume: true`.
+4. From a trusted operator environment, set `FLOWOPS_CONTROL_API_URL` and load
+   `FLOWOPS_OPERATOR_CONTROL_KEY_B64` from the secret manager. Then run:
+
+   ```sh
+   printf '%s\n' '{"operator":"operator_alice"}' \
+     | /flowops/flowops-operator chain-resume
+   ```
+
+5. Verify `/health` and the signed-in private dashboard show `HEALTHY`, the
+   exact responding/quorum count, and a fresh trusted block. A retry with the
+   same operator is safe and returns the same healthy state.
+
+For an immediate global stop:
+
+```sh
+printf '%s\n' '{"operator":"operator_alice","reason":"provider incident under investigation"}' \
+  | /flowops/flowops-operator chain-halt
+```
+
+The actor string is journaled audit context. Possession of the operator key is
+the operational authority. Rotate the key after suspected exposure; tenant and
+Sites credentials are deliberately not accepted by these endpoints.
 
 ## Owner enrollment and bootstrap
 
@@ -91,6 +137,8 @@ tokens is not. Verify the old token fails exchange and the new token succeeds.
   revision. Never substitute a different tenant to make the dashboard render.
 - Preserve the PostgreSQL database and reconciliation volume during rollback.
   Starting against a missing or modified journal must fail closed.
+- A provider outage, wrong chain, stale head, or rate limit is a chain-safety
+  incident, not an API availability failure. Do not bypass the observer gate.
 - Roll back the API image and Sites version independently only when their API
   contract remains compatible.
 - Run `/flowops/flowops-admin sites-disable-provider` with the exact owner,

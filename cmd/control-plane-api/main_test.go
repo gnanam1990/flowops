@@ -14,7 +14,8 @@ import (
 func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	for _, name := range []string{
 		"FLOWOPS_DATABASE_URL", "FLOWOPS_ENVELOPE_KEY_ID", "FLOWOPS_ENVELOPE_PRIVATE_KEY_B64",
-		"FLOWOPS_SITE_SESSION_KEY_B64", "FLOWOPS_RECONCILIATION_JOURNAL",
+		"FLOWOPS_SITE_SESSION_KEY_B64", "FLOWOPS_RECONCILIATION_JOURNAL", "FLOWOPS_OPERATOR_CONTROL_KEY_B64",
+		"FLOWOPS_BASE_RPC_PROVIDERS_JSON",
 	} {
 		t.Setenv(name, "")
 	}
@@ -23,6 +24,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	}
 
 	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("s", ed25519.SeedSize)))
+	setObserverRuntime(t)
 	t.Setenv("FLOWOPS_DATABASE_URL", "postgres://flowops@localhost/flowops?sslmode=require")
 	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
 	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
@@ -39,6 +41,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 
 func TestLoadConfigCanDisableRuntimeMigrations(t *testing.T) {
 	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("m", ed25519.SeedSize)))
+	setObserverRuntime(t)
 	t.Setenv("FLOWOPS_DATABASE_URL", "postgres://flowops@localhost/flowops?sslmode=require")
 	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
 	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
@@ -112,6 +115,7 @@ func TestProxyTransportBoundaryRejectsUntrustedPlaintext(t *testing.T) {
 
 func TestLoadConfigUsesPlatformPortOnlyWithExplicitProxyTrust(t *testing.T) {
 	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", ed25519.SeedSize)))
+	setObserverRuntime(t)
 	t.Setenv("FLOWOPS_DATABASE_URL", "postgres://flowops@localhost/flowops?sslmode=require")
 	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
 	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
@@ -134,6 +138,7 @@ func TestLoadConfigUsesPlatformPortOnlyWithExplicitProxyTrust(t *testing.T) {
 
 func TestLoadConfigRejectsEveryZeroValuedPlatformPort(t *testing.T) {
 	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("z", ed25519.SeedSize)))
+	setObserverRuntime(t)
 	t.Setenv("FLOWOPS_DATABASE_URL", "postgres://flowops@localhost/flowops?sslmode=require")
 	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
 	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
@@ -146,6 +151,12 @@ func TestLoadConfigRejectsEveryZeroValuedPlatformPort(t *testing.T) {
 			t.Errorf("zero-valued PORT %q was accepted", port)
 		}
 	}
+}
+
+func setObserverRuntime(t *testing.T) {
+	t.Helper()
+	t.Setenv("FLOWOPS_OPERATOR_CONTROL_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32))))
+	t.Setenv("FLOWOPS_BASE_RPC_PROVIDERS_JSON", `[{"name":"rpc_alpha","url":"https://alpha.rpc.example/v1"},{"name":"rpc_beta","url":"https://beta.rpc.example/v1"}]`)
 }
 
 func TestExpirySweeperRejectsInvalidConfiguration(t *testing.T) {

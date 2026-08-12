@@ -115,6 +115,8 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
         chain: {
           state: "HEALTHY",
           reason: "independent observers agree",
+          requiredObserverQuorum: 2,
+          respondingObservers: 2,
           lastTrusted: { blockNumber: 12345678, observedAt: now.toISOString() },
           authorizationsPaused: false,
         },
@@ -156,6 +158,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   const html = await response.text();
   assert.match(html, /Live control plane/);
   assert.match(html, /Acme Operators/);
+  assert.match(html, /2 \/ 2 agree/);
   assert.match(html, /Buy verified dataset/);
   assert.match(html, /1,250,000 atomic/);
   assert.match(html, /0x2222…2222/);

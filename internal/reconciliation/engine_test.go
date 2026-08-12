@@ -69,6 +69,54 @@ func bootstrapHealthy(t *testing.T, engine *Engine, clock *testClock, anchor uin
 	}
 }
 
+func TestManualResumeRetrySurvivesHealthyObserverTick(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 100)
+	clock.Add(time.Second)
+	if _, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 102, 103)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Resume(context.Background(), "operator_alice"); err != nil {
+		t.Fatalf("resume retry after observer tick = %v", err)
+	}
+}
+
+func TestLegacyChainStatusReplayNormalizesObserverMetadata(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "reconciliation.log")
+	journal, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedAt := clock.Now().Add(-time.Second)
+	legacy := ChainStatus{
+		State: StateHalted, Reason: "legacy chain halt", StateChangedAt: observedAt,
+		LastTrusted: &Checkpoint{BlockNumber: 99, BlockHash: testHash(99), BlockTime: observedAt, ObservedAt: observedAt},
+	}
+	if _, err := journal.append(context.Background(), observedAt, eventChainStatus, "legacy", chainPayload{Status: legacy}); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	status := engine.Status()
+	if status.RequiredObserverQuorum != 2 || !status.LastObservationAt.Equal(observedAt) {
+		t.Fatalf("normalized legacy status = %+v", status)
+	}
+}
+
 func testExpected() ExpectedExecution {
 	return ExpectedExecution{
 		ExecutionID: "exec_1", OrganizationID: "org_acme", AgentID: "agent_research", TaskID: "task_9",
@@ -294,6 +342,48 @@ func TestObserverDisagreementAndCheckpointRegressionFailClosed(t *testing.T) {
 	status, err = engine.Observe(context.Background(), healthyObservations(clock.Now(), 199, 204))
 	if err != nil || status.State != StateHalted || !strings.Contains(status.Reason, "regressed") {
 		t.Fatalf("checkpoint regression = %+v, %v", status, err)
+	}
+}
+
+func TestObserverProgressIsDurableAndManualResumeReplayIsIdempotent(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "observer-progress.log")
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 800, 801))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.RequiredObserverQuorum != 2 || status.RespondingObservers != 2 || !status.LastObservationAt.Equal(clock.Now()) {
+		t.Fatalf("observer progress = %+v", status)
+	}
+	clock.Add(time.Second)
+	status, err = engine.Observe(context.Background(), healthyObservations(clock.Now(), 801, 802))
+	if err != nil || !status.ReadyForManualResume {
+		t.Fatalf("recovery readiness = %+v, %v", status, err)
+	}
+	first, err := engine.Resume(context.Background(), "operator_alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := engine.Resume(context.Background(), "operator_alice")
+	if err != nil || !equalJSON(first, second) {
+		t.Fatalf("resume replay = %+v, %v", second, err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	replayed := restarted.Status()
+	if replayed.RequiredObserverQuorum != 2 || replayed.RespondingObservers != 2 || replayed.LastObservationAt.IsZero() {
+		t.Fatalf("replayed observer progress = %+v", replayed)
 	}
 }
 
