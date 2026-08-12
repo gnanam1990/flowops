@@ -71,7 +71,10 @@ export async function dashboardForUser(
   request: typeof fetch = fetch,
 ): Promise<DashboardSnapshot> {
   if (!user) return preview("Sign in with ChatGPT to check FlowOps membership.");
-  if (!config) return preview("Live data is not configured for this deployment.");
+  if (!config) {
+    console.warn("[flowops-adapter] runtime configuration is unavailable");
+    return preview("Live data is not configured for this deployment.");
+  }
 
   try {
     const siteUserKey = await deriveSiteUserKey(config.siteProjectId, user.userId);
@@ -109,9 +112,15 @@ export async function dashboardForUser(
       },
     );
     return mapControlSnapshot(snapshot, session.organizationId);
-  } catch {
+  } catch (error) {
+    console.warn("[flowops-adapter] live snapshot unavailable", safeErrorMessage(error));
     return preview("Membership or control-plane data is unavailable. No live state is shown.");
   }
+}
+
+function safeErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown error";
+  return error.message.slice(0, 200);
 }
 
 export function loadAdapterConfig(): AdapterConfig | null {
