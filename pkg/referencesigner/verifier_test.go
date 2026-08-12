@@ -284,3 +284,24 @@ func TestNonceJournalRefusesConcurrentProcessOwner(t *testing.T) {
 		t.Fatal("second signer acquired the same nonce journal")
 	}
 }
+
+func TestNonceJournalRejectsSymlinkAndUnsafePermissions(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target.log")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "link.log")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenFileNonceStore(link); err == nil {
+		t.Fatal("symlink nonce journal was accepted")
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenFileNonceStore(target); err == nil {
+		t.Fatal("unsafe nonce journal permissions were accepted")
+	}
+}
