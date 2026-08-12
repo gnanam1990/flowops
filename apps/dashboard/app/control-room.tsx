@@ -45,10 +45,20 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const explainPreview = (action: string) => {
+  const explainLockedAction = (action: string) => {
     setNotice(
-      `${action} is locked in preview mode. Nothing was submitted and no write occurred. Connect the authenticated FlowOps control plane to execute this action.`,
+      snapshot.mode === "live"
+        ? `${action} requires fresh step-up authentication. This read-only dashboard session submitted no command and performed no write.`
+        : `${action} is locked in preview mode. Nothing was submitted and no write occurred. Connect the authenticated FlowOps control plane to execute this action.`,
     );
+  };
+
+  const navigationMark = (item: (typeof navItems)[number]) => {
+    if (item.id === "approvals") return String(snapshot.approvals.length).padStart(2, "0");
+    if (item.id === "agents") return String(snapshot.agents.length).padStart(2, "0");
+    if (item.id === "activity") return String(snapshot.activity.length).padStart(2, "0");
+    if (item.id === "security") return String(snapshot.risks.length).padStart(2, "0");
+    return item.mark;
   };
 
   return (
@@ -87,13 +97,13 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
               type="button"
             >
               <span>{item.label}</span>
-              <em>{item.mark}</em>
+              <em>{navigationMark(item)}</em>
             </button>
           ))}
         </nav>
 
         <div className="sidebar-foot">
-          <span className="preview-rail"><i /> Preview data</span>
+          <span className={snapshot.mode === "live" ? "preview-rail live" : "preview-rail"}><i /> {snapshot.connection.label}</span>
           <div className="chain-summary">
             <span className="chain-dot" aria-hidden="true" />
             <span>
@@ -118,10 +128,10 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
           </dl>
           <div className="topbar-actions">
             <span className="fresh-label">Fresh {snapshot.chain.lastTrustedAt}</span>
-            <span className="preview-pill">Preview data</span>
+            <span className={snapshot.mode === "live" ? "preview-pill live" : "preview-pill"}>{snapshot.connection.label}</span>
             <button className="icon-button" aria-label="Notifications" type="button">
               <span aria-hidden="true">●</span>
-              <i>2</i>
+              <i>{snapshot.risks.length}</i>
             </button>
             <button className="viewer" type="button" aria-label={`Account for ${viewer.name}`}>
               <span>{initials(viewer.name)}</span>
@@ -175,7 +185,7 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
               onClick={() => openSection(item.id)}
               type="button"
             >
-              <span>{item.mark}</span>
+              <span>{navigationMark(item)}</span>
               {item.label}
             </button>
           ))}
@@ -186,16 +196,17 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
         <ApprovalDrawer
           approval={approval}
           onClose={() => setApproval(null)}
-          onAction={explainPreview}
+          onAction={explainLockedAction}
         />
       ) : null}
       {pauseOpen ? (
         <PauseDialog
           organization={snapshot.organization.name}
+          mode={snapshot.mode}
           onClose={() => setPauseOpen(false)}
           onConfirm={() => {
             setPauseOpen(false);
-            explainPreview("Emergency pause");
+            explainLockedAction("Emergency pause");
           }}
         />
       ) : null}
@@ -229,8 +240,8 @@ function Overview({
           <p>Govern agent spend from frozen intent to canonical Base evidence.</p>
           <div className="observation-meta">
             <span>Observed {snapshot.generatedAt}</span>
-            <span>Policy v14.2</span>
-            <span>4 external signers</span>
+            <span>{snapshot.mode === "live" ? "Organization-scoped read" : "Policy v14.2"}</span>
+            <span>{snapshot.mode === "live" ? snapshot.connection.detail : "4 external signers"}</span>
           </div>
         </div>
         <div className="command-actions">
@@ -240,7 +251,7 @@ function Overview({
             ))}
           </div>
           <button className="primary-button" type="button" onClick={onApprovals}>
-            Review 3 approvals <span>→</span>
+            Review {snapshot.approvals.length} approvals <span>→</span>
           </button>
           <button className="danger-button" type="button" onClick={onPause}>
             Emergency pause
@@ -252,7 +263,7 @@ function Overview({
         <div className="balance-card primary-balance">
           <span>Observed treasury / USDC</span>
           <strong>{snapshot.money.total}</strong>
-          <small><i /> Read-only aggregate across customer-controlled signers</small>
+          <small><i /> {snapshot.mode === "live" ? "Ledger aggregates are not exposed by this snapshot" : "Read-only aggregate across customer-controlled signers"}</small>
           <div className="balance-signal" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /></div>
         </div>
         <MoneyCard label="Available" value={snapshot.money.available} tone="good" />
@@ -266,7 +277,7 @@ function Overview({
           <PanelHeader
             kicker="Decision queue"
             title="Needs your attention"
-            meta="3 pending"
+            meta={`${snapshot.approvals.length} pending`}
             onView={onApprovals}
           />
           <div className="approval-list">
@@ -288,30 +299,30 @@ function Overview({
         </section>
 
         <section className="panel budget-panel">
-          <PanelHeader kicker="Budget" title="August spend" meta="On track" />
+          <PanelHeader kicker="Budget" title="August spend" meta={snapshot.money.monthlySpentPercent === null ? "Unavailable" : "On track"} />
           <div className="budget-total">
             <strong>{snapshot.money.spentToday}</strong>
             <span>spent today</span>
           </div>
           <div className="progress-label">
             <span>Monthly usage</span>
-            <strong>{snapshot.money.monthlySpentPercent}%</strong>
+            <strong>{snapshot.money.monthlySpentPercent === null ? "Unavailable" : `${snapshot.money.monthlySpentPercent}%`}</strong>
           </div>
-          <div className="progress-track" aria-label={`${snapshot.money.monthlySpentPercent}% of monthly budget used`}>
-            <i style={{ width: `${snapshot.money.monthlySpentPercent}%` }} />
+          <div className="progress-track" aria-label={snapshot.money.monthlySpentPercent === null ? "Monthly budget usage is unavailable" : `${snapshot.money.monthlySpentPercent}% of monthly budget used`}>
+            <i style={{ width: `${snapshot.money.monthlySpentPercent ?? 0}%` }} />
           </div>
           <div className="budget-foot">
-            <span>$7,428 spent</span>
+            <span>{snapshot.money.monthlySpent} spent</span>
             <span>{snapshot.money.monthlyBudget} limit</span>
           </div>
           <div className="budget-note">
-            <span>↗</span>
-            <p><strong>12% below forecast</strong><br />Based on the last 14 days</p>
+            <span>{snapshot.mode === "live" ? "i" : "↗"}</span>
+            <p>{snapshot.mode === "live" ? <><strong>Ledger aggregates not exposed</strong><br />No financial values are inferred from agent records</> : <><strong>12% below forecast</strong><br />Based on the last 14 days</>}</p>
           </div>
         </section>
 
         <section className="panel agents-panel">
-          <PanelHeader kicker="Governed agents" title="Active fleet" meta="3 active" onView={onAgents} />
+          <PanelHeader kicker="Governed agents" title="Active fleet" meta={`${snapshot.agents.filter((agent) => agent.status === "ACTIVE").length} active`} onView={onAgents} />
           <div className="agent-rows">
             {snapshot.agents.slice(0, 3).map((agent) => (
               <AgentRow key={agent.id} agent={agent} />
@@ -334,11 +345,11 @@ function Overview({
         </section>
 
         <section className="panel activity-panel">
-          <PanelHeader kicker="Evidence graph" title="Economic activity" meta="Live" onView={onActivity} />
+          <PanelHeader kicker="Evidence graph" title="Economic activity" meta={snapshot.mode === "live" ? "Observed" : "Preview"} onView={onActivity} />
           <ActivityRows activity={snapshot.activity.slice(0, 4)} />
         </section>
       </div>
-      <p className="freshness"><span>END OF OBSERVED WINDOW</span> Snapshot refreshed {snapshot.generatedAt}. Preview records are illustrative and cannot move funds.</p>
+      <p className="freshness"><span>END OF OBSERVED WINDOW</span> Snapshot refreshed {snapshot.generatedAt}. {snapshot.mode === "live" ? "Values marked unavailable are not exposed by the control plane; writes require a separate step-up session." : "Preview records are illustrative and cannot move funds."}</p>
     </>
   );
 }
@@ -391,7 +402,7 @@ function Agents({ agents }: { agents: Agent[] }) {
       <div className="directory-controls">
         <label className="search-field"><span>Search agents</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, purpose, or task" /></label>
         <div className="filter-bar" aria-label="Agent status filters">
-          {(["all", "ACTIVE", "PAUSED", "QUARANTINED"] as const).map((item) => <button className={status === item ? "active" : ""} key={item} onClick={() => setStatus(item)} type="button">{item === "all" ? "All" : capitalize(item.toLowerCase())}</button>)}
+          {(["all", "DRAFT", "ACTIVE", "PAUSED", "QUARANTINED", "REVOKED", "ARCHIVED"] as const).map((item) => <button className={status === item ? "active" : ""} key={item} onClick={() => setStatus(item)} type="button">{item === "all" ? "All" : capitalize(item.toLowerCase())}</button>)}
         </div>
       </div>
       <div className="agent-directory">
@@ -466,9 +477,9 @@ function Developers({ snapshot }: { snapshot: DashboardSnapshot }) {
       <SectionHeading eyebrow="Build with boundaries" title="Developer center" description="Connect agents through MCP or the SDK without giving them an unrestricted wallet or FlowOps a customer key." />
       <div className="developer-grid">
         <article className="panel code-card"><span className="code-kicker">MCP connection</span><pre><code>{configuration}</code></pre><button type="button" onClick={copyConfiguration}>{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy unavailable" : "Copy configuration"}</button></article>
-        <article className="panel api-health"><PanelHeader kicker="Integration health" title="All boundaries" meta="Preview" /><dl><div><dt>Control plane</dt><dd>Not connected</dd></div><div><dt>Customer signer</dt><dd>Fixture healthy</dd></div><div><dt>x402 facilitator</dt><dd>Fixture healthy</dd></div><div><dt>Base observers</dt><dd>{snapshot.chain.observers}</dd></div></dl><p>Production controls stay disabled until the authenticated control plane is connected.</p></article>
+        <article className="panel api-health"><PanelHeader kicker="Integration health" title="All boundaries" meta={snapshot.mode === "live" ? "Read only" : "Preview"} /><dl><div><dt>Control plane</dt><dd>{snapshot.mode === "live" ? "Membership authorized" : "Not connected"}</dd></div><div><dt>Customer signer</dt><dd>{snapshot.mode === "live" ? "Not exposed" : "Fixture healthy"}</dd></div><div><dt>x402 facilitator</dt><dd>{snapshot.mode === "live" ? "Not exposed" : "Fixture healthy"}</dd></div><div><dt>Base observers</dt><dd>{snapshot.chain.observers}</dd></div></dl><p>{snapshot.connection.detail}</p></article>
       </div>
-      <div className="panel logs-card"><PanelHeader kicker="Recent requests" title="Developer logs" meta="Redacted" /><div className="log-row head"><span>Time</span><span>Request</span><span>Agent</span><span>Outcome</span><span>Latency</span></div>{[
+      <div className="panel logs-card"><PanelHeader kicker="Recent requests" title="Developer logs" meta={snapshot.mode === "live" ? "Unavailable" : "Preview"} /><div className="log-row head"><span>Time</span><span>Request</span><span>Agent</span><span>Outcome</span><span>Latency</span></div>{snapshot.mode === "live" ? <p className="empty-state">Request logs are not exposed by the current control-plane snapshot.</p> : [
         ["14:42:18", "req_7fa2", "Research Scout", "ALLOW", "48ms"],
         ["14:39:04", "req_7f91", "Growth Operator", "APPROVAL", "61ms"],
         ["14:32:51", "req_7f78", "Finance Copilot", "DENY", "44ms"],
@@ -490,8 +501,8 @@ function ApprovalDrawer({ approval, onClose, onAction }: { approval: Approval; o
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="approval-title">
         <header><span>Approval {approval.id}</span><button ref={closeRef} onClick={onClose} aria-label="Close approval details" type="button">×</button></header>
         <div className="drawer-title"><AgentMark mark={approval.agentMark} /><div><small>{approval.agent}</small><h2 id="approval-title">{approval.title}</h2></div></div>
-        <div className="drawer-amount"><span>Exact authorized amount</span><strong>{approval.amount}</strong><small>{approval.rail} · Base Sepolia USDC</small></div>
-        <dl className="detail-list"><div><dt>Recipient / vendor</dt><dd>{approval.vendor}</dd></div><div><dt>Agent</dt><dd>{approval.agent}</dd></div><div><dt>Task</dt><dd>{approval.title}</dd></div><div><dt>Rail</dt><dd>{approval.rail}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Policy snapshot</dt><dd className="mono">pol_v14.2</dd></div><div><dt>Evidence refs</dt><dd className="mono">EV-{approval.id}-02 · BASE-OBS-03</dd></div><div><dt>Created</dt><dd>{approval.requested}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Request digest</dt><dd className="mono">0x83b1…0ca9</dd></div></dl>
+        <div className="drawer-amount"><span>Exact requested amount</span><strong>{approval.amount}</strong><small>{approval.rail} · {approval.asset ?? "Asset not exposed"} on Base</small></div>
+        <dl className="detail-list"><div><dt>Recipient / vendor</dt><dd>{approval.vendor}</dd></div><div><dt>Agent</dt><dd>{approval.agent}</dd></div><div><dt>Task</dt><dd>{approval.title}</dd></div><div><dt>Rail</dt><dd>{approval.rail}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Policy snapshot</dt><dd className="mono">{approval.policyVersion ?? "Not exposed"}</dd></div><div><dt>Evidence refs</dt><dd className="mono">{approval.evidenceRefs ?? "Not exposed"}</dd></div><div><dt>Created</dt><dd>{approval.requested}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Request digest</dt><dd className="mono">{approval.requestDigest ?? "Not exposed"}</dd></div></dl>
         <div className="reason-box"><span>Why approval is required</span><p>{approval.reason}</p></div>
         <div className="truth-box"><strong>What this decision means</strong><p>Approval authorizes only this frozen intent. Any change to amount, recipient, task, rail, or request digest requires a new decision.</p></div>
         <footer><button className="secondary-button" onClick={() => { onClose(); onAction("Denial"); }} type="button">Deny</button><button className="primary-button" onClick={() => { onClose(); onAction("Approval"); }} type="button">Approve exact intent</button></footer>
@@ -500,7 +511,7 @@ function ApprovalDrawer({ approval, onClose, onAction }: { approval: Approval; o
   );
 }
 
-function PauseDialog({ organization, onClose, onConfirm }: { organization: string; onClose: () => void; onConfirm: () => void }) {
+function PauseDialog({ organization, mode, onClose, onConfirm }: { organization: string; mode: DashboardSnapshot["mode"]; onClose: () => void; onConfirm: () => void }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     cancelRef.current?.focus();
@@ -511,14 +522,14 @@ function PauseDialog({ organization, onClose, onConfirm }: { organization: strin
   return (
     <div className="overlay centered" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="pause-dialog" role="alertdialog" aria-modal="true" aria-labelledby="pause-title">
-        <span className="pause-symbol">!</span><small>Emergency control</small><h2 id="pause-title">Pause every agent?</h2><p>This requests an organization-wide authorization stop for <strong>{organization}</strong>. Pending evidence remains readable and no transaction is silently retried.</p><div className="pause-warning">Preview mode cannot send this command. A live action also requires step-up authentication.</div><footer><button ref={cancelRef} className="secondary-button" onClick={onClose} type="button">Keep running</button><button className="danger-solid" onClick={onConfirm} type="button">Request emergency pause</button></footer>
+        <span className="pause-symbol">!</span><small>Emergency control</small><h2 id="pause-title">Pause every agent?</h2><p>This requests an organization-wide authorization stop for <strong>{organization}</strong>. Pending evidence remains readable and no transaction is silently retried.</p><div className="pause-warning">{mode === "live" ? "This read session cannot send the command. Continue in a fresh step-up session." : "Preview mode cannot send this command. A live action also requires step-up authentication."}</div><footer><button ref={cancelRef} className="secondary-button" onClick={onClose} type="button">Keep running</button><button className="danger-solid" onClick={onConfirm} type="button">Request emergency pause</button></footer>
       </section>
     </div>
   );
 }
 
 function PanelHeader({ kicker, title, meta, onView }: { kicker: string; title: string; meta: string; onView?: () => void }) {
-  return <header className="panel-header"><div><span>{kicker}</span><h2>{title}</h2></div>{onView ? <button onClick={onView} type="button">View all <span>→</span></button> : <em>{meta}</em>}</header>;
+  return <header className="panel-header"><div><span>{kicker}</span><h2>{title}</h2></div><div className="panel-header-actions"><em>{meta}</em>{onView ? <button onClick={onView} type="button">View all <span>→</span></button> : null}</div></header>;
 }
 
 function SectionHeading({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) {
@@ -526,7 +537,8 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
 }
 
 function MoneyCard({ label, value, tone }: { label: string; value: string; tone: string }) {
-  return <div className={`balance-card compact ${tone}`}><span>{label}</span><strong>{value}</strong><small><i /> {tone === "good" ? "Spendable now" : tone === "risk" ? "Needs review" : "Tracked separately"}</small></div>;
+  const detail = value === "Not available" ? "Not exposed by control plane" : tone === "good" ? "Spendable now" : tone === "risk" ? "Needs review" : "Tracked separately";
+  return <div className={`balance-card compact ${tone}`}><span>{label}</span><strong>{value}</strong><small><i /> {detail}</small></div>;
 }
 
 function AgentMark({ mark }: { mark: string }) { return <span className="agent-mark" aria-hidden="true">{mark}</span>; }

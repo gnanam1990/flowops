@@ -12,7 +12,7 @@ import (
 func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	for _, name := range []string{
 		"FLOWOPS_DATABASE_URL", "FLOWOPS_ENVELOPE_KEY_ID", "FLOWOPS_ENVELOPE_PRIVATE_KEY_B64",
-		"FLOWOPS_RECONCILIATION_JOURNAL",
+		"FLOWOPS_SITE_SESSION_KEY_B64", "FLOWOPS_RECONCILIATION_JOURNAL",
 	} {
 		t.Setenv(name, "")
 	}
@@ -24,13 +24,23 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	t.Setenv("FLOWOPS_DATABASE_URL", "postgres://flowops@localhost/flowops?sslmode=require")
 	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
 	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
+	t.Setenv("FLOWOPS_SITE_SESSION_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
 	t.Setenv("FLOWOPS_RECONCILIATION_JOURNAL", "/var/lib/flowops/reconciliation.log")
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.address != defaultAddress || len(cfg.envelopeKey) != ed25519.PrivateKeySize {
+	if cfg.address != defaultAddress || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 {
 		t.Fatalf("configuration was not normalized: %+v", cfg)
+	}
+}
+
+func TestDecodeSymmetricKeyRejectsWrongLengthAndEncoding(t *testing.T) {
+	if _, err := decodeSymmetricKey("TEST_KEY", "not-base64"); err == nil {
+		t.Fatal("malformed key was accepted")
+	}
+	if _, err := decodeSymmetricKey("TEST_KEY", base64.StdEncoding.EncodeToString(make([]byte, 31))); err == nil {
+		t.Fatal("31-byte key was accepted")
 	}
 }
 

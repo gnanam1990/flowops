@@ -33,6 +33,7 @@ type ServerConfig struct {
 	Clock                    func() time.Time
 	IDSource                 func(prefix string) (string, error)
 	CommandCompletionTimeout time.Duration
+	SiteSessions             *SiteSessionCodec
 }
 
 type Server struct {
@@ -42,6 +43,7 @@ type Server struct {
 	clock                    func() time.Time
 	idSource                 func(string) (string, error)
 	commandCompletionTimeout time.Duration
+	siteSessions             *SiteSessionCodec
 	handler                  http.Handler
 }
 
@@ -65,10 +67,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 	s := &Server{
 		store: cfg.Store, lifecycle: cfg.Lifecycle, chain: cfg.Chain, clock: clock, idSource: idSource,
-		commandCompletionTimeout: completionTimeout,
+		commandCompletionTimeout: completionTimeout, siteSessions: cfg.SiteSessions,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("POST /v1/sites/session", s.handleSiteSessionExchange)
 	mux.Handle("POST /v1/intents", s.authenticate(http.HandlerFunc(s.handleCreateIntent)))
 	mux.Handle("POST /v1/intents/{requestID}/authorization", s.authenticate(http.HandlerFunc(s.handleIssueAuthorization)))
 	mux.Handle("GET /v1/approvals", s.authenticate(http.HandlerFunc(s.handleApprovals)))
@@ -94,22 +97,53 @@ func securityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") || strings.Contains(header[7:], " ") {
+		token, ok := bearerToken(r.Header.Get("Authorization"))
+		if !ok || (len(token) > 512 && !strings.HasPrefix(token, siteSessionPrefix)) {
 			writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", ErrUnauthenticated, false, "")
 			return
 		}
-		token := header[7:]
-		if len(token) < 24 || len(token) > 512 {
-			writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", ErrUnauthenticated, false, "")
-			return
-		}
-		principal, err := s.store.Authenticate(r.Context(), TokenDigest(token))
+		principal, err := s.store.Authenticate(r.Context(), token)
 		if err != nil || !principal.Valid() {
 			writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", ErrUnauthenticated, false, "")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
+	})
+}
+
+type siteSessionExchangeRequest struct {
+	SiteProjectID string `json:"siteProjectId"`
+	SiteUserKey   string `json:"siteUserKey"`
+	Email         string `json:"email"`
+}
+
+func (s *Server) handleSiteSessionExchange(w http.ResponseWriter, r *http.Request) {
+	if s.siteSessions == nil {
+		writeError(w, http.StatusServiceUnavailable, "SITE_SESSION_UNAVAILABLE", errors.New("site sessions are unavailable"), true, "")
+		return
+	}
+	exchangeToken, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok || len(exchangeToken) < 32 || len(exchangeToken) > 512 || strings.HasPrefix(exchangeToken, siteSessionPrefix) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", ErrUnauthenticated, false, "")
+		return
+	}
+	var request siteSessionExchangeRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	membership, err := s.store.ExchangeSiteIdentity(r.Context(), request.SiteProjectID, request.SiteUserKey, request.Email, exchangeToken)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", ErrUnauthenticated, false, "")
+		return
+	}
+	token, expiresAt, err := s.siteSessions.Mint(membership)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "SITE_SESSION_FAILED", err, true, "")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"accessToken": token, "expiresAt": expiresAt, "organizationId": membership.OrganizationID,
+		"principalId": membership.PrincipalID, "role": membership.Role,
 	})
 }
 
@@ -376,6 +410,7 @@ type DashboardSnapshot struct {
 	Chain            reconciliation.ChainStatus `json:"chain"`
 	PendingApprovals []controlplane.Record      `json:"pendingApprovals"`
 	Agents           []Agent                    `json:"agents"`
+	Organization     Organization               `json:"organization"`
 }
 
 func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -388,6 +423,11 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !s.sweepExpired(w, r) {
+		return
+	}
+	organization, err := s.store.Organization(r.Context(), principal.OrganizationID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", err, true, "")
 		return
 	}
 	agents, err := s.store.ListAgents(r.Context(), principal.OrganizationID)
@@ -404,7 +444,7 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, DashboardSnapshot{
 		Live: true, GeneratedAt: s.clock().UTC(), OrganizationID: principal.OrganizationID,
-		Chain: s.chain.Status(), PendingApprovals: approvals, Agents: agents,
+		Chain: s.chain.Status(), PendingApprovals: approvals, Agents: agents, Organization: organization,
 	})
 }
 
@@ -554,6 +594,14 @@ func requireIdempotencyKey(w http.ResponseWriter, r *http.Request) (string, bool
 		return "", false
 	}
 	return key, true
+}
+
+func bearerToken(header string) (string, bool) {
+	if !strings.HasPrefix(header, "Bearer ") || strings.Contains(header[7:], " ") {
+		return "", false
+	}
+	token := header[7:]
+	return token, len(token) >= 24 && len(token) <= 2048
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {

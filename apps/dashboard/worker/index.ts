@@ -4,6 +4,9 @@ import handler from "vinext/server/app-router-entry";
 
 interface Env {
   ASSETS: Fetcher;
+  FLOWOPS_CONTROL_API_URL?: string;
+  FLOWOPS_SITES_PROJECT_ID?: string;
+  FLOWOPS_SITES_EXCHANGE_TOKEN?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -18,6 +21,16 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+const SERVER_ENVIRONMENT_KEYS = [
+  "FLOWOPS_CONTROL_API_URL",
+  "FLOWOPS_SITES_PROJECT_ID",
+  "FLOWOPS_SITES_EXCHANGE_TOKEN",
+] as const;
+
+const initialServerEnvironment = Object.fromEntries(
+  SERVER_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]]),
+) as Record<(typeof SERVER_ENVIRONMENT_KEYS)[number], string | undefined>;
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -26,6 +39,7 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    exposeServerEnvironment(env);
     const url = new URL(request.url);
 
     if (url.pathname === "/_vinext/image") {
@@ -42,5 +56,13 @@ const worker = {
     return handler.fetch(request, env, ctx);
   },
 };
+
+function exposeServerEnvironment(env: Env): void {
+  for (const key of SERVER_ENVIRONMENT_KEYS) {
+    const value = typeof env[key] === "string" ? env[key] : initialServerEnvironment[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
 
 export default worker;

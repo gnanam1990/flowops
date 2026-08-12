@@ -10,11 +10,12 @@ of economic truth. The Go control plane remains canonical for agents, tasks,
 policies, approvals, authorization state, reservations, ledger outcomes, Base
 observations, and evidence.
 
-The initial dashboard renders a typed immutable preview snapshot and disables
-all economic writes. It does not add D1 or R2 persistence. A later adapter may
-replace the preview snapshot only through authenticated control-plane reads and
-exact command endpoints; browser-local state never establishes approval,
-payment, settlement, refund, or pause.
+The dashboard renders a typed immutable preview snapshot when live membership
+cannot be proven and disables all economic writes. It does not add D1 or R2
+persistence. The live adapter replaces preview records only after the
+ADR-0011 server-side membership exchange and an authenticated, tenant-bound
+control-plane read; browser-local state never establishes approval, payment,
+settlement, refund, or pause.
 
 ChatGPT/Sites identity headers may identify and personalize a viewer. They do
 not prove FlowOps organization membership, role, approval authority, or signer
@@ -42,9 +43,10 @@ without inventing backend success or weakening custody posture.
   control plane cannot confirm the command.
 - Deploying the preview does not make FlowOps pilot-ready.
 
-## Acceptance gate for live mode
+## Acceptance gate for live writes
 
-Live mode remains blocked until tests prove organization isolation, role and
-step-up enforcement, stale-snapshot handling, exact-intent approval binding,
-idempotent commands, chain-halt status propagation, audit-log correlation, and
-no fabricated success after timeout or control-plane failure.
+Live reads are implemented for organization, governed agents, pending
+approvals, and Base control state. Live writes remain blocked until a separate
+step-up ceremony proves stale-snapshot handling, exact-intent approval binding,
+idempotent browser command recovery, audit-log correlation, and no fabricated
+success after timeout or control-plane failure.

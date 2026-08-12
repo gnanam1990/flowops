@@ -41,20 +41,37 @@ type memoryStore struct {
 	commandKeys          map[string]string
 	now                  func() time.Time
 	completionContextErr error
+	memberships          map[string]SiteMembership
+	membershipEmails     map[string][32]byte
+	exchangeToken        string
+	siteSessions         *SiteSessionCodec
 }
 
 func newMemoryStore(now func() time.Time) *memoryStore {
 	return &memoryStore{
 		principals: make(map[[32]byte]Principal), agents: make(map[string]Agent),
-		commands: make(map[string]Command), commandKeys: make(map[string]string), now: now,
+		commands: make(map[string]Command), commandKeys: make(map[string]string), memberships: make(map[string]SiteMembership),
+		membershipEmails: make(map[string][32]byte), now: now,
 	}
 }
 
 func agentKey(organizationID, agentID string) string { return organizationID + "\x00" + agentID }
 
-func (s *memoryStore) Authenticate(_ context.Context, digest [32]byte) (Principal, error) {
+func (s *memoryStore) Authenticate(_ context.Context, token string) (Principal, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if strings.HasPrefix(token, siteSessionPrefix) {
+		if s.siteSessions == nil {
+			return Principal{}, ErrUnauthenticated
+		}
+		membership, err := s.siteSessions.Verify(token)
+		stored, ok := s.memberships[membership.ID]
+		if err != nil || !ok || stored != membership {
+			return Principal{}, ErrUnauthenticated
+		}
+		return Principal{ID: membership.PrincipalID, OrganizationID: membership.OrganizationID, Kind: PrincipalHuman, Role: membership.Role, ReadOnly: true}, nil
+	}
+	digest := TokenDigest(token)
 	principal, ok := s.principals[digest]
 	if !ok {
 		return Principal{}, ErrUnauthenticated
@@ -66,6 +83,35 @@ func (s *memoryStore) Authenticate(_ context.Context, digest [32]byte) (Principa
 		}
 	}
 	return principal, nil
+}
+
+func (s *memoryStore) ExchangeSiteIdentity(_ context.Context, siteProjectID, siteUserKey, email, exchangeToken string) (SiteMembership, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if exchangeToken != s.exchangeToken {
+		return SiteMembership{}, ErrUnauthenticated
+	}
+	emailDigest, err := normalizedEmailDigest(email)
+	if err != nil {
+		return SiteMembership{}, ErrUnauthenticated
+	}
+	for _, membership := range s.memberships {
+		if membership.SiteProjectID == siteProjectID && membership.SiteUserKey == siteUserKey && s.membershipEmails[membership.ID] == emailDigest {
+			return membership, nil
+		}
+	}
+	return SiteMembership{}, ErrUnauthenticated
+}
+
+func (s *memoryStore) Organization(_ context.Context, organizationID string) (Organization, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, agent := range s.agents {
+		if agent.OrganizationID == organizationID {
+			return Organization{ID: organizationID, Name: "Northstar Labs"}, nil
+		}
+	}
+	return Organization{}, ErrNotFound
 }
 
 func (s *memoryStore) Agent(_ context.Context, organizationID, agentID string) (Agent, error) {
@@ -315,12 +361,90 @@ func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *
 	store.agents[agentKey("org_b", "agent_b")] = Agent{OrganizationID: "org_b", ID: "agent_b", CustomerID: "customer_b", Name: "Other", Status: AgentActive, UpdatedAt: now}
 	chain := newHealthyChain(now)
 	lifecycle, journal := testLifecycle(t, store, chain, now)
+	siteSessions, err := NewSiteSessionCodec([]byte(strings.Repeat("s", 32)), 2*time.Minute, func() time.Time { return now })
+	if err != nil {
+		journal.Close()
+		t.Fatal(err)
+	}
+	store.siteSessions = siteSessions
 	ids := &sequenceIDs{}
-	server, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain, Clock: func() time.Time { return now }, IDSource: ids.next})
+	server, err := NewServer(ServerConfig{
+		Store: store, Lifecycle: lifecycle, Chain: chain, Clock: func() time.Time { return now },
+		IDSource: ids.next, SiteSessions: siteSessions,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return httptest.NewServer(server), store, chain, lifecycle, journal, now
+}
+
+func TestSitesExchangeIsMembershipBoundAndNeverCarriesStepUp(t *testing.T) {
+	server, store, _, _, journal, _ := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	client := server.Client()
+	projectID := "appgprj_flowops_1"
+	userKey, err := SiteUserKey(projectID, "opaque_sites_user_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership := SiteMembership{
+		ID: "membership_sites_owner", SiteProjectID: projectID, SiteUserKey: userKey,
+		OrganizationID: "org_a", PrincipalID: "sites_owner_a", Role: RoleOwner,
+	}
+	emailDigest, err := normalizedEmailDigest("owner@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.exchangeToken = "flowops_sites_exchange_00000000000000000001"
+	store.memberships[membership.ID] = membership
+	store.membershipEmails[membership.ID] = emailDigest
+	store.mu.Unlock()
+
+	request := siteSessionExchangeRequest{SiteProjectID: projectID, SiteUserKey: userKey, Email: "Owner@Example.com"}
+	status, exchanged := doRequest(t, client, http.MethodPost, server.URL+"/v1/sites/session", store.exchangeToken, "", request)
+	if status != http.StatusCreated {
+		t.Fatalf("site exchange = %d %+v", status, exchanged)
+	}
+	siteToken, ok := exchanged["accessToken"].(string)
+	if !ok || !strings.HasPrefix(siteToken, siteSessionPrefix) {
+		t.Fatalf("site exchange token = %#v", exchanged["accessToken"])
+	}
+	status, snapshot := doRequest(t, client, http.MethodGet, server.URL+"/v1/dashboard/snapshot", siteToken, "", nil)
+	if status != http.StatusOK || snapshot["organizationId"] != "org_a" || snapshot["live"] != true {
+		t.Fatalf("site dashboard = %d %+v", status, snapshot)
+	}
+
+	status, denied := doRequest(t, client, http.MethodPost, server.URL+"/v1/agents/agent_a/pause", siteToken, "pause_sites", pauseRequest{Reason: "test"})
+	if status != http.StatusForbidden || denied["error"].(map[string]any)["code"] != "FORBIDDEN" {
+		t.Fatalf("site session read-only boundary = %d %+v", status, denied)
+	}
+	status, denied = doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", siteToken, "site_intent", intent("site_intent", "org_a", "agent_a", "50"))
+	if status != http.StatusForbidden || denied["error"].(map[string]any)["code"] != "FORBIDDEN" {
+		t.Fatalf("site session created intent = %d %+v", status, denied)
+	}
+
+	for name, substitution := range map[string]siteSessionExchangeRequest{
+		"project": {SiteProjectID: "appgprj_other", SiteUserKey: userKey, Email: "owner@example.com"},
+		"user":    {SiteProjectID: projectID, SiteUserKey: strings.Repeat("b", 64), Email: "owner@example.com"},
+		"email":   {SiteProjectID: projectID, SiteUserKey: userKey, Email: "attacker@example.com"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, _ := doRequest(t, client, http.MethodPost, server.URL+"/v1/sites/session", store.exchangeToken, "", substitution)
+			if status != http.StatusUnauthorized {
+				t.Fatalf("substitution status = %d", status)
+			}
+		})
+	}
+
+	store.mu.Lock()
+	delete(store.memberships, membership.ID)
+	store.mu.Unlock()
+	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/dashboard/snapshot", siteToken, "", nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("revoked membership status = %d", status)
+	}
 }
 
 func doRequest(t *testing.T, client *http.Client, method, url, token, idempotency string, body any) (int, map[string]any) {
