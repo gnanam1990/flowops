@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,12 +32,14 @@ const (
 )
 
 type startupConfig struct {
-	address        string
-	databaseURL    string
-	envelopeKeyID  string
-	envelopeKey    ed25519.PrivateKey
-	siteSessionKey []byte
-	reconciliation string
+	address         string
+	databaseURL     string
+	envelopeKeyID   string
+	envelopeKey     ed25519.PrivateKey
+	siteSessionKey  []byte
+	reconciliation  string
+	trustProxy      bool
+	applyMigrations bool
 }
 
 func main() {
@@ -64,8 +67,10 @@ func run(ctx context.Context) error {
 	if err := db.PingContext(startupCtx); err != nil {
 		return fmt.Errorf("ping PostgreSQL: %w", err)
 	}
-	if err := controlapi.ApplyMigrations(startupCtx, db); err != nil {
-		return err
+	if cfg.applyMigrations {
+		if err := controlapi.ApplyMigrations(startupCtx, db); err != nil {
+			return err
+		}
 	}
 	siteSessions, err := controlapi.NewSiteSessionCodec(cfg.siteSessionKey, 2*time.Minute, nil)
 	if err != nil {
@@ -109,7 +114,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	httpServer := &http.Server{
-		Addr: cfg.address, Handler: api,
+		Addr: cfg.address, Handler: enforceTransportSecurity(api, cfg.trustProxy),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 32 * 1024,
 	}
@@ -178,10 +183,29 @@ func loadConfig() (startupConfig, error) {
 		envelopeKey:   key, siteSessionKey: siteSessionKey,
 		reconciliation: strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
 	}
-	if cfg.address == "" {
-		cfg.address = defaultAddress
+	trustProxy, err := parseStrictBool("FLOWOPS_TRUST_PROXY_HEADERS", os.Getenv("FLOWOPS_TRUST_PROXY_HEADERS"))
+	if err != nil {
+		return startupConfig{}, err
 	}
-	if err := validateListenAddress(cfg.address); err != nil {
+	cfg.trustProxy = trustProxy
+	applyMigrations, err := parseStrictBoolDefault("FLOWOPS_APPLY_MIGRATIONS", os.Getenv("FLOWOPS_APPLY_MIGRATIONS"), true)
+	if err != nil {
+		return startupConfig{}, err
+	}
+	cfg.applyMigrations = applyMigrations
+	if cfg.address == "" {
+		port := strings.TrimSpace(os.Getenv("PORT"))
+		if port == "" {
+			cfg.address = defaultAddress
+		} else {
+			parsedPort, err := strconv.ParseUint(port, 10, 16)
+			if err != nil || parsedPort == 0 {
+				return startupConfig{}, errors.New("PORT must be a positive TCP port")
+			}
+			cfg.address = "0.0.0.0:" + port
+		}
+	}
+	if err := validateListenAddress(cfg.address, cfg.trustProxy); err != nil {
 		return startupConfig{}, err
 	}
 	if cfg.databaseURL == "" || cfg.envelopeKeyID == "" || cfg.reconciliation == "" {
@@ -201,16 +225,57 @@ func decodeSymmetricKey(name, value string) ([]byte, error) {
 	return append([]byte(nil), raw...), nil
 }
 
-func validateListenAddress(address string) error {
+func validateListenAddress(address string, trustProxy bool) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("FLOWOPS_CONTROL_ADDR must be a host:port listen address: %w", err)
 	}
 	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("FLOWOPS_CONTROL_ADDR must bind to loopback; terminate TLS at a local trusted proxy")
+	if ip == nil {
+		return errors.New("FLOWOPS_CONTROL_ADDR host must be an IP address")
+	}
+	if !ip.IsLoopback() && !trustProxy {
+		return errors.New("non-loopback FLOWOPS_CONTROL_ADDR requires FLOWOPS_TRUST_PROXY_HEADERS=true")
 	}
 	return nil
+}
+
+func parseStrictBool(name, value string) (bool, error) {
+	return parseStrictBoolDefault(name, value, false)
+}
+
+func parseStrictBoolDefault(name, value string, defaultValue bool) (bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultValue, nil
+	}
+	if value == "false" {
+		return false, nil
+	}
+	if value == "true" {
+		return true, nil
+	}
+	return false, fmt.Errorf("%s must be true or false", name)
+}
+
+func enforceTransportSecurity(next http.Handler, trustProxy bool) http.Handler {
+	if !trustProxy {
+		return next
+	}
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/health" && firstForwardedValue(request.Header.Get("X-Forwarded-Proto")) != "https" {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":{"code":"HTTPS_REQUIRED","message":"secure transport is required"}}`))
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
+}
+
+func firstForwardedValue(value string) string {
+	first, _, _ := strings.Cut(value, ",")
+	return strings.ToLower(strings.TrimSpace(first))
 }
 
 func decodePrivateKey(value string) (ed25519.PrivateKey, error) {

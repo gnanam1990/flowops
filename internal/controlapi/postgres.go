@@ -79,7 +79,7 @@ func (s *PostgresStore) authenticateSiteMembership(ctx context.Context, claims S
 	err := s.db.QueryRowContext(ctx, `
 		SELECT m.id, m.site_project_id, m.site_user_key, m.organization_id, m.principal_id, m.role, m.status
 		FROM sites_memberships m
-		JOIN sites_identity_providers p ON p.site_project_id = m.site_project_id
+		JOIN sites_identity_providers p ON p.site_project_id = m.site_project_id AND p.organization_id = m.organization_id
 		WHERE m.id = $1 AND m.site_project_id = $2 AND m.site_user_key = $3
 		  AND m.organization_id = $4 AND m.principal_id = $5 AND m.role = $6
 		  AND p.enabled = true`,
@@ -113,7 +113,7 @@ func (s *PostgresStore) ExchangeSiteIdentity(ctx context.Context, siteProjectID,
 	err = s.db.QueryRowContext(ctx, `
 		SELECT m.id, m.site_project_id, m.site_user_key, m.organization_id, m.principal_id, m.role
 		FROM sites_identity_providers p
-		JOIN sites_memberships m ON m.site_project_id = p.site_project_id
+		JOIN sites_memberships m ON m.site_project_id = p.site_project_id AND m.organization_id = p.organization_id
 		WHERE p.site_project_id = $1 AND p.exchange_token_digest = $2 AND p.enabled = true
 		  AND m.site_user_key = $3 AND m.email_digest = $4 AND m.status = 'ACTIVE'`,
 		siteProjectID, tokenDigest[:], siteUserKey, emailDigest[:],

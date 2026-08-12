@@ -1,7 +1,7 @@
 # Authenticated control-plane API module
 
-Status: local implementation complete; deployment identity and PostgreSQL
-operations remain gated
+Status: production packaging and audited owner bootstrap implemented; live
+infrastructure verification remains gated
 
 Packages: `internal/controlapi`, `internal/controlplane`
 Executable: `cmd/control-plane-api`
@@ -120,26 +120,29 @@ organization-bound snapshot reads, and absence of step-up authority.
 - Provision a managed PostgreSQL instance with encryption, backups, point-in-
   time recovery, monitoring, connection TLS, and a least-privilege database
   role.
-- Implement the owner/bootstrap and credential-rotation workflow; do not seed a
-  production tenant by manual database editing.
 - Connect the independent Base observer service and complete the recovery
   stability window before issuing any authorization.
 - Store the FlowOps envelope key in an approved secret manager. This is a
   FlowOps capability-signing key, never a customer wallet key.
-- Implement the owner-mediated Sites membership provisioning and exchange-token
-  rotation workflow; integration tests seed isolated schemas, but operators
-  must not hand-edit production rows.
+- Run the owner-mediated Sites bootstrap and exchange-token rotation workflow
+  against the selected production database; operators must not hand-edit rows.
 
 ## Runtime configuration
 
 The executable requires `FLOWOPS_DATABASE_URL`, `FLOWOPS_ENVELOPE_KEY_ID`,
 `FLOWOPS_ENVELOPE_PRIVATE_KEY_B64`, `FLOWOPS_SITE_SESSION_KEY_B64`, and
 `FLOWOPS_RECONCILIATION_JOURNAL`. `FLOWOPS_CONTROL_ADDR` is optional and
-defaults to `127.0.0.1:8080`; non-loopback binds are rejected because the
-service carries bearer credentials over plain HTTP. Remote deployments must
-terminate TLS at a trusted local proxy that connects over loopback. Policy
+defaults to `127.0.0.1:8080`. An injected `PORT` selects `0.0.0.0:PORT` only
+when `FLOWOPS_TRUST_PROXY_HEADERS=true`; protected routes then require an HTTPS
+forwarded-protocol claim. This mode is valid only behind the exclusive edge
+defined by ADR-0012. Policy
 limits, Base chain/USDC rules, rails, recipients,
 and versions are loaded from the active PostgreSQL policy row for the governed
 agent; they are not shared process-wide environment variables.
 `FLOWOPS_SITE_SESSION_KEY_B64` must encode exactly 32 random bytes and must be
 stored separately from the FlowOps envelope key.
+
+`cmd/flowops-admin` provides strict-stdin, transactionally audited owner
+bootstrap and exchange-token rotation. The container posture, deployment
+variables, enrollment sequence, smoke checks, rotation, and rollback procedure
+are defined in `docs/operations/CONTROL_PLANE_DEPLOYMENT.md`.

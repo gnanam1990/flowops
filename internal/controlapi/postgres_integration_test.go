@@ -110,23 +110,51 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	exchangeToken := "flowops_sites_exchange_integration_0000000001"
-	exchangeDigest := TokenDigest(exchangeToken)
-	emailDigest, err := normalizedEmailDigest("owner@example.com")
+	bootstrap, err := BootstrapSiteOwner(ctx, db, SiteOwnerBootstrap{
+		AuditID: "audit_sites_bootstrap_integration", ActorID: "owner_integration",
+		OrganizationID: "org_integration", OrganizationName: "Integration",
+		SiteProjectID: siteProjectID, SiteUserKey: siteUserKey, Email: "owner@example.com",
+		PrincipalID: "owner_integration", MembershipID: "membership_integration", ExchangeToken: exchangeToken,
+	})
+	if err != nil || bootstrap.OrganizationCreated || !bootstrap.ProviderCreated || !bootstrap.MembershipCreated {
+		t.Fatalf("Sites owner bootstrap = %+v, %v", bootstrap, err)
+	}
+	idempotent, err := BootstrapSiteOwner(ctx, db, SiteOwnerBootstrap{
+		AuditID: "audit_sites_bootstrap_replay", ActorID: "owner_integration",
+		OrganizationID: "org_integration", OrganizationName: "Integration",
+		SiteProjectID: siteProjectID, SiteUserKey: siteUserKey, Email: "OWNER@example.com",
+		PrincipalID: "owner_integration", MembershipID: "membership_integration", ExchangeToken: exchangeToken,
+	})
+	if err != nil || idempotent != (SiteOwnerBootstrapResult{}) {
+		t.Fatalf("idempotent Sites owner bootstrap = %+v, %v", idempotent, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO organizations (id, name) VALUES ('org_sites_other', 'Other')`); err != nil {
+		t.Fatal(err)
+	}
+	otherUserKey, err := SiteUserKey(siteProjectID, "opaque_other_user")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO sites_identity_providers (site_project_id, exchange_token_digest)
-		VALUES ($1, $2)`, siteProjectID, exchangeDigest[:]); err != nil {
-		t.Fatal(err)
+	if _, err := BootstrapSiteOwner(ctx, db, SiteOwnerBootstrap{
+		AuditID: "audit_sites_cross_org", ActorID: "owner_sites_other",
+		OrganizationID: "org_sites_other", OrganizationName: "Other",
+		SiteProjectID: siteProjectID, SiteUserKey: otherUserKey, Email: "other@example.com",
+		PrincipalID: "owner_sites_other", MembershipID: "membership_sites_other", ExchangeToken: exchangeToken,
+	}); !errors.Is(err, ErrProvisioningConflict) {
+		t.Fatalf("cross-organization Sites project reuse error = %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `
-		INSERT INTO sites_memberships
-			(id, site_project_id, site_user_key, email_digest, organization_id, principal_id, role, status)
-		VALUES ('membership_integration', $1, $2, $3, 'org_integration', 'owner_integration', 'OWNER', 'ACTIVE')`,
-		siteProjectID, siteUserKey, emailDigest[:]); err != nil {
-		t.Fatal(err)
+	rotatedExchangeToken := "flowops_sites_exchange_rotated_0000000000000001"
+	rotated, err := RotateSiteExchangeToken(ctx, db, SiteExchangeTokenRotation{
+		AuditID: "audit_sites_rotate_integration", ActorID: "owner_integration", OrganizationID: "org_integration",
+		SiteProjectID: siteProjectID, MembershipID: "membership_integration", ExchangeToken: rotatedExchangeToken,
+	})
+	if err != nil || !rotated {
+		t.Fatalf("Sites exchange-token rotation = %v, %v", rotated, err)
 	}
+	if _, err := store.ExchangeSiteIdentity(ctx, siteProjectID, siteUserKey, "owner@example.com", exchangeToken); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("old Sites exchange token authenticated after rotation: %v", err)
+	}
+	exchangeToken = rotatedExchangeToken
 	membership, err := store.ExchangeSiteIdentity(ctx, siteProjectID, siteUserKey, "Owner@Example.com", exchangeToken)
 	if err != nil || membership.OrganizationID != "org_integration" || membership.Role != RoleOwner {
 		t.Fatalf("site membership = %+v, %v", membership, err)
@@ -139,11 +167,18 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 	if err != nil || sitePrincipal.OrganizationID != "org_integration" || !sitePrincipal.StepUpUntil.IsZero() || !sitePrincipal.ReadOnly || sitePrincipal.Can(PermissionCreateIntent) {
 		t.Fatalf("site principal = %+v, %v", sitePrincipal, err)
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE sites_memberships SET status = 'REVOKED' WHERE id = 'membership_integration'`); err != nil {
-		t.Fatal(err)
+	disabled, err := DisableSiteIdentityProvider(ctx, db, SiteProviderDisable{
+		AuditID: "audit_sites_disable_integration", ActorID: "owner_integration", OrganizationID: "org_integration",
+		SiteProjectID: siteProjectID, MembershipID: "membership_integration",
+	})
+	if err != nil || !disabled {
+		t.Fatalf("Sites provider disable = %v, %v", disabled, err)
 	}
 	if _, err := store.Authenticate(ctx, siteToken); !errors.Is(err, ErrUnauthenticated) {
-		t.Fatalf("revoked site membership authenticated: %v", err)
+		t.Fatalf("disabled Sites provider accepted an issued session: %v", err)
+	}
+	if _, err := store.ExchangeSiteIdentity(ctx, siteProjectID, siteUserKey, "owner@example.com", exchangeToken); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("disabled Sites provider exchanged a new session: %v", err)
 	}
 	provider, err := NewPostgresPolicyProvider(db)
 	if err != nil {

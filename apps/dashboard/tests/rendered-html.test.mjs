@@ -4,16 +4,55 @@ import test from "node:test";
 
 let workerPromise;
 
-async function render({ headers = {}, env = {} } = {}) {
+async function render({ path = "/", headers = {}, env = {} } = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerPromise ??= import(workerUrl.href).then((module) => module.default);
   const worker = await workerPromise;
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html", ...headers } }),
+    new Request(`http://localhost${path}`, { headers: { accept: "text/html", ...headers } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ...env },
     { waitUntil() {}, passThroughOnException() {} },
   );
 }
+
+test("returns only a derived owner enrollment code from authenticated Sites identity", async () => {
+  const anonymous = await render({
+    path: "/api/flowops/enrollment",
+    env: { FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test" },
+  });
+  assert.equal(anonymous.status, 401);
+
+  const response = await render({
+    path: "/api/flowops/enrollment",
+    headers: {
+      "oai-authenticated-user-id": "sites-user-opaque",
+      "oai-authenticated-user-email": "owner@example.com",
+    },
+    env: { FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test" },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const enrollment = await response.json();
+  assert.equal(enrollment.siteProjectId, "appgprj_flowops_test");
+  assert.equal(enrollment.email, "owner@example.com");
+  assert.match(enrollment.siteUserKey, /^[0-9a-f]{64}$/);
+  assert.doesNotMatch(JSON.stringify(enrollment), /sites-user-opaque/);
+
+  const page = await render({
+    path: "/enrollment",
+    headers: {
+      "oai-authenticated-user-id": "sites-user-opaque",
+      "oai-authenticated-user-email": "owner@example.com",
+    },
+    env: { FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test" },
+  });
+  assert.equal(page.status, 200);
+  const pageHtml = await page.text();
+  assert.match(pageHtml, /Sites enrollment identity/);
+  assert.match(pageHtml, /appgprj_flowops_test/);
+  assert.match(pageHtml, /owner@example\.com/);
+  assert.doesNotMatch(pageHtml, /sites-user-opaque/);
+});
 
 test("renders the FlowOps economic control room", async () => {
   const response = await render();
@@ -152,6 +191,43 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   const missingBindingsHtml = await missingBindings.text();
   assert.match(missingBindingsHtml, /Live data is not configured for this deployment/);
   assert.doesNotMatch(missingBindingsHtml, /Acme Operators|Live control plane/);
+});
+
+test("does not replay the Sites exchange credential across an upstream redirect", async (t) => {
+  let redirectedRequests = 0;
+  const redirectTarget = createServer((_request, response) => {
+    redirectedRequests += 1;
+    response.writeHead(500).end();
+  });
+  await new Promise((resolve) => redirectTarget.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => redirectTarget.close(resolve)));
+  const targetAddress = redirectTarget.address();
+  assert.ok(targetAddress && typeof targetAddress !== "string");
+
+  const upstream = createServer((_request, response) => {
+    response.writeHead(307, {
+      location: `http://127.0.0.1:${targetAddress.port}/credential-capture`,
+    }).end();
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => upstream.close(resolve)));
+  const upstreamAddress = upstream.address();
+  assert.ok(upstreamAddress && typeof upstreamAddress !== "string");
+
+  const response = await render({
+    headers: {
+      "oai-authenticated-user-id": "sites-user-opaque",
+      "oai-authenticated-user-email": "owner@example.com",
+    },
+    env: {
+      FLOWOPS_CONTROL_API_URL: `http://127.0.0.1:${upstreamAddress.port}`,
+      FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test",
+      FLOWOPS_SITES_EXCHANGE_TOKEN: "sites-exchange-test-credential-000000000002",
+    },
+  });
+  const html = await response.text();
+  assert.match(html, /Preview data/);
+  assert.equal(redirectedRequests, 0);
 });
 
 test("removes starter content and never claims preview controls executed", async () => {
