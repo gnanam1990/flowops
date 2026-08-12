@@ -48,6 +48,9 @@ preserve the settled execution instead of refusing the journal.
 
 - Provider absence or disagreement is deferred, not converted to a payment
   failure.
+- After a canonical reorg reversal, receipt evidence at the exact removed block
+  number and hash is rejected even if providers repeat it; only a fresh receipt
+  outcome can settle the reopened execution.
 - A stale or halted chain prevents finalization.
 - Per-execution RPC work is bounded and cycles never overlap.
 - Journal, idempotency, or ledger invariant failures stop the worker and fail the

@@ -293,6 +293,28 @@ func TestWorkerReorgAtomicallyReversesSettlement(t *testing.T) {
 	if !ok || correction.ReversesTransactionID != ledger.TransactionID || correction.TransactionID != derivedLedgerID("correction", expected.ExecutionID, ledger.TransactionID, changedHash) {
 		t.Fatalf("correction = %+v", correction)
 	}
+
+	source.receipts = map[string]ReceiptResult{
+		expected.ExecutionID: {Evidence: receiptQuorum(expected, settled.BlockNumber, true)},
+	}
+	cycle, err = testWorker(t, source, engine, clock).RunOnce(context.Background())
+	if err != nil || cycle.Deferred != 1 || cycle.Settled != 0 {
+		t.Fatalf("stale removed-block cycle = %+v, %v", cycle, err)
+	}
+	stillPending, _ := engine.Execution(expected.ExecutionID)
+	if stillPending.State != ExecutionPendingChainRecovery || engine.Balance(expected.OrganizationID, "agent_service_expense") != "0" {
+		t.Fatalf("stale removed receipt changed state: %+v balance=%s", stillPending, engine.Balance(expected.OrganizationID, "agent_service_expense"))
+	}
+
+	source.receipts[expected.ExecutionID] = ReceiptResult{Evidence: receiptQuorum(expected, settled.BlockNumber+1, true)}
+	cycle, err = testWorker(t, source, engine, clock).RunOnce(context.Background())
+	if err != nil || cycle.Settled != 1 || cycle.Deferred != 0 {
+		t.Fatalf("fresh post-reorg cycle = %+v, %v", cycle, err)
+	}
+	fresh, _ := engine.Execution(expected.ExecutionID)
+	if fresh.State != ExecutionSettled || fresh.BlockNumber != settled.BlockNumber+1 || fresh.LedgerTransactionID == ledger.TransactionID || engine.Balance(expected.OrganizationID, "agent_service_expense") != expected.AmountAtomic {
+		t.Fatalf("fresh post-reorg settlement = %+v balance=%s", fresh, engine.Balance(expected.OrganizationID, "agent_service_expense"))
+	}
 }
 
 func TestWorkerSkipsUnsafeChainAndBoundsProviderWait(t *testing.T) {

@@ -327,6 +327,9 @@ func (e *Engine) ReconcileReceipt(ctx context.Context, executionID string, evide
 	if err != nil {
 		return Execution{}, err
 	}
+	if execution.CorrectionTransactionID != "" && execution.ReorgEvidenceDigest != "" && canonical.BlockNumber == execution.BlockNumber && canonical.BlockHash == execution.BlockHash {
+		return Execution{}, fmt.Errorf("%w: receipt repeats the block removed by canonical reorg evidence", ErrUnsafeFinality)
+	}
 	resolved := cloneExecution(execution)
 	resolved.BlockNumber = canonical.BlockNumber
 	resolved.BlockHash = canonical.BlockHash
