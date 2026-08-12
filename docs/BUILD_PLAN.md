@@ -8,11 +8,14 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
 1. Repository governance and immutable evidence.
 2. Canonical authorization-envelope module.
 3. Deterministic policy engine.
-4. Customer reference signer with durable nonce-once enforcement.
+4. Customer reference signer with durable nonce-once enforcement. **Verifier,
+   durable nonce journal, hash-chained attempt journal, one-way at-most-once executor, signed
+   callback, and no-funds conformance smoke are implemented; concrete wallet
+   adapter, runnable sidecar, and funded Sepolia proof remain open.**
 5. Control-plane intent and approval lifecycle.
 6. x402 V2 Base Sepolia adapter and Builder Code conformance fixture.
 7. Evidence Fetch provider. **Implementation complete; verification commands are documented in the module contract.**
-8. Base reconciliation and halt-safe state. **Continuous production observer wiring, durable quorum progress, customer-signer receipt registration, receipt/finality worker, bounded reorg correction, and the manual operator gate are implemented; the customer-side one-way transaction executor, dedicated provider selection, and extended Sepolia threshold measurements remain external gates.**
+8. Base reconciliation and halt-safe state. **Continuous production observer wiring, durable quorum progress, customer-signer receipt registration, receipt/finality worker, bounded reorg correction, customer-side one-way transaction executor, and the manual operator gate are implemented; concrete wallet integration, dedicated provider selection, and extended Sepolia threshold measurements remain external gates.**
 9. Escrow contracts after the dispute-state redesign. **Local implementation complete; Base Sepolia deployment, event reconciliation, and external review remain gated.**
 10. Dashboard and operator workflows. **Preview-safe surface and membership-bound live reads implemented; step-up write UX and ledger-backed aggregates remain integration gates.**
 11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, and explicit edge-proxy transport checks are implemented; managed PostgreSQL deployment and Base observer wiring remain live gates.**

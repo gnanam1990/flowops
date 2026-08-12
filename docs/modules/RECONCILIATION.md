@@ -76,6 +76,12 @@ The settlement ledger transaction is written in the same durable event as the re
 
 If the configured quorum later reports a different canonical hash at the original settlement height beyond the reorg lookback, FlowOps atomically reopens the execution, appends an exact correction that reverses the prior ledger entry, enters `RECOVERING`, and requires a fresh canonical outcome or quarantine before manual resume. The original settlement and its timestamps remain in the journal.
 
+The customer signer uses a hash-chained one-way attempt journal. It stores the
+exact prepared transaction before network access, rechecks the current FlowOps
+trust root and every local halt/freeze/time gate, synchronizes `BROADCASTING`,
+and then crosses the wallet boundary once. Restart or any error after that
+boundary becomes `AMBIGUOUS`; only receipt delivery is retried.
+
 The customer signer registers a domain-separated signed broadcast receipt at
 `POST /v1/signer/broadcasts`. FlowOps resolves the durable authorization and
 derives the expected organization, agent, task, intent, chain, asset, recipient,
@@ -159,8 +165,8 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
 - add contract-specific escrow event reconciliation after the escrow state machine is finalized;
 - add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
-- implement the customer-side one-way transaction executor and concrete EOA/HSM
-  wallet adapters; the deployed no-funds pilot worker remains idle until a
+- implement concrete EOA/HSM wallet adapters and runnable customer-side signer
+  packaging; the deployed no-funds pilot worker remains idle until a
   design partner provisions a signer receipt public key and supplies a real
   transaction;
 - expose status, exceptions, backfill progress, and manual gates in the dashboard;
