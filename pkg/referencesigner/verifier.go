@@ -11,14 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gnanam1990/flowops/pkg/envelope"
 )
-
-var localIdentifierPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
 
 type RefusalCode string
 
@@ -102,7 +99,7 @@ type Authorized struct {
 }
 
 func New(cfg Config) (*Verifier, error) {
-	if !localIdentifierPattern.MatchString(cfg.OrganizationID) || !localIdentifierPattern.MatchString(cfg.CustomerID) {
+	if !envelope.ValidIdentifier(cfg.OrganizationID) || !envelope.ValidIdentifier(cfg.CustomerID) {
 		return nil, errors.New("local organization and customer identities are required")
 	}
 	if len(cfg.TrustKeys) == 0 {

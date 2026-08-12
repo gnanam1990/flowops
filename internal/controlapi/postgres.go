@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/gnanam1990/flowops/internal/controlplane"
 )
 
 type PostgresStore struct {
@@ -26,11 +28,14 @@ func (s *PostgresStore) Authenticate(ctx context.Context, tokenDigest [32]byte) 
 	var scopesJSON []byte
 	var stepUpUntil sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT principal_id, organization_id, principal_kind, role, agent_id, scopes, step_up_until
-		FROM credentials
-		WHERE token_digest = $1
-		  AND revoked_at IS NULL
-		  AND expires_at > now()`, tokenDigest[:]).Scan(
+		SELECT c.principal_id, c.organization_id, c.principal_kind, c.role, c.agent_id, c.scopes, c.step_up_until
+		FROM credentials c
+		LEFT JOIN agents a
+		  ON c.organization_id = a.organization_id AND c.agent_id = a.id
+		WHERE c.token_digest = $1
+		  AND c.revoked_at IS NULL
+		  AND c.expires_at > now()
+		  AND (c.principal_kind = 'HUMAN' OR a.status NOT IN ('REVOKED', 'ARCHIVED'))`, tokenDigest[:]).Scan(
 		&principal.ID, &principal.OrganizationID, &kind, &role, &agentID, &scopesJSON, &stepUpUntil,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -133,7 +138,7 @@ func (s *PostgresStore) SetAgentStatus(ctx context.Context, organizationID, agen
 		return Agent{}, err
 	}
 	if agent.Status != AgentPaused {
-		if agent.Status == AgentRevoked || agent.Status == AgentArchived {
+		if agent.Status != AgentActive {
 			return Agent{}, ErrForbidden
 		}
 		if err := tx.QueryRowContext(ctx, `
@@ -160,6 +165,39 @@ func (s *PostgresStore) SetAgentStatus(ctx context.Context, organizationID, agen
 	}
 	agent.UpdatedAt = agent.UpdatedAt.UTC()
 	return agent, nil
+}
+
+func (s *PostgresStore) WithActiveAgentLock(ctx context.Context, organizationID, agentID string, operation func() error) error {
+	if !identifierPattern.MatchString(organizationID) || !identifierPattern.MatchString(agentID) || operation == nil {
+		return errors.New("authorization lock inputs are invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return fmt.Errorf("begin authorization lock: %w", err)
+	}
+	defer tx.Rollback()
+	var status AgentStatus
+	err = tx.QueryRowContext(ctx, `
+		SELECT status
+		FROM agents
+		WHERE organization_id = $1 AND id = $2
+		FOR UPDATE`, organizationID, agentID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock agent for authorization: %w", err)
+	}
+	if status != AgentActive {
+		return fmt.Errorf("%w while status is %s", controlplane.ErrFrozen, status)
+	}
+	if err := operation(); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit authorization lock: %w", err)
+	}
+	return nil
 }
 
 func (s *PostgresStore) BeginCommand(ctx context.Context, command Command) (Command, bool, error) {

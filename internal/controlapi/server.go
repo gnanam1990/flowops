@@ -17,27 +17,32 @@ import (
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 )
 
-const maxRequestBytes = 64 * 1024
+const (
+	maxRequestBytes                 = 64 * 1024
+	defaultCommandCompletionTimeout = 5 * time.Second
+)
 
 type ChainStatusSource interface {
 	Status() reconciliation.ChainStatus
 }
 
 type ServerConfig struct {
-	Store     Store
-	Lifecycle *controlplane.Lifecycle
-	Chain     ChainStatusSource
-	Clock     func() time.Time
-	IDSource  func(prefix string) (string, error)
+	Store                    Store
+	Lifecycle                *controlplane.Lifecycle
+	Chain                    ChainStatusSource
+	Clock                    func() time.Time
+	IDSource                 func(prefix string) (string, error)
+	CommandCompletionTimeout time.Duration
 }
 
 type Server struct {
-	store     Store
-	lifecycle *controlplane.Lifecycle
-	chain     ChainStatusSource
-	clock     func() time.Time
-	idSource  func(string) (string, error)
-	handler   http.Handler
+	store                    Store
+	lifecycle                *controlplane.Lifecycle
+	chain                    ChainStatusSource
+	clock                    func() time.Time
+	idSource                 func(string) (string, error)
+	commandCompletionTimeout time.Duration
+	handler                  http.Handler
 }
 
 type principalContextKey struct{}
@@ -54,7 +59,14 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if idSource == nil {
 		idSource = randomID
 	}
-	s := &Server{store: cfg.Store, lifecycle: cfg.Lifecycle, chain: cfg.Chain, clock: clock, idSource: idSource}
+	completionTimeout := cfg.CommandCompletionTimeout
+	if completionTimeout <= 0 {
+		completionTimeout = defaultCommandCompletionTimeout
+	}
+	s := &Server{
+		store: cfg.Store, lifecycle: cfg.Lifecycle, chain: cfg.Chain, clock: clock, idSource: idSource,
+		commandCompletionTimeout: completionTimeout,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.Handle("POST /v1/intents", s.authenticate(http.HandlerFunc(s.handleCreateIntent)))
@@ -145,6 +157,9 @@ func (s *Server) handleCreateIntent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.sweepExpired(w, r) {
+		return
+	}
 	var intent controlplane.PaymentIntent
 	if err := decodeJSON(w, r, &intent); err != nil {
 		return
@@ -231,6 +246,9 @@ func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.authorize(w, principal, PermissionRead, "records:read") {
+		return
+	}
+	if !s.sweepExpired(w, r) {
 		return
 	}
 	records := s.lifecycle.PendingApprovals()
@@ -369,6 +387,9 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 	if !s.authorize(w, principal, PermissionRead, "records:read") {
 		return
 	}
+	if !s.sweepExpired(w, r) {
+		return
+	}
 	agents, err := s.store.ListAgents(r.Context(), principal.OrganizationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", err, true, "")
@@ -416,7 +437,9 @@ func (s *Server) succeedCommand(w http.ResponseWriter, r *http.Request, command 
 		s.failCommand(w, r, command, err)
 		return
 	}
-	completed, err := s.store.CompleteCommand(r.Context(), command.OrganizationID, command.ID, CommandSucceeded, raw, "")
+	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.commandCompletionTimeout)
+	defer cancel()
+	completed, err := s.store.CompleteCommand(completionCtx, command.OrganizationID, command.ID, CommandSucceeded, raw, "")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "COMMAND_COMMIT_FAILED", err, true, command.ID)
 		return
@@ -427,12 +450,23 @@ func (s *Server) succeedCommand(w http.ResponseWriter, r *http.Request, command 
 func (s *Server) failCommand(w http.ResponseWriter, r *http.Request, command Command, operationErr error) {
 	status, code, retriable := classifyError(operationErr)
 	errorResult, _ := json.Marshal(map[string]string{"code": code})
-	completed, completeErr := s.store.CompleteCommand(r.Context(), command.OrganizationID, command.ID, CommandFailed, errorResult, code)
+	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.commandCompletionTimeout)
+	defer cancel()
+	completed, completeErr := s.store.CompleteCommand(completionCtx, command.OrganizationID, command.ID, CommandFailed, errorResult, code)
 	if completeErr != nil {
 		writeError(w, http.StatusInternalServerError, "COMMAND_COMMIT_FAILED", completeErr, true, command.ID)
 		return
 	}
 	writeError(w, status, code, operationErr, retriable, completed.ID)
+}
+
+func (s *Server) sweepExpired(w http.ResponseWriter, r *http.Request) bool {
+	if _, err := s.lifecycle.SweepExpired(r.Context()); err != nil {
+		status, code, retriable := classifyError(err)
+		writeError(w, status, code, err, retriable, "")
+		return false
+	}
+	return true
 }
 
 func writeStoredCommand(w http.ResponseWriter, command Command) {
@@ -489,6 +523,8 @@ func classifyError(err error) (int, string, bool) {
 		return http.StatusGone, "APPROVAL_EXPIRED", false
 	case errors.Is(err, controlplane.ErrPolicyUnavailable):
 		return http.StatusConflict, "POLICY_UNAVAILABLE", false
+	case errors.Is(err, controlplane.ErrFrozen):
+		return http.StatusConflict, "AGENT_FROZEN", false
 	case errors.Is(err, controlplane.ErrUnknownRequest), errors.Is(err, ErrNotFound):
 		return http.StatusNotFound, "NOT_FOUND", false
 	case errors.Is(err, reconciliation.ErrChainUnavailable):

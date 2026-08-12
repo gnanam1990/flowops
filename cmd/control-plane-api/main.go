@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -95,6 +96,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create lifecycle: %w", err)
 	}
+	if _, err := lifecycle.SweepExpired(startupCtx); err != nil {
+		return fmt.Errorf("sweep expired approvals at startup: %w", err)
+	}
 	api, err := controlapi.NewServer(controlapi.ServerConfig{Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine})
 	if err != nil {
 		return err
@@ -116,16 +120,42 @@ func run(ctx context.Context) error {
 
 	shutdownSignal, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	maintenanceErrors := make(chan error, 1)
+	go func() {
+		maintenanceErrors <- runExpirySweeper(shutdownSignal, lifecycle, 30*time.Second)
+	}()
 	select {
 	case <-shutdownSignal.Done():
 	case err := <-serverErrors:
 		if err != nil {
 			return fmt.Errorf("serve control-plane API: %w", err)
 		}
+	case err := <-maintenanceErrors:
+		if err != nil {
+			return err
+		}
 	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
 	return httpServer.Shutdown(shutdownCtx)
+}
+
+func runExpirySweeper(ctx context.Context, lifecycle *controlplane.Lifecycle, interval time.Duration) error {
+	if lifecycle == nil || interval <= 0 {
+		return errors.New("expiry sweeper requires a lifecycle and positive interval")
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if _, err := lifecycle.SweepExpired(ctx); err != nil {
+				return fmt.Errorf("sweep expired approvals: %w", err)
+			}
+		}
+	}
 }
 
 func loadConfig() (startupConfig, error) {
@@ -141,10 +171,25 @@ func loadConfig() (startupConfig, error) {
 	if cfg.address == "" {
 		cfg.address = defaultAddress
 	}
+	if err := validateListenAddress(cfg.address); err != nil {
+		return startupConfig{}, err
+	}
 	if cfg.databaseURL == "" || cfg.envelopeKeyID == "" || cfg.reconciliation == "" {
 		return startupConfig{}, errors.New("FLOWOPS_DATABASE_URL, FLOWOPS_ENVELOPE_KEY_ID, FLOWOPS_ENVELOPE_PRIVATE_KEY_B64, and FLOWOPS_RECONCILIATION_JOURNAL are required")
 	}
 	return cfg, nil
+}
+
+func validateListenAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("FLOWOPS_CONTROL_ADDR must be a host:port listen address: %w", err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return errors.New("FLOWOPS_CONTROL_ADDR must bind to loopback; terminate TLS at a local trusted proxy")
+	}
+	return nil
 }
 
 func decodePrivateKey(value string) (ed25519.PrivateKey, error) {

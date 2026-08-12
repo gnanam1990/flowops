@@ -32,6 +32,7 @@ var (
 	ErrApprovalExpired     = errors.New("approval window expired")
 	ErrPolicyChanged       = errors.New("active policy version changed")
 	ErrPolicyUnavailable   = errors.New("active policy is unavailable")
+	ErrFrozen              = errors.New("agent execution is frozen")
 )
 
 type PolicyProvider interface {
@@ -54,6 +55,12 @@ func (p staticPolicyProvider) ActiveVersion(_ context.Context, _, _ string) (str
 
 type FreezeGate interface {
 	Check(ctx context.Context, organizationID, taskID, agentID string) error
+}
+
+// authorizationFreezeGate serializes the final freeze check and durable
+// authorization append against administrative agent-state transitions.
+type authorizationFreezeGate interface {
+	WithAuthorizationLock(ctx context.Context, organizationID, taskID, agentID string, issue func() error) error
 }
 
 type ChainGate interface {
@@ -261,15 +268,34 @@ func (l *Lifecycle) Issue(ctx context.Context, requestID string) (envelope.Signe
 		}
 		return envelope.SignedAuthorization{}, ErrApprovalExpired
 	}
+	var signed envelope.SignedAuthorization
+	issue := func() error {
+		var err error
+		signed, err = l.issueLocked(ctx, record, now)
+		return err
+	}
+	if gate, ok := l.freezeGate.(authorizationFreezeGate); ok {
+		if err := gate.WithAuthorizationLock(ctx, record.Intent.OrganizationID, record.Intent.TaskID, record.Intent.AgentID, issue); err != nil {
+			return envelope.SignedAuthorization{}, err
+		}
+		return signed, nil
+	}
+	if err := l.freezeGate.Check(ctx, record.Intent.OrganizationID, record.Intent.TaskID, record.Intent.AgentID); err != nil {
+		return envelope.SignedAuthorization{}, fmt.Errorf("frozen: %w", err)
+	}
+	if err := issue(); err != nil {
+		return envelope.SignedAuthorization{}, err
+	}
+	return signed, nil
+}
+
+func (l *Lifecycle) issueLocked(ctx context.Context, record Record, now time.Time) (envelope.SignedAuthorization, error) {
 	active, err := l.policyProvider.ActiveVersion(ctx, record.Intent.OrganizationID, record.Intent.AgentID)
 	if err != nil {
 		return envelope.SignedAuthorization{}, fmt.Errorf("resolve active policy: %w", err)
 	}
 	if active != record.Decision.PolicyVersion {
 		return envelope.SignedAuthorization{}, fmt.Errorf("%w: approved under %s, active is %s", ErrPolicyChanged, record.Decision.PolicyVersion, active)
-	}
-	if err := l.freezeGate.Check(ctx, record.Intent.OrganizationID, record.Intent.TaskID, record.Intent.AgentID); err != nil {
-		return envelope.SignedAuthorization{}, fmt.Errorf("frozen: %w", err)
 	}
 	if err := l.checkChain(ctx, record); err != nil {
 		return envelope.SignedAuthorization{}, fmt.Errorf("chain unavailable: %w", err)
@@ -304,7 +330,7 @@ func (l *Lifecycle) Issue(ctx context.Context, requestID string) (envelope.Signe
 	if _, exists := l.requestByNonce[authorization.Nonce]; exists {
 		return envelope.SignedAuthorization{}, errors.New("generated nonce already exists")
 	}
-	event, err := l.journal.Append(ctx, now, eventAuthorizationIssued, requestID, issuedPayload{Authorization: authorization})
+	event, err := l.journal.Append(ctx, now, eventAuthorizationIssued, record.RequestID, issuedPayload{Authorization: authorization})
 	if err != nil {
 		return envelope.SignedAuthorization{}, err
 	}

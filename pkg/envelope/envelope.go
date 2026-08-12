@@ -34,6 +34,13 @@ var (
 	noncePattern      = regexp.MustCompile(`^0x[0-9a-f]{64}$`)
 )
 
+// ValidIdentifier reports whether value is safe for use as a canonical
+// FlowOps identifier. Other packages use this function so authorization
+// producers and consumers cannot silently drift to different grammars.
+func ValidIdentifier(value string) bool {
+	return identifierPattern.MatchString(value)
+}
+
 // Authorization is the complete authority FlowOps grants. Strings representing
 // money and addresses use one canonical form so different runtimes cannot sign
 // different byte sequences for the same-looking action.
@@ -76,7 +83,7 @@ func (a Authorization) Validate() error {
 		"actionId":        a.ActionID,
 		"policyVersion":   a.PolicyVersion,
 	} {
-		if !identifierPattern.MatchString(value) {
+		if !ValidIdentifier(value) {
 			return fmt.Errorf("%s: must match %s", name, identifierPattern)
 		}
 	}

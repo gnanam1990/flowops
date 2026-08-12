@@ -118,7 +118,7 @@ func (j *PostgresJournal) Append(ctx context.Context, at time.Time, kind, reques
 		INSERT INTO control_events
 			(sequence, at_unix, kind, request_id, previous_hash, payload, hash)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		event.Sequence, event.At, event.Kind, event.RequestID, event.PreviousHash, event.Payload, event.Hash,
+		event.Sequence, event.At, event.Kind, event.RequestID, event.PreviousHash, []byte(event.Payload), event.Hash,
 	); err != nil {
 		return Event{}, fmt.Errorf("insert control event: %w", err)
 	}

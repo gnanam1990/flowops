@@ -17,12 +17,14 @@ signing key.
 ## Entry flow
 
 1. A client sends a bearer credential and, for writes, an `Idempotency-Key`.
-2. FlowOps hashes the token and loads its organization-bound principal.
+2. FlowOps hashes the token and loads its organization-bound principal. Agent
+   credentials stop authenticating when their agent is revoked or archived.
 3. The route checks human role or agent scope. Approval and pause also require
    an unexpired server-side step-up claim.
 4. The API creates or retrieves a durable organization-scoped command.
 5. New commands invoke the existing lifecycle, policy, freeze, and chain gates.
-6. The exact result or typed failure is recorded before it is returned.
+6. The exact result or typed failure is recorded with a bounded server-owned
+   completion context before it is returned, even if the client disconnects.
 
 The client never supplies an authoritative organization header. An agent
 credential can act only for its bound agent, and an intent's customer identity
@@ -48,8 +50,22 @@ Migration `0001_control_plane.sql` creates organizations, governed agents,
 per-agent versioned policies, hashed credentials, durable commands, append-only
 audit events, and the hash-chained control event stream. Migrations and control
 events each use a PostgreSQL advisory transaction lock. Applied migration
-checksums are immutable. Domain event replay refuses malformed, reordered,
+checksums are immutable. Hash-chained payloads are stored as `bytea`, because
+the chain commits to exact JSON bytes and `jsonb` normalization would change
+them during replay. Domain event replay refuses malformed, reordered,
 substituted, or externally advanced event streams.
+
+Authorization issuance holds the governed agent row lock from the final ACTIVE
+check through the durable authorization append. A concurrent pause therefore
+orders before issuance and blocks it, or orders after the append; it cannot
+commit between the check and issuance. Pause is permitted only from ACTIVE (or
+as an idempotent PAUSED result), never from DRAFT, QUARANTINED, REVOKED, or
+ARCHIVED.
+
+Expired approvals are swept at startup, every 30 seconds, and before relevant
+API reads and new intent reservations. A sweep failure terminates the service
+or fails the request closed instead of leaving stale budget reservations in
+the live view.
 
 ## Failure states
 
@@ -74,11 +90,14 @@ go vet ./internal/controlapi ./internal/controlplane ./cmd/control-plane-api
 make check
 ```
 
-The tests cover authentication, unknown-field rejection, scope escalation,
+The tests cover authentication and revoked-agent credential rejection,
+unknown-field rejection, scope escalation,
 tenant isolation, organization-scoped idempotency, exact approval digest,
-step-up enforcement, pause propagation, Base halt rejection, durable failure
-replay, PostgreSQL tenant predicates, audited pause transactions, JSON command
-results, and concurrent-writer journal refusal.
+step-up enforcement, expiry sweeping, pause/issuance serialization, invalid
+pause transitions, Base halt rejection, client-cancellation-safe command
+completion, durable failure replay, PostgreSQL tenant predicates, exact-byte
+event replay, audited pause transactions, JSON command results, and
+concurrent-writer journal refusal.
 
 ## Remaining live gates
 
@@ -99,6 +118,9 @@ results, and concurrent-writer journal refusal.
 The executable requires `FLOWOPS_DATABASE_URL`, `FLOWOPS_ENVELOPE_KEY_ID`,
 `FLOWOPS_ENVELOPE_PRIVATE_KEY_B64`, and
 `FLOWOPS_RECONCILIATION_JOURNAL`. `FLOWOPS_CONTROL_ADDR` is optional and
-defaults to loopback. Policy limits, Base chain/USDC rules, rails, recipients,
+defaults to `127.0.0.1:8080`; non-loopback binds are rejected because the
+service carries bearer credentials over plain HTTP. Remote deployments must
+terminate TLS at a trusted local proxy that connects over loopback. Policy
+limits, Base chain/USDC rules, rails, recipients,
 and versions are loaded from the active PostgreSQL policy row for the governed
 agent; they are not shared process-wide environment variables.

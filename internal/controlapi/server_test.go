@@ -34,12 +34,13 @@ const (
 )
 
 type memoryStore struct {
-	mu          sync.Mutex
-	principals  map[[32]byte]Principal
-	agents      map[string]Agent
-	commands    map[string]Command
-	commandKeys map[string]string
-	now         func() time.Time
+	mu                   sync.Mutex
+	principals           map[[32]byte]Principal
+	agents               map[string]Agent
+	commands             map[string]Command
+	commandKeys          map[string]string
+	now                  func() time.Time
+	completionContextErr error
 }
 
 func newMemoryStore(now func() time.Time) *memoryStore {
@@ -57,6 +58,12 @@ func (s *memoryStore) Authenticate(_ context.Context, digest [32]byte) (Principa
 	principal, ok := s.principals[digest]
 	if !ok {
 		return Principal{}, ErrUnauthenticated
+	}
+	if principal.Kind == PrincipalAgent {
+		agent, exists := s.agents[agentKey(principal.OrganizationID, principal.AgentID)]
+		if !exists || agent.Status == AgentRevoked || agent.Status == AgentArchived {
+			return Principal{}, ErrUnauthenticated
+		}
 	}
 	return principal, nil
 }
@@ -91,9 +98,25 @@ func (s *memoryStore) SetAgentStatus(_ context.Context, organizationID, agentID 
 	if !ok {
 		return Agent{}, ErrNotFound
 	}
+	if agent.Status != AgentPaused && agent.Status != AgentActive {
+		return Agent{}, ErrForbidden
+	}
 	agent.Status, agent.UpdatedAt = status, s.now().UTC()
 	s.agents[key] = agent
 	return agent, nil
+}
+
+func (s *memoryStore) WithActiveAgentLock(_ context.Context, organizationID, agentID string, operation func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	agent, ok := s.agents[agentKey(organizationID, agentID)]
+	if !ok {
+		return ErrNotFound
+	}
+	if agent.Status != AgentActive {
+		return fmt.Errorf("%w while status is %s", controlplane.ErrFrozen, agent.Status)
+	}
+	return operation()
 }
 
 func (s *memoryStore) BeginCommand(_ context.Context, command Command) (Command, bool, error) {
@@ -112,9 +135,10 @@ func (s *memoryStore) BeginCommand(_ context.Context, command Command) (Command,
 	return cloneCommand(command), true, nil
 }
 
-func (s *memoryStore) CompleteCommand(_ context.Context, organizationID, commandID string, state CommandState, result json.RawMessage, errorCode string) (Command, error) {
+func (s *memoryStore) CompleteCommand(ctx context.Context, organizationID, commandID string, state CommandState, result json.RawMessage, errorCode string) (Command, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.completionContextErr = ctx.Err()
 	command, ok := s.commands[commandID]
 	if !ok || command.OrganizationID != organizationID {
 		return Command{}, ErrNotFound
@@ -189,6 +213,10 @@ func (s *sequenceIDs) next(prefix string) (string, error) {
 }
 
 func testLifecycle(t *testing.T, store Store, chain *mutableChain, now time.Time) (*controlplane.Lifecycle, *controlplane.Journal) {
+	return testLifecycleWithClock(t, store, chain, func() time.Time { return now })
+}
+
+func testLifecycleWithClock(t *testing.T, store Store, chain *mutableChain, clock func() time.Time) (*controlplane.Lifecycle, *controlplane.Journal) {
 	t.Helper()
 	engine, err := policy.Compile(policy.Config{
 		Version: "policy_1", Enabled: true, AllowedChainIDs: []uint64{84532},
@@ -208,7 +236,7 @@ func testLifecycle(t *testing.T, store Store, chain *mutableChain, now time.Time
 	var request, authorization, nonce atomic.Uint64
 	lifecycle, err := controlplane.New(controlplane.Config{
 		Policy: engine, ActivePolicyVersion: func() string { return "policy_1" }, Journal: journal,
-		FreezeGate: AgentFreezeGate{Store: store}, ChainGate: chain, Clock: func() time.Time { return now },
+		FreezeGate: AgentFreezeGate{Store: store}, ChainGate: chain, Clock: clock,
 		ApprovalTTL: 10 * time.Minute, AuthorizationTTL: 5 * time.Minute,
 		RequestIDSource:       func() (string, error) { return fmt.Sprintf("req_%d", request.Add(1)), nil },
 		AuthorizationIDSource: func() (string, error) { return fmt.Sprintf("auth_%d", authorization.Add(1)), nil },
@@ -220,6 +248,54 @@ func testLifecycle(t *testing.T, store Store, chain *mutableChain, now time.Time
 		t.Fatal(err)
 	}
 	return lifecycle, journal
+}
+
+func TestCommandCompletionSurvivesClientCancellation(t *testing.T) {
+	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	store := newMemoryStore(func() time.Time { return now })
+	command := Command{
+		ID: "cmd_cancel", OrganizationID: "org_a", ActorID: "owner_a", Kind: "agent.pause",
+		TargetID: "agent_a", IdempotencyKey: "pause_1", InputDigest: "0xproof", State: CommandPending, CreatedAt: now,
+	}
+	store.commands[command.ID] = command
+	server := &Server{store: store, commandCompletionTimeout: time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+	recorder := httptest.NewRecorder()
+	server.succeedCommand(recorder, request, command, map[string]string{"status": "PAUSED"}, http.StatusOK)
+	if recorder.Code != http.StatusOK || store.completionContextErr != nil {
+		t.Fatalf("completion status=%d context=%v", recorder.Code, store.completionContextErr)
+	}
+}
+
+func TestApprovalReadsSweepExpiredReservations(t *testing.T) {
+	current := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	store := newMemoryStore(func() time.Time { return current })
+	store.principals[TokenDigest(ownerTokenA)] = Principal{ID: "owner_a", OrganizationID: "org_a", Kind: PrincipalHuman, Role: RoleOwner, StepUpUntil: current.Add(time.Hour)}
+	store.agents[agentKey("org_a", "agent_a")] = Agent{OrganizationID: "org_a", ID: "agent_a", CustomerID: "customer_a", Name: "Research", Status: AgentActive, UpdatedAt: current}
+	chain := newHealthyChain(current)
+	lifecycle, journal := testLifecycleWithClock(t, store, chain, func() time.Time { return current })
+	defer journal.Close()
+	created, err := lifecycle.Submit(context.Background(), intent("intent_expiring", "org_a", "agent_a", "150"))
+	if err != nil || created.State != controlplane.StatePendingApproval {
+		t.Fatalf("create pending intent = %+v, %v", created, err)
+	}
+	server, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain, Clock: func() time.Time { return current }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+	current = current.Add(11 * time.Minute)
+	status, body := doRequest(t, httpServer.Client(), http.MethodGet, httpServer.URL+"/v1/approvals", ownerTokenA, "", nil)
+	if status != http.StatusOK || len(body["approvals"].([]any)) != 0 {
+		t.Fatalf("expired approval list = %d %+v", status, body)
+	}
+	record, ok := lifecycle.Get(created.RequestID)
+	if !ok || record.State != controlplane.StateExpired || len(journal.Events()) != 2 {
+		t.Fatalf("expired record=%+v exists=%v events=%d", record, ok, len(journal.Events()))
+	}
 }
 
 func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *controlplane.Lifecycle, *controlplane.Journal, time.Time) {

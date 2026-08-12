@@ -26,7 +26,7 @@ func TestPostgresJournalAppendsHashChainedEventTransactionally(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(postgresJournalLock).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT sequence, hash FROM control_events`).WillReturnError(sql.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO control_events`).WithArgs(uint64(1), int64(1786525200), "test.event", "req_1", "", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO control_events`).WithArgs(uint64(1), int64(1786525200), "test.event", "req_1", "", []byte(`{"value":"bound"}`), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	event, err := journal.Append(context.Background(), time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC), "test.event", "req_1", map[string]string{"value": "bound"})
 	if err != nil || event.Sequence != 1 || event.PreviousHash != "" || event.Hash == "" {

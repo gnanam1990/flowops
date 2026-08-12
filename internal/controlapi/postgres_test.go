@@ -35,7 +35,7 @@ func TestPostgresAuthenticationReturnsValidatedClaimsAndHidesMisses(t *testing.T
 	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
 	digest := TokenDigest("fo_sbx_test_000000000000000000000000")
 	columns := []string{"principal_id", "organization_id", "principal_kind", "role", "agent_id", "scopes", "step_up_until"}
-	mock.ExpectQuery(`SELECT principal_id, organization_id, principal_kind`).WithArgs(digest[:]).WillReturnRows(
+	mock.ExpectQuery(`SELECT c.principal_id, c.organization_id, c.principal_kind`).WithArgs(digest[:]).WillReturnRows(
 		sqlmock.NewRows(columns).AddRow("credential_a", "org_a", "AGENT", "AGENT", "agent_a", []byte(`["intents:create"]`), nil),
 	)
 	principal, err := store.Authenticate(context.Background(), digest)
@@ -44,7 +44,7 @@ func TestPostgresAuthenticationReturnsValidatedClaimsAndHidesMisses(t *testing.T
 	}
 
 	missing := TokenDigest("fo_sbx_missing_000000000000000000000")
-	mock.ExpectQuery(`SELECT principal_id, organization_id, principal_kind`).WithArgs(missing[:]).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT c.principal_id, c.organization_id, c.principal_kind`).WithArgs(missing[:]).WillReturnError(sql.ErrNoRows)
 	if _, err := store.Authenticate(context.Background(), missing); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("missing credential error = %v", err)
 	}
@@ -113,6 +113,49 @@ func TestPostgresPauseIsTenantBoundAndAuditedInOneTransaction(t *testing.T) {
 	agent, err := store.SetAgentStatus(context.Background(), "org_a", "agent_a", AgentPaused, "owner_a", "audit_1")
 	if err != nil || agent.Status != AgentPaused {
 		t.Fatalf("pause = %+v, %v", agent, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresPauseRejectsNonActiveLifecycleStates(t *testing.T) {
+	for _, status := range []AgentStatus{AgentDraft, AgentQuarantined, AgentRevoked, AgentArchived} {
+		t.Run(string(status), func(t *testing.T) {
+			store, mock, db := newMockStore(t)
+			defer db.Close()
+			now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+			columns := []string{"organization_id", "id", "customer_id", "name", "purpose", "status", "updated_at"}
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT organization_id, id, customer_id, name, purpose, status, updated_at[\s\S]+FOR UPDATE`).WithArgs("org_a", "agent_a").WillReturnRows(
+				sqlmock.NewRows(columns).AddRow("org_a", "agent_a", "customer_a", "Research", "Evidence", status, now),
+			)
+			mock.ExpectRollback()
+			if _, err := store.SetAgentStatus(context.Background(), "org_a", "agent_a", AgentPaused, "owner_a", "audit_1"); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("pause from %s = %v", status, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestPostgresAuthorizationLockRejectsFrozenAgent(t *testing.T) {
+	store, mock, db := newMockStore(t)
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT status[\s\S]+FOR UPDATE`).WithArgs("org_a", "agent_a").WillReturnRows(
+		sqlmock.NewRows([]string{"status"}).AddRow(AgentPaused),
+	)
+	mock.ExpectRollback()
+	called := false
+	err := store.WithActiveAgentLock(context.Background(), "org_a", "agent_a", func() error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, controlplane.ErrFrozen) || called {
+		t.Fatalf("authorization lock error=%v called=%v", err, called)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

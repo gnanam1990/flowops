@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -11,7 +13,8 @@ import (
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/policy"
 	"github.com/gnanam1990/flowops/pkg/envelope"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
@@ -21,11 +24,33 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	db, err := sql.Open("pgx", databaseURL)
+	adminDB, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := adminDB.PingContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("flowops_it_%d", time.Now().UnixNano())
+	if _, err := adminDB.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		defer adminDB.Close()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := adminDB.ExecContext(cleanupCtx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`); err != nil {
+			t.Errorf("drop integration schema: %v", err)
+		}
+	})
+	pgxConfig, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgxConfig.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*pgxConfig)
 	defer db.Close()
+	db.SetMaxOpenConns(10)
 	if err := db.PingContext(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +134,39 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 		t.Fatalf("replay command = %+v, %v, %v", replayed, created, err)
 	}
 
-	paused, err := store.SetAgentStatus(ctx, "org_integration", "agent_integration", AgentPaused, "owner_integration", "audit_integration")
+	lockHeld := make(chan struct{})
+	releaseLock := make(chan struct{})
+	lockDone := make(chan error, 1)
+	go func() {
+		lockDone <- store.WithActiveAgentLock(ctx, "org_integration", "agent_integration", func() error {
+			close(lockHeld)
+			<-releaseLock
+			return nil
+		})
+	}()
+	<-lockHeld
+	pauseDone := make(chan struct {
+		agent Agent
+		err   error
+	}, 1)
+	go func() {
+		agent, err := store.SetAgentStatus(ctx, "org_integration", "agent_integration", AgentPaused, "owner_integration", "audit_integration")
+		pauseDone <- struct {
+			agent Agent
+			err   error
+		}{agent, err}
+	}()
+	select {
+	case result := <-pauseDone:
+		t.Fatalf("pause crossed an in-flight authorization lock: %+v, %v", result.agent, result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseLock)
+	if err := <-lockDone; err != nil {
+		t.Fatalf("authorization lock: %v", err)
+	}
+	pauseResult := <-pauseDone
+	paused, err := pauseResult.agent, pauseResult.err
 	if err != nil || paused.Status != AgentPaused {
 		t.Fatalf("pause = %+v, %v", paused, err)
 	}
@@ -117,12 +174,20 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 	if err := freeze.Check(ctx, "org_integration", "task_integration", "agent_integration"); err == nil {
 		t.Fatal("PostgreSQL pause did not reach the authorization freeze gate")
 	}
+	if _, err := db.ExecContext(ctx, `UPDATE agents SET status = 'REVOKED' WHERE organization_id = 'org_integration' AND id = 'agent_integration'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Authenticate(ctx, digest); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("credential for revoked agent authenticated: %v", err)
+	}
 
 	journal, err := controlplane.OpenPostgresJournal(ctx, db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	event, err := journal.Append(ctx, now, "integration.proof", "req_integration", map[string]string{"commandId": command.ID})
+	event, err := journal.Append(ctx, now, "integration.proof", "req_integration", map[string]any{
+		"commandId": command.ID, "nested": map[string]any{"amount": 1, "accepted": true},
+	})
 	if err != nil || event.Sequence != 1 || event.Hash == "" {
 		t.Fatalf("journal event = %+v, %v", event, err)
 	}

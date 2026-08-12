@@ -88,7 +88,9 @@ CREATE TABLE IF NOT EXISTS control_events (
     kind text NOT NULL,
     request_id text NOT NULL,
     previous_hash text NOT NULL,
-    payload jsonb NOT NULL,
+    -- The hash chain commits to the exact JSON bytes. jsonb normalization
+    -- would change those bytes during replay, so preserve them verbatim.
+    payload bytea NOT NULL,
     hash text NOT NULL UNIQUE
 );
 

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
@@ -29,6 +31,25 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	}
 	if cfg.address != defaultAddress || len(cfg.envelopeKey) != ed25519.PrivateKeySize {
 		t.Fatalf("configuration was not normalized: %+v", cfg)
+	}
+}
+
+func TestControlPlaneListenAddressIsLoopbackOnly(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:8080", "127.1.2.3:8080", "[::1]:8080"} {
+		if err := validateListenAddress(address); err != nil {
+			t.Errorf("accepted address %q: %v", address, err)
+		}
+	}
+	for _, address := range []string{"0.0.0.0:8080", "[::]:8080", "192.0.2.1:8080", "localhost:8080", "example.com:8080", ":8080", "not-an-address"} {
+		if err := validateListenAddress(address); err == nil {
+			t.Errorf("non-loopback address %q was accepted", address)
+		}
+	}
+}
+
+func TestExpirySweeperRejectsInvalidConfiguration(t *testing.T) {
+	if err := runExpirySweeper(context.Background(), nil, time.Second); err == nil {
+		t.Fatal("nil lifecycle was accepted")
 	}
 }
 
