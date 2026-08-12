@@ -636,7 +636,9 @@ func (e *Engine) apply(event journalEvent) error {
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			return err
 		}
-		e.preserveBroadcastAttestation(&payload.Execution)
+		if err := e.preserveBroadcastAttestation(&payload.Execution); err != nil {
+			return err
+		}
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
 		e.executionByHash[payload.Execution.Expected.TransactionHash] = payload.Execution.Expected.ExecutionID
 	case eventExecutionResolved, eventExecutionReorged:
@@ -644,7 +646,9 @@ func (e *Engine) apply(event journalEvent) error {
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			return err
 		}
-		e.preserveBroadcastAttestation(&payload.Execution)
+		if err := e.preserveBroadcastAttestation(&payload.Execution); err != nil {
+			return err
+		}
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
 		if payload.Ledger != nil {
 			e.applyLedger(*payload.Ledger)
@@ -669,14 +673,22 @@ func (e *Engine) apply(event journalEvent) error {
 // An older binary ignores the proof while replaying the original broadcast and
 // can later append a resolution without it. The original event remains in the
 // journal, so a newer binary must carry that proof through later legacy events.
-func (e *Engine) preserveBroadcastAttestation(next *Execution) {
-	if next == nil || next.BroadcastAttestation != nil {
-		return
+func (e *Engine) preserveBroadcastAttestation(next *Execution) error {
+	if next == nil {
+		return nil
 	}
-	if current, ok := e.executions[next.Expected.ExecutionID]; ok && current.BroadcastAttestation != nil {
-		attestation := *current.BroadcastAttestation
-		next.BroadcastAttestation = &attestation
+	if next.BroadcastAttestation == nil {
+		if current, ok := e.executions[next.Expected.ExecutionID]; ok && current.BroadcastAttestation != nil {
+			attestation := *current.BroadcastAttestation
+			next.BroadcastAttestation = &attestation
+		}
 	}
+	if next.BroadcastAttestation != nil {
+		if err := next.BroadcastAttestation.validate(next.Expected); err != nil {
+			return fmt.Errorf("execution broadcast attestation: %w", err)
+		}
+	}
+	return nil
 }
 
 func (e *Engine) trackManualRelease(operator string) {

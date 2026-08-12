@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
 const (
@@ -137,15 +138,26 @@ func testBroadcastAttestation(t *testing.T, expected ExpectedExecution, broadcas
 		t.Fatal(err)
 	}
 	privateKey := ed25519.NewKeyFromSeed(seed)
+	authorization := envelope.Authorization{
+		Version: envelope.Version, AuthorizationID: "auth_1", OrganizationID: expected.OrganizationID, CustomerID: "customer_acme",
+		AgentID: expected.AgentID, TaskID: expected.TaskID, ActionID: "action_1", Rail: envelope.RailDirect,
+		ChainID: expected.ChainID, Recipient: expected.Recipient, Asset: expected.Asset, AmountAtomic: expected.AmountAtomic,
+		Resource: "direct USDC transfer", PolicyVersion: "policy_1", Nonce: testHash(898),
+		IssuedAt: broadcastAt.Add(-time.Minute).Unix(), ExpiresAt: broadcastAt.Add(time.Minute).Unix(),
+	}
+	authorizationDigest, err := authorization.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	signed, err := broadcastreceipt.Sign(broadcastreceipt.Receipt{
 		Version: broadcastreceipt.Version, OrganizationID: expected.OrganizationID, CustomerID: "customer_acme",
-		AuthorizationID: "auth_1", AuthorizationDigest: testHash(899), TransactionHash: expected.TransactionHash,
+		AuthorizationID: authorization.AuthorizationID, AuthorizationDigest: "0x" + hex.EncodeToString(authorizationDigest[:]), TransactionHash: expected.TransactionHash,
 		Sender: expected.Sender, Outcome: broadcastreceipt.OutcomeAmbiguous, BroadcastAt: broadcastAt.Unix(),
 	}, "customer_signer_1", privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return BroadcastAttestation{SignedReceipt: signed, PublicKeyB64: base64.StdEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey))}
+	return BroadcastAttestation{SignedReceipt: signed, Authorization: authorization, PublicKeyB64: base64.StdEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey))}
 }
 
 func receiptQuorum(expected ExpectedExecution, block uint64, success bool) []ReceiptEvidence {
@@ -234,6 +246,36 @@ func TestAttestedBroadcastEngineRejectsUnverifiedProof(t *testing.T) {
 	}
 	if len(engine.Executions()) != 0 {
 		t.Fatal("invalid attestation changed reconciliation state")
+	}
+}
+
+func TestAttestedBroadcastEngineRejectsAuthorizationFieldSubstitution(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	expected := testExpected()
+	for name, mutate := range map[string]func(*ExpectedExecution){
+		"agent":     func(value *ExpectedExecution) { value.AgentID = "agent_other" },
+		"task":      func(value *ExpectedExecution) { value.TaskID = "task_other" },
+		"chain":     func(value *ExpectedExecution) { value.ChainID = 8453 },
+		"asset":     func(value *ExpectedExecution) { value.Asset = "0x3333333333333333333333333333333333333333" },
+		"recipient": func(value *ExpectedExecution) { value.Recipient = "0x3333333333333333333333333333333333333333" },
+		"amount":    func(value *ExpectedExecution) { value.AmountAtomic = "101" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := expected
+			mutate(&changed)
+			if _, err := engine.RegisterAttestedBroadcast(context.Background(), changed, testBroadcastAttestation(t, expected, clock.Now())); err == nil {
+				t.Fatal("authorization field substitution reached reconciliation")
+			}
+		})
+	}
+	if len(engine.Executions()) != 0 {
+		t.Fatal("substitution attempts changed reconciliation state")
 	}
 }
 

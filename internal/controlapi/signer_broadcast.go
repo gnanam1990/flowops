@@ -132,7 +132,7 @@ func (r *SignerBroadcastRegistrar) Register(ctx context.Context, signed broadcas
 		Recipient:       authorization.Recipient,
 		AmountAtomic:    authorization.AmountAtomic,
 	}
-	attestation := reconciliation.BroadcastAttestation{SignedReceipt: signed, PublicKeyB64: base64.StdEncoding.EncodeToString(publicKey)}
+	attestation := reconciliation.BroadcastAttestation{SignedReceipt: signed, Authorization: authorization, PublicKeyB64: base64.StdEncoding.EncodeToString(publicKey)}
 	return r.reconciler.RegisterAttestedBroadcast(ctx, expected, attestation)
 }
 

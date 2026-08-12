@@ -47,13 +47,15 @@ is a conflict. A valid callback is journaled even if Base is currently stale or
 halted. In that case it enters `PENDING_CHAIN_RECOVERY` and no settlement is
 recognized until the existing independent receipt quorum confirms it.
 
-The journal preserves the exact signed receipt and the exact public key that
-verified it. The reconciliation engine re-verifies that proof and its
-transaction/sender binding before appending the execution. This makes the
-attestation independently auditable after restart or key rotation and prevents
-a future internal caller from bypassing the receipt boundary with bare expected
-transaction fields. The stored public key is historical evidence, not current
-authority to accept another callback.
+The journal preserves the exact authorization, signed receipt, and public key
+that verified it. The reconciliation engine recomputes the authorization
+digest, re-verifies the receipt proof, checks the authorization window, and
+matches its organization, agent, task, chain, asset, recipient, and amount to
+the expected execution before appending. This makes the attestation
+independently auditable after restart or key rotation and prevents a future
+internal caller from bypassing the receipt boundary with substituted economic
+fields. The stored public key is historical evidence, not current authority to
+accept another callback.
 
 The fields are additive to the existing execution event schema. A rollback
 binary can replay them by ignoring the unknown proof, and the newer replay path
