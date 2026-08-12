@@ -17,10 +17,12 @@ import (
 const maxObserverProvidersJSONBytes = 16 * 1024
 
 type observerRuntimeConfig struct {
-	providers []reconciliation.RPCProvider
-	engine    reconciliation.Config
-	interval  time.Duration
-	timeout   time.Duration
+	providers              []reconciliation.RPCProvider
+	engine                 reconciliation.Config
+	interval               time.Duration
+	timeout                time.Duration
+	reconciliationInterval time.Duration
+	reconciliationTimeout  time.Duration
 }
 
 type observerProviderInput struct {
@@ -75,6 +77,14 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	if err != nil {
 		return observerRuntimeConfig{}, err
 	}
+	reconciliationInterval, err := parseDurationEnv("FLOWOPS_BASE_RECONCILIATION_INTERVAL", os.Getenv("FLOWOPS_BASE_RECONCILIATION_INTERVAL"), 20*time.Second)
+	if err != nil {
+		return observerRuntimeConfig{}, err
+	}
+	reconciliationTimeout, err := parseDurationEnv("FLOWOPS_BASE_RECONCILIATION_TIMEOUT", os.Getenv("FLOWOPS_BASE_RECONCILIATION_TIMEOUT"), 10*time.Second)
+	if err != nil {
+		return observerRuntimeConfig{}, err
+	}
 	stallThreshold, err := parseDurationEnv("FLOWOPS_BASE_STALL_THRESHOLD", os.Getenv("FLOWOPS_BASE_STALL_THRESHOLD"), 2*time.Minute)
 	if err != nil {
 		return observerRuntimeConfig{}, err
@@ -90,6 +100,9 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	if timeout >= interval {
 		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_OBSERVER_TIMEOUT must be shorter than FLOWOPS_BASE_OBSERVER_INTERVAL")
 	}
+	if reconciliationTimeout >= reconciliationInterval {
+		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_RECONCILIATION_TIMEOUT must be shorter than FLOWOPS_BASE_RECONCILIATION_INTERVAL")
+	}
 	if observerQuorum > len(providers) {
 		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_OBSERVER_QUORUM cannot exceed configured provider count")
 	}
@@ -101,6 +114,7 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	}
 	return observerRuntimeConfig{
 		providers: providers, interval: interval, timeout: timeout,
+		reconciliationInterval: reconciliationInterval, reconciliationTimeout: reconciliationTimeout,
 		engine: reconciliation.Config{
 			ChainID: chainID, ObserverQuorum: observerQuorum, HaltConfirmations: haltConfirmations,
 			RecoveryObservations: recoveryObservations, MinConfirmations: minConfirmations,

@@ -118,6 +118,8 @@ func (e *Engine) CheckChain(_ context.Context, chainID uint64) error {
 	return nil
 }
 
+func (e *Engine) FinalityDepth() uint64 { return e.config.ReorgLookback }
+
 func (e *Engine) CheckAuthorizationChain(_ context.Context, authorization envelope.Authorization) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -325,10 +327,15 @@ func (e *Engine) ReconcileReceipt(ctx context.Context, executionID string, evide
 	if err != nil {
 		return Execution{}, err
 	}
+	if execution.CorrectionTransactionID != "" && execution.ReorgEvidenceDigest != "" && canonical.BlockNumber == execution.BlockNumber && canonical.BlockHash == execution.BlockHash {
+		return Execution{}, fmt.Errorf("%w: receipt repeats the block removed by canonical reorg evidence", ErrUnsafeFinality)
+	}
 	resolved := cloneExecution(execution)
 	resolved.BlockNumber = canonical.BlockNumber
 	resolved.BlockHash = canonical.BlockHash
 	resolved.ResolvedAt = &now
+	resolved.FinalityCheckedAt = nil
+	resolved.FinalityCheckedHead = 0
 	var ledgerCopy *LedgerTransaction
 	if canonical.Success {
 		if settlement == nil {
@@ -441,6 +448,8 @@ func (e *Engine) ReopenReorg(ctx context.Context, executionID string, evidence [
 	reopened.CorrectionTransactionID = correction.TransactionID
 	reopened.ReorgEvidenceDigest = reorgDigest
 	reopened.LedgerTransactionID = ""
+	reopened.FinalityCheckedAt = nil
+	reopened.FinalityCheckedHead = 0
 	status := cloneStatus(e.status)
 	status.State = StateRecovering
 	status.StateChangedAt = now
@@ -461,6 +470,46 @@ func (e *Engine) ReopenReorg(ctx context.Context, executionID string, evidence [
 	}
 	e.refreshAffected()
 	return cloneExecution(reopened), nil
+}
+
+func (e *Engine) ConfirmFinality(ctx context.Context, executionID string, evidence []ReorgEvidence) (Execution, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	execution, ok := e.executions[executionID]
+	if !ok {
+		return Execution{}, ErrUnknownExecution
+	}
+	if execution.State != ExecutionSettled || execution.LedgerTransactionID == "" {
+		return Execution{}, errors.New("only a settled execution can complete finality monitoring")
+	}
+	canonical, err := e.validateCanonicalBlockQuorum(execution, evidence, false)
+	if err != nil {
+		return Execution{}, err
+	}
+	if execution.FinalityCheckedAt != nil {
+		if execution.FinalityCheckedHead == canonical.ObservedHead {
+			return cloneExecution(execution), nil
+		}
+		return Execution{}, ErrConflict
+	}
+	now := e.config.Clock().UTC()
+	if (e.status.State != StateHealthy && e.status.State != StateRecovering) || !e.trustedFresh(now) {
+		return Execution{}, fmt.Errorf("%w: state=%s", ErrChainUnavailable, e.statusAt(now).State)
+	}
+	confirmed := cloneExecution(execution)
+	confirmed.FinalityCheckedAt = &now
+	confirmed.FinalityCheckedHead = canonical.ObservedHead
+	// Reuse the existing resolved-event envelope so an older binary can safely
+	// replay a journal written by this version during an image rollback. Older
+	// readers ignore the additive finality fields and retain the settlement.
+	event, err := e.journal.append(ctx, now, eventExecutionResolved, executionID, executionPayload{Execution: confirmed, Reorg: cloneReorgEvidence(evidence)})
+	if err != nil {
+		return Execution{}, err
+	}
+	if err := e.apply(event); err != nil {
+		return Execution{}, err
+	}
+	return cloneExecution(confirmed), nil
 }
 
 func (e *Engine) Post(ctx context.Context, transaction LedgerTransaction) (LedgerTransaction, error) {
@@ -498,6 +547,17 @@ func (e *Engine) Execution(executionID string) (Execution, bool) {
 	defer e.mu.Unlock()
 	execution, ok := e.executions[executionID]
 	return cloneExecution(execution), ok
+}
+
+func (e *Engine) Executions() []Execution {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	result := make([]Execution, 0, len(e.executions))
+	for _, execution := range e.executions {
+		result = append(result, cloneExecution(execution))
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Expected.ExecutionID < result[j].Expected.ExecutionID })
+	return result
 }
 
 func (e *Engine) LedgerTransaction(transactionID string) (LedgerTransaction, bool) {
@@ -671,30 +731,47 @@ func (e *Engine) validateReceiptQuorum(expected ExpectedExecution, evidence []Re
 }
 
 func (e *Engine) validateReorgQuorum(execution Execution, evidence []ReorgEvidence) error {
+	_, err := e.validateCanonicalBlockQuorum(execution, evidence, true)
+	return err
+}
+
+func (e *Engine) validateCanonicalBlockQuorum(execution Execution, evidence []ReorgEvidence, requireChanged bool) (ReorgEvidence, error) {
 	if len(evidence) < e.config.ObserverQuorum {
-		return ErrUnsafeFinality
+		return ReorgEvidence{}, ErrUnsafeFinality
 	}
 	seen := make(map[string]struct{}, len(evidence))
 	canonical := evidence[0].CanonicalBlockHash
+	minimumHead := evidence[0].ObservedHead
 	for _, observation := range evidence {
 		if !identifierPattern.MatchString(observation.Provider) {
-			return ErrUnsafeFinality
+			return ReorgEvidence{}, ErrUnsafeFinality
 		}
 		if _, exists := seen[observation.Provider]; exists {
-			return ErrUnsafeFinality
+			return ReorgEvidence{}, ErrUnsafeFinality
 		}
 		seen[observation.Provider] = struct{}{}
 		if observation.ChainID != execution.Expected.ChainID || observation.TransactionHash != execution.Expected.TransactionHash || observation.OriginalBlockNumber != execution.BlockNumber || observation.OriginalBlockHash != execution.BlockHash {
-			return ErrUnsafeFinality
+			return ReorgEvidence{}, ErrUnsafeFinality
 		}
-		if !hashPattern.MatchString(observation.CanonicalBlockHash) || observation.CanonicalBlockHash == execution.BlockHash || observation.CanonicalBlockHash != canonical {
-			return ErrUnsafeFinality
+		if !hashPattern.MatchString(observation.CanonicalBlockHash) || observation.CanonicalBlockHash != canonical {
+			return ReorgEvidence{}, ErrUnsafeFinality
+		}
+		if (requireChanged && observation.CanonicalBlockHash == execution.BlockHash) || (!requireChanged && observation.CanonicalBlockHash != execution.BlockHash) {
+			return ReorgEvidence{}, ErrUnsafeFinality
 		}
 		if observation.ObservedHead < execution.BlockNumber || observation.ObservedHead-execution.BlockNumber < e.config.ReorgLookback {
-			return ErrUnsafeFinality
+			return ReorgEvidence{}, ErrUnsafeFinality
+		}
+		if observation.ObservedHead < minimumHead {
+			minimumHead = observation.ObservedHead
 		}
 	}
-	return nil
+	canonicalEvidence := evidence[0]
+	canonicalEvidence.ObservedHead = minimumHead
+	if e.status.LastTrusted == nil || e.status.LastTrusted.BlockNumber < execution.BlockNumber || e.status.LastTrusted.BlockNumber-execution.BlockNumber < e.config.ReorgLookback {
+		return ReorgEvidence{}, ErrUnsafeFinality
+	}
+	return canonicalEvidence, nil
 }
 
 func (e *Engine) resolvedRequestMatches(execution Execution, evidence []ReceiptEvidence, settlement *LedgerTransaction) bool {
@@ -821,7 +898,15 @@ func cloneExecution(execution Execution) Execution {
 		resolvedAt := *execution.ResolvedAt
 		execution.ResolvedAt = &resolvedAt
 	}
+	if execution.FinalityCheckedAt != nil {
+		checkedAt := *execution.FinalityCheckedAt
+		execution.FinalityCheckedAt = &checkedAt
+	}
 	return execution
+}
+
+func cloneReorgEvidence(evidence []ReorgEvidence) []ReorgEvidence {
+	return append([]ReorgEvidence(nil), evidence...)
 }
 
 func cloneLedger(transaction LedgerTransaction) LedgerTransaction {
