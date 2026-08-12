@@ -636,6 +636,7 @@ func (e *Engine) apply(event journalEvent) error {
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			return err
 		}
+		e.preserveBroadcastAttestation(&payload.Execution)
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
 		e.executionByHash[payload.Execution.Expected.TransactionHash] = payload.Execution.Expected.ExecutionID
 	case eventExecutionResolved, eventExecutionReorged:
@@ -643,6 +644,7 @@ func (e *Engine) apply(event journalEvent) error {
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			return err
 		}
+		e.preserveBroadcastAttestation(&payload.Execution)
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
 		if payload.Ledger != nil {
 			e.applyLedger(*payload.Ledger)
@@ -661,6 +663,20 @@ func (e *Engine) apply(event journalEvent) error {
 		return fmt.Errorf("unsupported reconciliation event kind %q", event.Kind)
 	}
 	return nil
+}
+
+// preserveBroadcastAttestation makes additive proof fields rollback tolerant.
+// An older binary ignores the proof while replaying the original broadcast and
+// can later append a resolution without it. The original event remains in the
+// journal, so a newer binary must carry that proof through later legacy events.
+func (e *Engine) preserveBroadcastAttestation(next *Execution) {
+	if next == nil || next.BroadcastAttestation != nil {
+		return
+	}
+	if current, ok := e.executions[next.Expected.ExecutionID]; ok && current.BroadcastAttestation != nil {
+		attestation := *current.BroadcastAttestation
+		next.BroadcastAttestation = &attestation
+	}
 }
 
 func (e *Engine) trackManualRelease(operator string) {

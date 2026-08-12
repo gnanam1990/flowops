@@ -237,6 +237,54 @@ func TestAttestedBroadcastEngineRejectsUnverifiedProof(t *testing.T) {
 	}
 }
 
+func TestAttestationSurvivesLegacyResolutionAfterRollback(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "reconciliation.log")
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := testExpected()
+	attestation := testBroadcastAttestation(t, expected, clock.Now())
+	execution, err := engine.RegisterAttestedBroadcast(context.Background(), expected, attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate an older rollback binary: it ignored the additive attestation
+	// field, then appended a terminal execution using its legacy schema.
+	legacyJournal, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyResolution := execution
+	legacyResolution.BroadcastAttestation = nil
+	legacyResolution.State = ExecutionReverted
+	resolvedAt := clock.Now().Add(time.Second)
+	legacyResolution.ResolvedAt = &resolvedAt
+	legacyResolution.Resolution = "transaction reverted"
+	if _, err := legacyJournal.append(context.Background(), resolvedAt, eventExecutionResolved, expected.ExecutionID, executionPayload{Execution: legacyResolution}); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacyJournal.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	resolved, ok := restarted.Execution(expected.ExecutionID)
+	if !ok || resolved.State != ExecutionReverted || resolved.BroadcastAttestation == nil || !equalJSON(*resolved.BroadcastAttestation, attestation) {
+		t.Fatalf("legacy resolution lost proof: %+v exists=%v", resolved, ok)
+	}
+}
+
 func settlement(now time.Time, executionID string) LedgerTransaction {
 	return LedgerTransaction{
 		TransactionID: "ledger_settlement_1", OrganizationID: "org_acme", Kind: LedgerSettlement,

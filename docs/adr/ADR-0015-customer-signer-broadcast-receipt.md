@@ -55,6 +55,12 @@ a future internal caller from bypassing the receipt boundary with bare expected
 transaction fields. The stored public key is historical evidence, not current
 authority to accept another callback.
 
+The fields are additive to the existing execution event schema. A rollback
+binary can replay them by ignoring the unknown proof, and the newer replay path
+restores the proof from the original broadcast event if that legacy binary
+later appends a resolution without it. This prevents a rollback-and-roll-forward
+cycle from erasing the attestation.
+
 The customer-side transaction executor remains responsible for durably
 entering a one-way broadcast state before network I/O. Any result after the RPC
 call begins is either submitted or ambiguous and must produce this receipt;
