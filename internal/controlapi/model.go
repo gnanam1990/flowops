@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var identifierPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
@@ -136,7 +137,7 @@ type Organization struct {
 }
 
 func (o Organization) Valid() bool {
-	return identifierPattern.MatchString(o.ID) && strings.TrimSpace(o.Name) != "" && len(o.Name) <= 200
+	return identifierPattern.MatchString(o.ID) && utf8.ValidString(o.Name) && strings.TrimSpace(o.Name) != "" && utf8.RuneCountInString(o.Name) <= 200
 }
 
 func (a Agent) Valid() bool {

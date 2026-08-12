@@ -31,8 +31,11 @@ func NewPostgresStore(db *sql.DB, siteSessions ...*SiteSessionCodec) (*PostgresS
 }
 
 func (s *PostgresStore) Authenticate(ctx context.Context, token string) (Principal, error) {
-	if strings.HasPrefix(token, siteSessionPrefix) {
-		return s.authenticateSiteSession(ctx, token)
+	if strings.HasPrefix(token, siteSessionPrefix) && s.siteSessions != nil {
+		claims, err := s.siteSessions.Verify(token)
+		if err == nil {
+			return s.authenticateSiteMembership(ctx, claims)
+		}
 	}
 	tokenDigest := TokenDigest(token)
 	var principal Principal
@@ -70,17 +73,10 @@ func (s *PostgresStore) Authenticate(ctx context.Context, token string) (Princip
 	return principal, nil
 }
 
-func (s *PostgresStore) authenticateSiteSession(ctx context.Context, token string) (Principal, error) {
-	if s.siteSessions == nil {
-		return Principal{}, ErrUnauthenticated
-	}
-	claims, err := s.siteSessions.Verify(token)
-	if err != nil {
-		return Principal{}, ErrUnauthenticated
-	}
+func (s *PostgresStore) authenticateSiteMembership(ctx context.Context, claims SiteMembership) (Principal, error) {
 	var membership SiteMembership
 	var status string
-	err = s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, `
 		SELECT m.id, m.site_project_id, m.site_user_key, m.organization_id, m.principal_id, m.role, m.status
 		FROM sites_memberships m
 		JOIN sites_identity_providers p ON p.site_project_id = m.site_project_id

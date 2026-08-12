@@ -501,7 +501,7 @@ function ApprovalDrawer({ approval, onClose, onAction }: { approval: Approval; o
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="approval-title">
         <header><span>Approval {approval.id}</span><button ref={closeRef} onClick={onClose} aria-label="Close approval details" type="button">×</button></header>
         <div className="drawer-title"><AgentMark mark={approval.agentMark} /><div><small>{approval.agent}</small><h2 id="approval-title">{approval.title}</h2></div></div>
-        <div className="drawer-amount"><span>Exact requested amount</span><strong>{approval.amount}</strong><small>{approval.rail} · USDC on Base</small></div>
+        <div className="drawer-amount"><span>Exact requested amount</span><strong>{approval.amount}</strong><small>{approval.rail} · {approval.asset ?? "Asset not exposed"} on Base</small></div>
         <dl className="detail-list"><div><dt>Recipient / vendor</dt><dd>{approval.vendor}</dd></div><div><dt>Agent</dt><dd>{approval.agent}</dd></div><div><dt>Task</dt><dd>{approval.title}</dd></div><div><dt>Rail</dt><dd>{approval.rail}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Policy snapshot</dt><dd className="mono">{approval.policyVersion ?? "Not exposed"}</dd></div><div><dt>Evidence refs</dt><dd className="mono">{approval.evidenceRefs ?? "Not exposed"}</dd></div><div><dt>Created</dt><dd>{approval.requested}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Request digest</dt><dd className="mono">{approval.requestDigest ?? "Not exposed"}</dd></div></dl>
         <div className="reason-box"><span>Why approval is required</span><p>{approval.reason}</p></div>
         <div className="truth-box"><strong>What this decision means</strong><p>Approval authorizes only this frozen intent. Any change to amount, recipient, task, rail, or request digest requires a new decision.</p></div>
@@ -529,7 +529,7 @@ function PauseDialog({ organization, mode, onClose, onConfirm }: { organization:
 }
 
 function PanelHeader({ kicker, title, meta, onView }: { kicker: string; title: string; meta: string; onView?: () => void }) {
-  return <header className="panel-header"><div><span>{kicker}</span><h2>{title}</h2></div>{onView ? <button onClick={onView} type="button">View all <span>→</span></button> : <em>{meta}</em>}</header>;
+  return <header className="panel-header"><div><span>{kicker}</span><h2>{title}</h2></div><div className="panel-header-actions"><em>{meta}</em>{onView ? <button onClick={onView} type="button">View all <span>→</span></button> : null}</div></header>;
 }
 
 function SectionHeading({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) {

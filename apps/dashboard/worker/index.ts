@@ -21,6 +21,16 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+const SERVER_ENVIRONMENT_KEYS = [
+  "FLOWOPS_CONTROL_API_URL",
+  "FLOWOPS_SITES_PROJECT_ID",
+  "FLOWOPS_SITES_EXCHANGE_TOKEN",
+] as const;
+
+const initialServerEnvironment = Object.fromEntries(
+  SERVER_ENVIRONMENT_KEYS.map((key) => [key, process.env[key]]),
+) as Record<(typeof SERVER_ENVIRONMENT_KEYS)[number], string | undefined>;
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -48,13 +58,10 @@ const worker = {
 };
 
 function exposeServerEnvironment(env: Env): void {
-  for (const key of [
-    "FLOWOPS_CONTROL_API_URL",
-    "FLOWOPS_SITES_PROJECT_ID",
-    "FLOWOPS_SITES_EXCHANGE_TOKEN",
-  ] as const) {
-    const value = env[key];
-    if (typeof value === "string") process.env[key] = value;
+  for (const key of SERVER_ENVIRONMENT_KEYS) {
+    const value = typeof env[key] === "string" ? env[key] : initialServerEnvironment[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
 }
 

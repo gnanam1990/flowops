@@ -52,6 +52,7 @@ type ControlApproval = {
     taskId: string;
     rail: string;
     recipient: string;
+    asset: string;
     amountAtomic: string;
     purpose: string;
   };
@@ -263,6 +264,7 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
     typeof raw.intent.purpose !== "string" ||
     raw.intent.purpose.length > 1_024 ||
     !/^0x[0-9a-f]{40}$/.test(raw.intent.recipient) ||
+    !/^0x[0-9a-f]{40}$/.test(raw.intent.asset) ||
     !/^\d{1,78}$/.test(raw.intent.amountAtomic ?? "")
   ) {
     throw new Error("invalid approval");
@@ -275,12 +277,13 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
     agentMark: initials(agent),
     title: raw.intent.purpose || `Task ${raw.intent.taskId}`,
     vendor: recipient,
-    amount: formatUSDC(raw.intent.amountAtomic),
+    amount: `${formatAtomic(raw.intent.amountAtomic)} atomic`,
     requested: age(new Date(raw.submittedAt * 1_000), observedAt),
     expires: durationUntil(raw.approvalExpiresAt, observedAt),
     reason: humanize(raw.decision?.reason || "POLICY_REQUIRES_APPROVAL"),
     risk: riskForReason(raw.decision?.reason),
     rail: mapRail(raw.intent.rail),
+    asset: shortAddress(raw.intent.asset),
     policyVersion: raw.decision?.policyVersion || "Not exposed",
     requestDigest: shortDigest(raw.requestDigest),
     evidenceRefs: "Not issued before decision",
@@ -357,11 +360,8 @@ function durationUntil(unixSeconds: number, now: Date): string {
   return `${Math.ceil(seconds / 60)}m`;
 }
 
-function formatUSDC(atomic: string): string {
-  const amount = BigInt(atomic);
-  const whole = amount / 1_000_000n;
-  const fraction = (amount % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
-  return `${whole.toLocaleString("en-US")}${fraction ? `.${fraction}` : ""} USDC`;
+function formatAtomic(atomic: string): string {
+  return BigInt(atomic).toLocaleString("en-US");
 }
 
 function initials(value: string): string {

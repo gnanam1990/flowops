@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
 
+let workerPromise;
+
 async function render({ headers = {}, env = {} } = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  workerPromise ??= import(workerUrl.href).then((module) => module.default);
+  const worker = await workerPromise;
   return worker.fetch(
     new Request("http://localhost/", { headers: { accept: "text/html", ...headers } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ...env },
@@ -85,7 +87,8 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
           decision: { reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_live_1" },
           intent: {
             agentId: "agent_live", taskId: "task_live", rail: "X402",
-            recipient: `0x${"1".repeat(40)}`, amountAtomic: "1250000", purpose: "Buy verified dataset",
+            recipient: `0x${"1".repeat(40)}`, asset: `0x${"2".repeat(40)}`,
+            amountAtomic: "1250000", purpose: "Buy verified dataset",
           },
         }],
         agents: [{ id: "agent_live", name: "Research Agent", purpose: "Evidence acquisition", status: "ACTIVE" }],
@@ -115,7 +118,8 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.match(html, /Live control plane/);
   assert.match(html, /Acme Operators/);
   assert.match(html, /Buy verified dataset/);
-  assert.match(html, /1\.25 USDC/);
+  assert.match(html, /1,250,000 atomic/);
+  assert.match(html, /0x2222…2222/);
   assert.match(html, /Ledger aggregates not exposed/);
   assert.match(html, /Monthly usage<\/span><strong>Unavailable/);
   assert.doesNotMatch(html, /On track|Spendable now/);
@@ -138,6 +142,16 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   const substitutedHtml = await substituted.text();
   assert.match(substitutedHtml, /Preview data/);
   assert.doesNotMatch(substitutedHtml, /Acme Operators|Live control plane/);
+
+  const missingBindings = await render({
+    headers: {
+      "oai-authenticated-user-id": "sites-user-opaque",
+      "oai-authenticated-user-email": "owner@example.com",
+    },
+  });
+  const missingBindingsHtml = await missingBindings.text();
+  assert.match(missingBindingsHtml, /Live data is not configured for this deployment/);
+  assert.doesNotMatch(missingBindingsHtml, /Acme Operators|Live control plane/);
 });
 
 test("removes starter content and never claims preview controls executed", async () => {

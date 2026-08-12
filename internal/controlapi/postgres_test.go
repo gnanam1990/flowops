@@ -56,6 +56,30 @@ func TestPostgresAuthenticationReturnsValidatedClaimsAndHidesMisses(t *testing.T
 	_ = now
 }
 
+func TestPostgresCredentialMayUseReservedSessionPrefix(t *testing.T) {
+	store, mock, db := newMockStore(t)
+	defer db.Close()
+	codec, err := NewSiteSessionCodec([]byte(strings.Repeat("k", 32)), time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.siteSessions = codec
+	token := "fos_v1.legacy-static-credential-value"
+	digest := TokenDigest(token)
+	mock.ExpectQuery(`SELECT c.principal_id, c.organization_id, c.principal_kind`).WithArgs(digest[:]).WillReturnRows(
+		sqlmock.NewRows([]string{"principal_id", "organization_id", "principal_kind", "role", "agent_id", "scopes", "step_up_until"}).AddRow(
+			"viewer_a", "org_a", "HUMAN", "VIEWER", nil, []byte(`[]`), nil,
+		),
+	)
+	principal, err := store.Authenticate(context.Background(), token)
+	if err != nil || principal.ID != "viewer_a" {
+		t.Fatalf("prefixed static credential = %+v, %v", principal, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPostgresSiteExchangeAndSessionAreMembershipBound(t *testing.T) {
 	store, mock, db := newMockStore(t)
 	defer db.Close()

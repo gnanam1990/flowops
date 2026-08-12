@@ -55,8 +55,8 @@ func NewSiteSessionCodec(key []byte, ttl time.Duration, clock func() time.Time) 
 	if len(key) != 32 {
 		return nil, errors.New("site session key must contain exactly 32 bytes")
 	}
-	if ttl <= 0 || ttl > 5*time.Minute {
-		return nil, errors.New("site session TTL must be positive and no longer than five minutes")
+	if ttl < time.Second || ttl > 5*time.Minute {
+		return nil, errors.New("site session TTL must be at least one second and no longer than five minutes")
 	}
 	if clock == nil {
 		clock = time.Now

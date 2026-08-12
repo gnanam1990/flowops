@@ -45,6 +45,7 @@ export type Approval = {
   reason: string;
   risk: "low" | "medium" | "high";
   rail: "Direct x402" | "Direct payment" | "Escrowed call";
+  asset?: string;
   policyVersion?: string;
   requestDigest?: string;
   evidenceRefs?: string;
@@ -122,6 +123,7 @@ export const dashboardSnapshot: DashboardSnapshot = {
       reason: "New vendor and amount exceeds the agent’s $100 auto-limit.",
       risk: "medium",
       rail: "Escrowed call",
+      asset: "USDC",
       policyVersion: "pol_v14.2",
       requestDigest: "0x83b1…0ca9",
       evidenceRefs: "EV-APR-2048-02 · BASE-OBS-03",
@@ -138,8 +140,9 @@ export const dashboardSnapshot: DashboardSnapshot = {
       reason: "First purchase from this endpoint version.",
       risk: "low",
       rail: "Direct x402",
+      asset: "USDC",
       policyVersion: "pol_v14.2",
-      requestDigest: "0x83b1…0ca9",
+      requestDigest: "0x4e72…91fd",
       evidenceRefs: "EV-APR-2047-02 · BASE-OBS-03",
     },
     {
@@ -154,8 +157,9 @@ export const dashboardSnapshot: DashboardSnapshot = {
       reason: "Daily vendor cap requires a Finance approver.",
       risk: "medium",
       rail: "Escrowed call",
+      asset: "USDC",
       policyVersion: "pol_v14.2",
-      requestDigest: "0x83b1…0ca9",
+      requestDigest: "0xb650…e712",
       evidenceRefs: "EV-APR-2044-02 · BASE-OBS-03",
     },
   ],

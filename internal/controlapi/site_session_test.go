@@ -45,6 +45,9 @@ func TestSiteSessionRejectsWeakKeysAndInvalidMemberships(t *testing.T) {
 	if _, err := NewSiteSessionCodec(make([]byte, 31), time.Minute, nil); err == nil {
 		t.Fatal("weak session key was accepted")
 	}
+	if _, err := NewSiteSessionCodec(make([]byte, 32), time.Second-time.Nanosecond, nil); err == nil {
+		t.Fatal("unrepresentable sub-second session TTL was accepted")
+	}
 	codec, err := NewSiteSessionCodec(make([]byte, 32), time.Minute, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -75,5 +78,16 @@ func TestSiteUserKeyIsSiteBoundAndEmailDigestIsNormalized(t *testing.T) {
 	}
 	if _, err := normalizedEmailDigest("invalid"); err == nil {
 		t.Fatal("invalid email was accepted")
+	}
+}
+
+func TestOrganizationNameLimitCountsUnicodeCharacters(t *testing.T) {
+	valid := Organization{ID: "org_unicode", Name: strings.Repeat("界", 200)}
+	if !valid.Valid() {
+		t.Fatal("200-character Unicode organization name was rejected")
+	}
+	valid.Name += "界"
+	if valid.Valid() {
+		t.Fatal("201-character organization name was accepted")
 	}
 }
