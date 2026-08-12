@@ -37,6 +37,21 @@ test("returns only a derived owner enrollment code from authenticated Sites iden
   assert.equal(enrollment.email, "owner@example.com");
   assert.match(enrollment.siteUserKey, /^[0-9a-f]{64}$/);
   assert.doesNotMatch(JSON.stringify(enrollment), /sites-user-opaque/);
+
+  const page = await render({
+    path: "/enrollment",
+    headers: {
+      "oai-authenticated-user-id": "sites-user-opaque",
+      "oai-authenticated-user-email": "owner@example.com",
+    },
+    env: { FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test" },
+  });
+  assert.equal(page.status, 200);
+  const pageHtml = await page.text();
+  assert.match(pageHtml, /Sites enrollment identity/);
+  assert.match(pageHtml, /appgprj_flowops_test/);
+  assert.match(pageHtml, /owner@example\.com/);
+  assert.doesNotMatch(pageHtml, /sites-user-opaque/);
 });
 
 test("renders the FlowOps economic control room", async () => {

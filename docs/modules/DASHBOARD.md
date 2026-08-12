@@ -61,6 +61,9 @@ authenticated Sites viewer it returns the configured project ID, Sites email,
 and derived SHA-256 site-user key. It is non-cacheable, never returns the raw
 Sites user ID, and grants no FlowOps access by itself. The endpoint returns 401
 without Sites identity and 503 until the project binding is configured.
+`GET /enrollment` provides the same identity as an authenticated owner-facing
+HTML page so operators can complete bootstrap without raw API navigation. It
+also excludes the raw Sites user ID and grants no control-plane access.
 
 ## Failure states
 
