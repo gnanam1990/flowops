@@ -31,6 +31,8 @@ type ControlSnapshot = {
   chain: {
     state: DashboardSnapshot["chain"]["state"];
     reason: string;
+    requiredObserverQuorum: number;
+    respondingObservers: number;
     lastTrusted?: {
       blockNumber: number;
       observedAt: string;
@@ -183,7 +185,13 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     raw.organization.name.length > 200 ||
     !Array.isArray(raw.pendingApprovals) ||
     !Array.isArray(raw.agents) ||
-    !isChainState(raw.chain?.state)
+    !isChainState(raw.chain?.state) ||
+    !Number.isSafeInteger(raw.chain.requiredObserverQuorum) ||
+    raw.chain.requiredObserverQuorum < 2 ||
+    raw.chain.requiredObserverQuorum > 5 ||
+    !Number.isSafeInteger(raw.chain.respondingObservers) ||
+    raw.chain.respondingObservers < 0 ||
+    raw.chain.respondingObservers > 5
   ) {
     throw new Error("invalid dashboard snapshot");
   }
@@ -205,6 +213,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     throw new Error("invalid checkpoint");
   }
   const checkpointTime = checkpoint ? parseDate(checkpoint.observedAt) : null;
+  const observerProgress = `${raw.chain.respondingObservers} / ${raw.chain.requiredObserverQuorum}`;
   const unavailable = "Not available";
   return {
     mode: "live",
@@ -217,7 +226,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     chain: {
       network: "Base control plane",
       state: raw.chain.state,
-      observers: raw.chain.state === "HEALTHY" ? "Canonical checkpoint trusted" : "Authorizations restricted",
+      observers: raw.chain.state === "HEALTHY" ? `${observerProgress} agree` : `${observerProgress} reporting · authorizations restricted`,
       lastTrustedBlock: checkpoint ? checkpoint.blockNumber.toLocaleString("en-US") : "Unavailable",
       lastTrustedAt: checkpointTime ? age(checkpointTime, new Date()) : "Unavailable",
     },

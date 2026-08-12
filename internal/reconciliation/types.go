@@ -134,6 +134,9 @@ type ChainStatus struct {
 	State                   ChainState  `json:"state"`
 	Reason                  string      `json:"reason"`
 	LastTrusted             *Checkpoint `json:"lastTrusted,omitempty"`
+	RequiredObserverQuorum  int         `json:"requiredObserverQuorum"`
+	RespondingObservers     int         `json:"respondingObservers"`
+	LastObservationAt       time.Time   `json:"lastObservationAt,omitempty"`
 	StateChangedAt          time.Time   `json:"stateChangedAt"`
 	ConsecutiveUnhealthy    int         `json:"consecutiveUnhealthy"`
 	ConsecutiveRecovery     int         `json:"consecutiveRecovery"`

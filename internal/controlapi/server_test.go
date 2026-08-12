@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -222,6 +223,69 @@ type mutableChain struct {
 	status reconciliation.ChainStatus
 }
 
+func (c *mutableChain) ForceHalt(_ context.Context, _ string, reason string) (reconciliation.ChainStatus, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if strings.TrimSpace(reason) == "" {
+		return reconciliation.ChainStatus{}, errors.New("reason is required")
+	}
+	c.status.State = reconciliation.StateHalted
+	c.status.Reason = "manual halt: " + reason
+	c.status.AuthorizationsPaused = true
+	return c.status, nil
+}
+
+func (c *mutableChain) Resume(_ context.Context, operator string) (reconciliation.ChainStatus, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.status.State == reconciliation.StateHealthy && c.status.Reason == "manual recovery release by "+operator {
+		return c.status, nil
+	}
+	if operator == "" || !c.status.ReadyForManualResume {
+		return reconciliation.ChainStatus{}, reconciliation.ErrResumeBlocked
+	}
+	c.status.State = reconciliation.StateHealthy
+	c.status.Reason = "manual recovery release by " + operator
+	c.status.AuthorizationsPaused = false
+	c.status.ReadyForManualResume = false
+	return c.status, nil
+}
+
+func TestOperatorChainControlRequiresDedicatedKeyAndRecoveryReadiness(t *testing.T) {
+	server, _, chain, _, journal, _ := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	client := server.Client()
+	operatorToken := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32)))
+
+	for name, token := range map[string]string{"missing": "", "tenant": ownerTokenA, "wrong": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("x", 32)))} {
+		status, body := doRequest(t, client, http.MethodPost, server.URL+"/v1/operator/chain/halt", token, "", operatorHaltRequest{Operator: "operator_alice", Reason: "drill"})
+		if status != http.StatusUnauthorized || body["error"].(map[string]any)["code"] != "UNAUTHENTICATED" {
+			t.Fatalf("%s operator authentication = %d %+v", name, status, body)
+		}
+	}
+
+	status, body := doRequest(t, client, http.MethodPost, server.URL+"/v1/operator/chain/halt", operatorToken, "", operatorHaltRequest{Operator: "operator_alice", Reason: "provider disagreement drill"})
+	if status != http.StatusOK || body["chain"].(map[string]any)["state"] != string(reconciliation.StateHalted) {
+		t.Fatalf("operator halt = %d %+v", status, body)
+	}
+	status, body = doRequest(t, client, http.MethodPost, server.URL+"/v1/operator/chain/resume", operatorToken, "", operatorResumeRequest{Operator: "operator_alice"})
+	if status != http.StatusConflict || body["error"].(map[string]any)["code"] != "RESUME_BLOCKED" {
+		t.Fatalf("unsafe resume = %d %+v", status, body)
+	}
+
+	chain.mu.Lock()
+	chain.status.State = reconciliation.StateRecovering
+	chain.status.ReadyForManualResume = true
+	chain.mu.Unlock()
+	for attempt := 0; attempt < 2; attempt++ {
+		status, body = doRequest(t, client, http.MethodPost, server.URL+"/v1/operator/chain/resume", operatorToken, "", operatorResumeRequest{Operator: "operator_alice"})
+		if status != http.StatusOK || body["chain"].(map[string]any)["state"] != string(reconciliation.StateHealthy) {
+			t.Fatalf("operator resume attempt %d = %d %+v", attempt, status, body)
+		}
+	}
+}
+
 func newHealthyChain(now time.Time) *mutableChain {
 	return &mutableChain{status: reconciliation.ChainStatus{
 		State: reconciliation.StateHealthy, StateChangedAt: now.Add(-time.Minute),
@@ -370,7 +434,7 @@ func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *
 	ids := &sequenceIDs{}
 	server, err := NewServer(ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: chain, Clock: func() time.Time { return now },
-		IDSource: ids.next, SiteSessions: siteSessions,
+		IDSource: ids.next, SiteSessions: siteSessions, OperatorControlKey: []byte(strings.Repeat("o", 32)),
 	})
 	if err != nil {
 		t.Fatal(err)

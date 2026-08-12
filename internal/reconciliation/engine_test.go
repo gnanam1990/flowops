@@ -297,6 +297,48 @@ func TestObserverDisagreementAndCheckpointRegressionFailClosed(t *testing.T) {
 	}
 }
 
+func TestObserverProgressIsDurableAndManualResumeReplayIsIdempotent(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "observer-progress.log")
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := engine.Observe(context.Background(), healthyObservations(clock.Now(), 800, 801))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.RequiredObserverQuorum != 2 || status.RespondingObservers != 2 || !status.LastObservationAt.Equal(clock.Now()) {
+		t.Fatalf("observer progress = %+v", status)
+	}
+	clock.Add(time.Second)
+	status, err = engine.Observe(context.Background(), healthyObservations(clock.Now(), 801, 802))
+	if err != nil || !status.ReadyForManualResume {
+		t.Fatalf("recovery readiness = %+v, %v", status, err)
+	}
+	first, err := engine.Resume(context.Background(), "operator_alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := engine.Resume(context.Background(), "operator_alice")
+	if err != nil || !equalJSON(first, second) {
+		t.Fatalf("resume replay = %+v, %v", second, err)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	replayed := restarted.Status()
+	if replayed.RequiredObserverQuorum != 2 || replayed.RespondingObservers != 2 || replayed.LastObservationAt.IsZero() {
+		t.Fatalf("replayed observer progress = %+v", replayed)
+	}
+}
+
 func TestExpiredObserverHeartbeatBlocksWithoutWaitingForAnotherPoll(t *testing.T) {
 	t.Parallel()
 	clock := &testClock{now: time.Date(2026, 8, 11, 18, 30, 0, 0, time.UTC)}

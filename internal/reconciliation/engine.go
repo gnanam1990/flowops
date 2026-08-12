@@ -65,7 +65,10 @@ func Open(path string, config Config) (*Engine, error) {
 	now := config.Clock().UTC()
 	engine := &Engine{
 		config: config, journal: journal,
-		status:     ChainStatus{State: StateSuspectedStall, Reason: "startup requires fresh independent Base observations", StateChangedAt: now},
+		status: ChainStatus{
+			State: StateSuspectedStall, Reason: "startup requires fresh independent Base observations",
+			RequiredObserverQuorum: config.ObserverQuorum, StateChangedAt: now,
+		},
 		executions: make(map[string]Execution), executionByHash: make(map[string]string),
 		ledger: make(map[string]LedgerTransaction), balances: make(map[string]map[string]*big.Int),
 	}
@@ -140,6 +143,9 @@ func (e *Engine) Observe(ctx context.Context, observations []Observation) (Chain
 	now := e.config.Clock().UTC()
 	healthy, checkpoint, reason := e.evaluateSnapshot(now, observations)
 	status := cloneStatus(e.status)
+	status.RequiredObserverQuorum = e.config.ObserverQuorum
+	status.RespondingObservers = len(observations)
+	status.LastObservationAt = now
 	if status.State == StateHealthy && !e.trustedFresh(now) {
 		status.State = StateSuspectedStall
 		status.StateChangedAt = now
@@ -237,6 +243,9 @@ func (e *Engine) Resume(ctx context.Context, operator string) (ChainStatus, erro
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.status.State == StateHealthy && e.status.Reason == "manual recovery release by "+operator && e.chainUsable(e.config.Clock().UTC()) {
+		return cloneStatus(e.status), nil
+	}
 	if !e.recoveryReady(e.config.Clock().UTC()) {
 		return ChainStatus{}, ErrResumeBlocked
 	}

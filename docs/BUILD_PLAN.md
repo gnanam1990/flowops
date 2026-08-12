@@ -12,7 +12,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
 5. Control-plane intent and approval lifecycle.
 6. x402 V2 Base Sepolia adapter and Builder Code conformance fixture.
 7. Evidence Fetch provider. **Implementation complete; verification commands are documented in the module contract.**
-8. Base reconciliation and halt-safe state. **Implementation complete; live provider selection and Sepolia threshold measurements remain external gates.**
+8. Base reconciliation and halt-safe state. **Continuous production observer wiring, durable quorum progress, and the manual operator gate are implemented; dedicated provider selection and extended Sepolia threshold measurements remain external gates.**
 9. Escrow contracts after the dispute-state redesign. **Local implementation complete; Base Sepolia deployment, event reconciliation, and external review remain gated.**
 10. Dashboard and operator workflows. **Preview-safe surface and membership-bound live reads implemented; step-up write UX and ledger-backed aggregates remain integration gates.**
 11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, and explicit edge-proxy transport checks are implemented; managed PostgreSQL deployment and Base observer wiring remain live gates.**
@@ -24,7 +24,7 @@ Each item lands as one or more isolated conventional commits with focused tests.
 - FlowOps app/service Builder Code has not been designated.
 - Reference-signer Base Sepolia wallet has not been designated or funded.
 - The hosted-facilitator calldata experiment remains `UNRESOLVED`.
-- Production facilitator and independent Base RPC providers are not selected.
+- Dedicated production facilitator and independent paid Base RPC providers are not selected; the public Sepolia pair is only an integration drill.
 - Base Sepolia escrow deployer, native USDC address verification, deployment window, and external reviewer are not designated.
 - External security and legal reviews have not started.
 - Dashboard live writes are intentionally unavailable until a separate fresh
