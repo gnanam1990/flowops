@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "network": "base-sepolia",
+  "chainId": 84532,
+  "status": "pending-deployment",
+  "designatedDeployer": "0x079bDde909e28E437768A06d7001eb40896668d4",
+  "canonicalUsdc": {
+    "address": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "source": "https://developers.circle.com/stablecoins/usdc-contract-addresses"
+  },
+  "callEscrow": {
+    "address": null,
+    "deploymentTransaction": null,
+    "deploymentBlock": null,
+    "optimisticReleaseWindowSeconds": 3600,
+    "compiler": "solc-0.8.26",
+    "contract": "contracts/src/CallEscrow.sol:CallEscrow",
+    "sourceVerificationUrl": null,
+    "runtimeCodeHash": null
+  },
+  "mainnetApproved": false,
+  "notes": "No live deployment is claimed until the transaction is canonically confirmed and this record is updated from explorer evidence."
+}
