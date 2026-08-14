@@ -1,6 +1,7 @@
 # Evidence Fetch module
 
-Status: implemented locally; public paid route not yet enabled
+Status: implemented locally and delivered through a live Base Sepolia
+CallEscrow release; public paid route not yet enabled
 
 Package: `internal/evidencefetch`
 
@@ -76,3 +77,7 @@ The test suite covers direct IP and DNS-based SSRF, mixed public/private DNS ans
 - allowlisted selector or schema extraction.
 
 These are explicit later-module dependencies, not behavior claimed by this module.
+
+The live delivery output, digest derivation, and four-transition escrow manifest
+are recorded in
+`docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_LIVE_2026-08-14.md`.

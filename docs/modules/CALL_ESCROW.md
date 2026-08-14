@@ -1,8 +1,9 @@
 # CallEscrow Module Contract
 
-Status: local implementation, verified Base Sepolia deployment, and read-only
-lifecycle receipt verifier complete; live lifecycle and mainnet gates remain open
-Date: 2026-08-11
+Status: local implementation, verified Base Sepolia deployment, read-only
+lifecycle receipt verifier, and live Evidence Fetch release complete;
+forced-expiry and mainnet gates remain open
+Date: 2026-08-14
 
 ## Purpose and promise
 
@@ -80,8 +81,11 @@ The current local suite includes 21 unit/fuzz tests and three stateful invariant
 
 ## Remaining gates
 
-- Exercise successful Evidence Fetch release and forced-failure refund with canonical receipt/log reconciliation.
+- Exercise a forced-failure refund with canonical receipt/log reconciliation.
 - Wire the completed escrow-specific event decoder into durable intent
   registration and reorg correction; the current conformance command is
   deliberately read-only.
 - Complete independent security and legal review before any Base mainnet deployment or non-trivial value.
+
+The successful Evidence Fetch lifecycle and reproducible manifest are recorded
+in `docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_LIVE_2026-08-14.md`.

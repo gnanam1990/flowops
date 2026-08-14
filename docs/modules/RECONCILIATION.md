@@ -1,8 +1,9 @@
 # Base reconciliation and halt-safety module
 
 Status: production observer, signer receipt registration, receipt/finality
-worker wiring, and read-only CallEscrow lifecycle conformance implemented;
-dedicated provider selection and Sepolia measurement remain open
+worker wiring, read-only CallEscrow lifecycle conformance, and one live
+Evidence Fetch release manifest complete; dedicated provider selection and
+Sepolia measurement remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
@@ -153,6 +154,10 @@ The manifest is local evidence, not a signing file. It uses canonical lowercase
 addresses and hashes, atomic integer USDC amounts, the complete immutable call
 snapshot repeated for each transition, and each already-broadcast transaction
 hash. Do not commit a pilot manifest until every field and receipt is verified.
+
+The first committed successful-release manifest and its exact Evidence Fetch
+response are documented in
+`docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_LIVE_2026-08-14.md`.
 
 ## Ledger invariants
 
