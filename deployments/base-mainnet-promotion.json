@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "status": "blocked-unassigned",
+  "reviewedSourceCommit": null,
+  "signing": {
+    "walletType": null,
+    "derivationPath": null,
+    "deployer": null,
+    "ownershipAttestationSha256": null,
+    "recoveryRunbookApproved": false
+  },
+  "externalReviewSha256": null,
+  "sourceVerification": {
+    "rehearsalRecord": "deployments/base-mainnet-source-rehearsal.json",
+    "approved": false
+  },
+  "broadcastApproval": {
+    "approved": false,
+    "approvalSha256": null,
+    "approvedAt": null,
+    "expiresAt": null,
+    "expectedDeployerNonce": null,
+    "maximumGasLimit": null,
+    "maximumFeePerGasWei": null,
+    "maximumPriorityFeePerGasWei": null,
+    "maximumTotalGasWei": null
+  },
+  "notes": "No production deployer is designated. A future promotion PR must bind a new Ledger or Trezor identity, reviewed source commit, independent review, source-verification approval, recovery runbook, and a fresh gas-capped zero-fund broadcast approval."
+}

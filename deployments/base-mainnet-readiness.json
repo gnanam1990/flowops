@@ -18,6 +18,7 @@
     "deploymentTransaction": null,
     "deploymentBlock": null,
     "reviewedSourceCommit": null,
+    "minimumDeploymentConfirmations": null,
     "optimisticReleaseWindowSeconds": 3600,
     "compiler": "0.8.26",
     "optimizerRuns": 200,
@@ -37,6 +38,8 @@
     "productionRpcAdmissionImplemented": true,
     "independentPaidRpcProviders": false,
     "referenceSignerFundedSepoliaProof": false,
+    "hardwareWalletCeremonyImplemented": true,
+    "sourceVerificationPlanImplemented": true,
     "sourceVerificationPlanApproved": false,
     "explicitBroadcastApproval": false
   },

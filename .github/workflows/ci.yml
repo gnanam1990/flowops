@@ -43,6 +43,8 @@ jobs:
         run: make test-deployment-evidence
       - name: Validate Base mainnet readiness remains blocked
         run: make test-mainnet-readiness
+      - name: Validate Base mainnet deployer and source ceremony
+        run: make test-mainnet-deployer-verification
       - name: Install dashboard dependencies
         run: npm ci --prefix apps/dashboard
       - name: Audit dashboard runtime dependencies
