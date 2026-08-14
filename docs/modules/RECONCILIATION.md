@@ -1,8 +1,8 @@
 # Base reconciliation and halt-safety module
 
-Status: production observer, signer receipt registration, and receipt/finality
-worker wiring implemented; dedicated provider selection and Sepolia measurement
-remain open
+Status: production observer, signer receipt registration, receipt/finality
+worker wiring, and read-only CallEscrow lifecycle conformance implemented;
+dedicated provider selection and Sepolia measurement remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
@@ -15,6 +15,8 @@ Receipt/finality runtime: `internal/reconciliation.Worker`, started by
 `cmd/control-plane-api`
 
 Operator client: `cmd/flowops-operator`
+
+Escrow lifecycle verifier: `cmd/escrow-conformance`
 
 ## Purpose
 
@@ -114,6 +116,44 @@ at that depth triggers the exact correction path. Reorganizations deeper than
 the configured lookback remain an explicitly accepted residual risk for the
 capped pilot and require operator incident handling.
 
+## CallEscrow lifecycle evidence
+
+The read-only escrow adapter accepts a completed, strict lifecycle manifest and
+queries two to five independent Base RPC providers for every transaction. It
+does not accept a wallet key and cannot sign, submit, retry, release, or refund.
+
+For every successful transition it binds the canonical transaction and block to
+the deployed escrow contract, asset, call ID, buyer, provider, amount, task and
+request digests, deadlines, delivery digests, release path, or refund origin as
+applicable. Funding, release, and refund require exactly one matching USDC
+`Transfer` before exactly one matching CallEscrow transition event. Removed,
+duplicated, substituted, out-of-order, reverted, under-confirmed, or
+provider-disputed evidence is refused.
+
+The manifest accepts only these state paths:
+
+- `FUND -> REFUND` from `Funded`;
+- `FUND -> ACKNOWLEDGE -> REFUND` from `Acknowledged`; or
+- `FUND -> ACKNOWLEDGE -> DELIVER -> RELEASE`.
+
+The CLI proves a capped-pilot lifecycle after transactions already exist. It is
+not yet wired into the durable execution journal or ledger, so it must not be
+described as automated production escrow reconciliation.
+
+Run the completed manifest against independent public endpoints with:
+
+```sh
+go run ./cmd/escrow-conformance \
+  -manifest /path/to/local-lifecycle.json \
+  -rpc alpha=https://FIRST_PUBLIC_BASE_RPC \
+  -rpc beta=https://SECOND_INDEPENDENT_BASE_RPC
+```
+
+The manifest is local evidence, not a signing file. It uses canonical lowercase
+addresses and hashes, atomic integer USDC amounts, the complete immutable call
+snapshot repeated for each transition, and each already-broadcast transaction
+hash. Do not commit a pilot manifest until every field and receipt is verified.
+
 ## Ledger invariants
 
 - All amounts are canonical signed integer base units; zero, decimals, floats, and non-canonical encodings are rejected.
@@ -140,6 +180,7 @@ capped pilot and require operator incident handling.
 ```sh
 go test -race ./internal/reconciliation ./internal/controlplane ./internal/controlapi ./pkg/referencesigner ./pkg/broadcastreceipt
 make smoke-reconciliation
+make smoke-escrow-reconciliation
 ```
 
 The smoke drill enters healthy state, registers a broadcast, simulates responsive-but-stale observers, reaches `HALTED`, proves stale finalization/refund/rebroadcast are refused, resumes observations, reconciles one canonical outcome, and requires manual release without double-posting.
@@ -163,7 +204,10 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
 - select and contractually assess at least two production Base RPC providers;
 - complete and record the multi-hour Sepolia confirmation, stall-age,
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
-- add contract-specific escrow event reconciliation after the escrow state machine is finalized;
+- register escrow transaction intents before broadcast, persist transition
+  evidence in the durable journal, and add reorg correction to the continuous
+  worker; the current strict decoder and multi-RPC conformance command are
+  read-only;
 - add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
 - implement concrete EOA/HSM wallet adapters and runnable customer-side signer
   packaging; the deployed no-funds pilot worker remains idle until a

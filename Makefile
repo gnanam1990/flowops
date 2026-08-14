@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow smoke-escrow-deployment
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow smoke-escrow-deployment smoke-escrow-reconciliation
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -57,3 +57,6 @@ smoke-escrow:
 
 smoke-escrow-deployment:
 	forge test --match-path contracts/test/DeployCallEscrowBaseSepolia.t.sol -vv
+
+smoke-escrow-reconciliation:
+	go test -race -run '^(TestObserverSetDecodesCompleteEscrowReleaseLifecycle|TestObserverSetDecodesBothEscrowRefundPaths|TestEscrowReceiptRejectsSubstitutionDuplicateAndWrongLogOrder)$$' ./internal/reconciliation

@@ -1,6 +1,7 @@
 # CallEscrow Module Contract
 
-Status: local implementation and Base Sepolia deployment package complete; live Base Sepolia and mainnet gates remain open
+Status: local implementation, verified Base Sepolia deployment, and read-only
+lifecycle receipt verifier complete; live lifecycle and mainnet gates remain open
 Date: 2026-08-11
 
 ## Purpose and promise
@@ -79,12 +80,8 @@ The current local suite includes 21 unit/fuzz tests and three stateful invariant
 
 ## Remaining gates
 
-- Execute the prepared Base Sepolia deployment ceremony from Wallet 1 and fill
-  the pending versioned registry only after canonical confirmation.
-- Reconfirm Circle's native Base Sepolia USDC address and bytecode at the
-  deployment window; the prepared script pins the address verified on
-  2026-08-13.
 - Exercise successful Evidence Fetch release and forced-failure refund with canonical receipt/log reconciliation.
-- Add escrow-specific event decoding and reorg correction to the reconciliation module.
-- Record compiler input, constructor arguments, deployed/runtime bytecode, verification URL, and transaction hash.
+- Wire the completed escrow-specific event decoder into durable intent
+  registration and reorg correction; the current conformance command is
+  deliberately read-only.
 - Complete independent security and legal review before any Base mainnet deployment or non-trivial value.
