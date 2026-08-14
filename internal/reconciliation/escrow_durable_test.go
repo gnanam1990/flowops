@@ -2,11 +2,83 @@ package reconciliation
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
+
+func TestAttestedEscrowBroadcastPersistsExactCustomerProofDuringChainPause(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 8, 14, 18, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "reconciliation.log")
+	engine, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := durableEscrowIntent(t)
+	attestation := durableEscrowAttestation(t, intent, testHash(199), clock.Now().Add(-10*time.Minute))
+	wrongIdentity := intent
+	wrongIdentity.AgentID = "agent_other"
+	if _, err := engine.RegisterAttestedEscrowBroadcast(context.Background(), wrongIdentity, EscrowTransitionCandidate{Action: EscrowFund, TransactionHash: testHash(199)}, attestation); err == nil {
+		t.Fatal("attestation accepted a substituted durable intent identity")
+	}
+	call, err := engine.RegisterAttestedEscrowBroadcast(context.Background(), intent, EscrowTransitionCandidate{Action: EscrowFund, TransactionHash: testHash(199)}, attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.Pending == nil || call.Pending.State != EscrowTransitionPendingRecovery || call.Pending.BroadcastAttestation == nil || !equalJSON(*call.Pending.BroadcastAttestation, attestation) {
+		t.Fatalf("attested pending call = %+v", call)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := Open(path, testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	replayed, ok := restarted.EscrowCall(intent.OrganizationID, intent.CallID)
+	if !ok || replayed.Pending == nil || replayed.Pending.BroadcastAttestation == nil || !equalJSON(*replayed.Pending.BroadcastAttestation, attestation) {
+		t.Fatalf("replayed attestation = %+v ok=%v", replayed, ok)
+	}
+	changed := attestation
+	changed.Authorization.AmountAtomic = "101"
+	if _, err := restarted.RegisterAttestedEscrowBroadcast(context.Background(), intent, EscrowTransitionCandidate{Action: EscrowFund, TransactionHash: testHash(199)}, changed); err == nil {
+		t.Fatal("substituted escrow attestation accepted")
+	}
+}
+
+func TestAttestedEscrowBroadcastReplayAfterResolutionReturnsOriginalProof(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 8, 14, 18, 30, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reconciliation.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 400)
+	intent := durableEscrowIntent(t)
+	transactionHash := testHash(401)
+	attestation := durableEscrowAttestation(t, intent, transactionHash, clock.Now())
+	call, err := engine.RegisterAttestedEscrowBroadcast(context.Background(), intent, EscrowTransitionCandidate{Action: EscrowFund, TransactionHash: transactionHash}, attestation)
+	if err != nil || call.Pending == nil {
+		t.Fatalf("registration = %+v, %v", call, err)
+	}
+	call, err = engine.ReconcileEscrowTransition(context.Background(), intent.CallID, durableEscrowEvidence(call.Pending.Expected, 401))
+	if err != nil || len(call.Transitions) != 1 || call.Transitions[0].BroadcastAttestation == nil {
+		t.Fatalf("resolution = %+v, %v", call, err)
+	}
+	replay, err := engine.RegisterAttestedEscrowBroadcast(context.Background(), intent, EscrowTransitionCandidate{Action: EscrowFund, TransactionHash: transactionHash}, attestation)
+	if err != nil || replay.Pending != nil || len(replay.Transitions) != 1 || replay.Transitions[0].BroadcastAttestation == nil || !equalJSON(*replay.Transitions[0].BroadcastAttestation, attestation) {
+		t.Fatalf("resolved replay = %+v, %v", replay, err)
+	}
+}
 
 func TestDurableEscrowReleaseLifecyclePostsCanonicalLedgerAndSurvivesRestart(t *testing.T) {
 	t.Parallel()
@@ -572,6 +644,34 @@ func durableEscrowIntent(t *testing.T) EscrowIntent {
 		AmountAtomic: "100", TaskDigest: task, RequestDigest: request,
 		AcknowledgeBy: 1_800_000_000, DeliverBy: 1_800_003_600, ReleaseWindow: 3600,
 	}
+}
+
+func durableEscrowAttestation(t *testing.T, intent EscrowIntent, transactionHash string, broadcastAt time.Time) EscrowBroadcastAttestation {
+	t.Helper()
+	authorization := envelope.Authorization{
+		Version: envelope.Version, AuthorizationID: intent.AuthorizationID, OrganizationID: intent.OrganizationID, CustomerID: intent.CustomerID,
+		AgentID: intent.AgentID, TaskID: intent.TaskID, ActionID: "action_fetch", Rail: envelope.RailEscrow,
+		ChainID: intent.ChainID, Recipient: intent.Provider, Asset: intent.Asset, AmountAtomic: intent.AmountAtomic,
+		Resource: "evidence-fetch", PolicyVersion: "policy_escrow", Nonce: testHash(997),
+		IssuedAt: broadcastAt.Add(-time.Minute).Unix(), ExpiresAt: broadcastAt.Add(time.Minute).Unix(),
+		Escrow: &envelope.EscrowTerms{Contract: intent.Contract, Buyer: intent.Buyer, Provider: intent.Provider, CallID: intent.CallID,
+			TaskDigest: intent.TaskDigest, RequestDigest: intent.RequestDigest, AcknowledgeBy: intent.AcknowledgeBy, DeliverBy: intent.DeliverBy, ReleaseWindow: intent.ReleaseWindow},
+	}
+	digest, err := authorization.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, _ := hex.DecodeString(strings.Repeat("5a", ed25519.SeedSize))
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	receipt, err := broadcastreceipt.Sign(broadcastreceipt.Receipt{
+		Version: broadcastreceipt.Version, OrganizationID: intent.OrganizationID, CustomerID: intent.CustomerID,
+		AuthorizationID: intent.AuthorizationID, AuthorizationDigest: "0x" + hex.EncodeToString(digest[:]), TransactionHash: transactionHash,
+		Sender: intent.Buyer, Outcome: broadcastreceipt.OutcomeAmbiguous, BroadcastAt: broadcastAt.Unix(),
+	}, "receipt_escrow", privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return EscrowBroadcastAttestation{SignedReceipt: receipt, Authorization: authorization, PublicKeyB64: base64.StdEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey))}
 }
 
 func reconcileEscrowCandidate(t *testing.T, engine *Engine, intent EscrowIntent, candidate EscrowTransitionCandidate, block uint64) EscrowCall {

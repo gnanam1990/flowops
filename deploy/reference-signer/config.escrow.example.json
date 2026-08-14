@@ -2,40 +2,26 @@
   "version": "flowops.reference-signer.v3",
   "organizationId": "replace-org",
   "customerId": "replace-customer",
-  "trustKeys": [
-    {
-      "keyId": "replace-flowops-key",
-      "publicKeyB64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-    }
-  ],
+  "trustKeys": [{"keyId": "replace-flowops-key", "publicKeyB64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}],
   "chainId": 84532,
-  "rail": "direct_usdc",
-  "asset": "0x1111111111111111111111111111111111111111",
-  "allowedRecipients": [
-    "0x2222222222222222222222222222222222222222"
-  ],
+  "rail": "escrow",
+  "asset": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+  "escrowContract": "0x86e145397f58e71c134c0e054320db929483227a",
+  "escrowReleaseWindowSeconds": 3600,
+  "allowedRecipients": ["0xc2f0967c4df966636e4ac1dad40abda65536cbb6"],
   "maxAmountAtomic": "1000000",
   "maxOutstandingAtomic": "10000000",
   "maxTtlSeconds": 300,
   "maxFutureSkewSeconds": 5,
-  "baseRpcProviders": [
-    {
-      "name": "provider-a",
-      "url": "https://replace-provider-a.example"
-    },
-    {
-      "name": "provider-b",
-      "url": "https://replace-provider-b.example"
-    }
-  ],
+  "baseRpcProviders": [{"name": "provider-a", "url": "https://replace-provider-a.example"}, {"name": "provider-b", "url": "https://replace-provider-b.example"}],
   "primaryBaseRpc": "provider-a",
   "observerQuorum": 2,
   "maxHeadSkew": 2,
   "stallThresholdSeconds": 120,
   "maxFutureBlockSkewSeconds": 5,
   "walletRpcUrl": "http://127.0.0.1:8550",
-  "sender": "0x3333333333333333333333333333333333333333",
-  "maxGasLimit": 100000,
+  "sender": "0x079bdde909e28e437768a06d7001eb40896668d4",
+  "maxGasLimit": 500000,
   "maxFeePerGasWei": "10000000000",
   "maxPriorityFeePerGasWei": "2000000000",
   "nonceJournalPath": "/var/lib/flowops/nonces.log",

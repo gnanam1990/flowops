@@ -112,6 +112,67 @@ func TestReferenceSignerNoFundsEndToEnd(t *testing.T) {
 	transport.mu.Unlock()
 }
 
+func TestReferenceSignerEscrowNoFundsEndToEnd(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	flowPublic, flowPrivate, _ := ed25519.GenerateKey(nil)
+	_, receiptPrivate, _ := ed25519.GenerateKey(nil)
+	walletKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	receiptPath := filepath.Join(dir, "receipt.key")
+	freezePath := filepath.Join(dir, "freeze.json")
+	writePrivate(t, receiptPath, base64.StdEncoding.EncodeToString(receiptPrivate)+"\n")
+	writePrivate(t, freezePath, `{"version":"flowops.freeze.v1","organizationFrozen":false,"frozenAgents":[],"frozenTasks":[]}`)
+	config := validConfig(dir, flowPublic, walletKey, receiptPath, freezePath)
+	config.Rail = envelope.RailEscrow
+	config.EscrowContract = "0x4444444444444444444444444444444444444444"
+	config.EscrowReleaseWindow = 3600
+	config.MaxGasLimit = 500_000
+	configPath := filepath.Join(dir, "config.json")
+	rawConfig, _ := json.Marshal(config)
+	writePrivate(t, configPath, string(rawConfig))
+
+	buyer := config.Sender
+	taskDigest := "0x" + strings.Repeat("c", 64)
+	requestDigest := "0x" + strings.Repeat("d", 64)
+	callID, err := envelope.DeriveEscrowCallID(84532, config.EscrowContract, buyer, taskDigest, requestDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := envelope.Authorization{
+		Version: envelope.Version, AuthorizationID: "auth-escrow-e2e", OrganizationID: "org-1", CustomerID: "customer-1",
+		AgentID: "agent-1", TaskID: "task-1", ActionID: "action-1", Rail: envelope.RailEscrow,
+		ChainID: 84532, Recipient: config.AllowedRecipients[0], Asset: config.Asset, AmountAtomic: "100000",
+		Resource: "evidence-fetch", PolicyVersion: "policy-1", Nonce: "0x" + strings.Repeat("e", 64),
+		IssuedAt: now.Add(-time.Second).Unix(), ExpiresAt: now.Add(2 * time.Minute).Unix(),
+		Escrow: &envelope.EscrowTerms{Contract: config.EscrowContract, Buyer: buyer, Provider: config.AllowedRecipients[0], CallID: callID,
+			TaskDigest: taskDigest, RequestDigest: requestDigest, AcknowledgeBy: uint64(now.Add(3 * time.Minute).Unix()),
+			DeliverBy: uint64(now.Add(10 * time.Minute).Unix()), ReleaseWindow: 3600},
+	}
+	signed, err := envelope.Sign(authorization, "flowops-1", flowPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(signed)
+	transport := &signerTransport{t: t, now: now, walletKey: walletKey}
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"execute", configPath}, bytes.NewReader(input), &output, client); err != nil {
+		t.Fatal(err)
+	}
+	var summary attemptSummary
+	if err := json.Unmarshal(output.Bytes(), &summary); err != nil || summary.State != "REGISTERED" || !summary.Registered {
+		t.Fatalf("summary=%+v err=%v", summary, err)
+	}
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	if transport.signCalls != 1 || transport.broadcastCalls != 1 || transport.registrationCalls != 1 {
+		t.Fatalf("calls sign=%d broadcast=%d registration=%d", transport.signCalls, transport.broadcastCalls, transport.registrationCalls)
+	}
+}
+
 func TestValidateConfigRejectsNestedDuplicateAndUnsafePermissions(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
@@ -132,7 +193,7 @@ func TestLoadConfigPinsInitialBaseMainnetPilotLimits(t *testing.T) {
 	dir := t.TempDir()
 	config := fileConfig{
 		Version: configVersion, OrganizationID: "org-1", CustomerID: "customer-1", ReceiptKeyID: "receipt-1",
-		ChainID: 8453, MaxAmountAtomic: "1000000", MaxOutstandingAtomic: "10000001",
+		ChainID: 8453, Rail: envelope.RailDirect, MaxAmountAtomic: "1000000", MaxOutstandingAtomic: "10000001",
 		MaxTTLSeconds: 300, MaxFutureSkewSeconds: 5, StallThresholdSeconds: 120,
 		MaxFutureBlockSkewSeconds: 5, RequestTimeoutSeconds: 2, ObserverQuorum: 2,
 		NonceJournalPath: filepath.Join(dir, "nonces.log"), AttemptJournalPath: filepath.Join(dir, "attempts.log"),
@@ -152,13 +213,48 @@ func TestLoadConfigRejectsLegacyV1AfterRequiredLimitMigration(t *testing.T) {
 	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "config version") {
 		t.Fatalf("legacy config error = %v", err)
 	}
+	writePrivate(t, path, `{"version":"flowops.reference-signer.v2","organizationId":"org-1","customerId":"customer-1","receiptKeyId":"receipt-1","maxAmountAtomic":"1000000","maxOutstandingAtomic":"10000000"}`)
+	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "config version") {
+		t.Fatalf("legacy v2 config error = %v", err)
+	}
+}
+
+func TestLoadConfigRequiresOneExplicitRailAndEscrowTuple(t *testing.T) {
+	dir := t.TempDir()
+	base := fileConfig{
+		Version: configVersion, OrganizationID: "org-1", CustomerID: "customer-1", ReceiptKeyID: "receipt-1",
+		ChainID: 84532, MaxAmountAtomic: "1000000", MaxOutstandingAtomic: "10000000",
+		MaxTTLSeconds: 300, MaxFutureSkewSeconds: 5, StallThresholdSeconds: 120,
+		MaxFutureBlockSkewSeconds: 5, RequestTimeoutSeconds: 2, ObserverQuorum: 2,
+		NonceJournalPath: filepath.Join(dir, "nonces.log"), AttemptJournalPath: filepath.Join(dir, "attempts.log"),
+	}
+	for name, mutate := range map[string]func(*fileConfig){
+		"missing rail":         func(*fileConfig) {},
+		"escrow missing tuple": func(c *fileConfig) { c.Rail = envelope.RailEscrow },
+		"direct with tuple": func(c *fileConfig) {
+			c.Rail = envelope.RailDirect
+			c.EscrowContract = "0x4444444444444444444444444444444444444444"
+			c.EscrowReleaseWindow = 3600
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := base
+			mutate(&config)
+			raw, _ := json.Marshal(config)
+			path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
+			writePrivate(t, path, string(raw))
+			if _, err := loadConfig(path); err == nil {
+				t.Fatal("unsafe rail configuration accepted")
+			}
+		})
+	}
 }
 
 func validConfig(dir string, flowPublic ed25519.PublicKey, walletKey *ecdsa.PrivateKey, receiptPath, freezePath string) fileConfig {
 	return fileConfig{
 		Version: configVersion, OrganizationID: "org-1", CustomerID: "customer-1",
 		TrustKeys: []trustKeyConfig{{KeyID: "flowops-1", PublicKeyB64: base64.StdEncoding.EncodeToString(flowPublic)}},
-		ChainID:   84532, Asset: "0x1111111111111111111111111111111111111111",
+		ChainID:   84532, Rail: envelope.RailDirect, Asset: "0x1111111111111111111111111111111111111111",
 		AllowedRecipients: []string{"0x2222222222222222222222222222222222222222"}, MaxAmountAtomic: "10000000",
 		MaxOutstandingAtomic: "50000000",
 		MaxTTLSeconds:        300, MaxFutureSkewSeconds: 5,
@@ -202,7 +298,9 @@ func (s *signerTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	case "eth_getBlockByNumber":
 		result = map[string]any{"number": "0x64", "hash": "0x" + strings.Repeat("1", 64), "timestamp": "0x" + big.NewInt(s.now.Unix()).Text(16), "baseFeePerGas": "0x3b9aca00"}
 	case "eth_call":
-		result = "0x" + strings.Repeat("0", 63) + "1"
+		result = s.ethCallResult(call.Params)
+	case "eth_getCode":
+		result = "0x6000"
 	case "eth_getTransactionCount":
 		result = "0x1"
 	case "eth_maxPriorityFeePerGas":
@@ -229,6 +327,30 @@ func (s *signerTransport) RoundTrip(request *http.Request) (*http.Response, erro
 		s.t.Fatalf("unexpected RPC method %s", call.Method)
 	}
 	return jsonResponse(request, map[string]any{"jsonrpc": "2.0", "id": 1, "result": result}), nil
+}
+
+func (s *signerTransport) ethCallResult(params []json.RawMessage) string {
+	if len(params) == 0 {
+		s.t.Fatal("eth_call missing transaction")
+	}
+	var args struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(params[0], &args); err != nil {
+		s.t.Fatal(err)
+	}
+	selector := func(signature string) string { return hex.EncodeToString(crypto.Keccak256([]byte(signature))[:4]) }
+	switch strings.TrimPrefix(args.Data, "0x") {
+	case selector("asset()"):
+		return "0x" + strings.Repeat("0", 24) + strings.Repeat("1", 40)
+	case selector("optimisticReleaseWindow()"):
+		return "0x" + hex.EncodeToString(common.LeftPadBytes(big.NewInt(3600).Bytes(), 32))
+	default:
+		if strings.HasPrefix(strings.TrimPrefix(args.Data, "0x"), selector("allowance(address,address)")) {
+			return "0x" + hex.EncodeToString(common.LeftPadBytes(big.NewInt(100_000).Bytes(), 32))
+		}
+		return "0x"
+	}
 }
 
 func (s *signerTransport) sign(raw json.RawMessage) map[string]any {
@@ -261,6 +383,9 @@ func (s *signerTransport) register(request *http.Request) *http.Response {
 	var receipt broadcastreceipt.SignedReceipt
 	if err := json.NewDecoder(request.Body).Decode(&receipt); err != nil {
 		s.t.Fatal(err)
+	}
+	if request.URL.Path == "/v1/signer/escrow-broadcasts" {
+		return jsonResponse(request, map[string]any{"call": map[string]any{"pending": map[string]any{"expected": map[string]any{"transactionHash": receipt.Receipt.TransactionHash}, "broadcastAttestation": map[string]any{"signedReceipt": receipt}}}})
 	}
 	return jsonResponse(request, map[string]any{"execution": map[string]any{"expected": map[string]any{"transactionHash": receipt.Receipt.TransactionHash}, "broadcastAttestation": map[string]any{"signedReceipt": receipt}}})
 }

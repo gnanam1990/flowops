@@ -124,6 +124,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("create escrow registrar: %w", err)
 	}
 	var signerBroadcasts controlapi.BroadcastRegistrar
+	var signerEscrowBroadcasts controlapi.EscrowBroadcastRegistrar
 	if len(cfg.signerReceiptKeys) > 0 {
 		keys, err := controlapi.NewStaticBroadcastKeys(cfg.signerReceiptKeys)
 		if err != nil {
@@ -132,6 +133,10 @@ func run(ctx context.Context) error {
 		signerBroadcasts, err = controlapi.NewSignerBroadcastRegistrar(lifecycle, keys, reconciliationEngine, nil)
 		if err != nil {
 			return fmt.Errorf("create customer signer broadcast registrar: %w", err)
+		}
+		signerEscrowBroadcasts, err = controlapi.NewSignerEscrowBroadcastRegistrar(lifecycle, keys, reconciliationEngine, nil)
+		if err != nil {
+			return fmt.Errorf("create customer signer escrow broadcast registrar: %w", err)
 		}
 	}
 	observers, err := reconciliation.NewObserverSet(cfg.observerConfig.ChainID, cfg.observerRPCs, nil, nil)
@@ -158,7 +163,7 @@ func run(ctx context.Context) error {
 	}
 	api, err := controlapi.NewServer(controlapi.ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
-		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts, Escrow: escrowRegistrar,
+		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
 	})
 	if err != nil {
 		return err

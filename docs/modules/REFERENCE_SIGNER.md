@@ -1,10 +1,9 @@
 # Customer reference signer
 
 Status: verifier, durable nonce store, one-way executor, signed receipt,
-strict callback transport, Clef direct-USDC adapter, and runnable command
-implemented; independent durable direct-USDC pilot exposure limits are
-enforced; escrow execution and live Base Sepolia execution remain separately
-approved and open
+strict rail-specific callback transport, Clef direct-USDC and CallEscrow FUND adapters, and runnable command
+implemented; independent durable signer pilot exposure limits are
+enforced; funded Base Sepolia escrow execution remains separately approved and open
 
 Packages: `pkg/referencesigner`, `pkg/referencewallet`
 Command: `cmd/reference-signer`
@@ -22,7 +21,7 @@ and a Base transaction.
 - exact local organization/customer identity, chain, rail, asset, recipient,
   amount, TTL, freeze, and chain-health policy;
 - a customer-run Clef-compatible wallet that prepares one exact signed
-  direct-USDC transaction without exposing its key; and
+  direct-USDC transfer or CallEscrow FUND without exposing its key; and
 - a separate customer Ed25519 key used only to attest the broadcast result.
 
 ## Internal behavior
@@ -69,16 +68,16 @@ and FlowOps transports. It validates a real signed EIP-1559 transaction but
 never contacts Base or moves funds.
 
 The required aggregate cap changed the strict file schema to
-`flowops.reference-signer.v2`. Version `v1` is rejected rather than guessed;
-operators must add `maxOutstandingAtomic`, review the value, and explicitly
-update the version before restarting.
+`flowops.reference-signer.v3`. Versions `v1` and `v2` are rejected rather than
+guessed; operators must select exactly one `rail`, and escrow mode must pin the
+reviewed contract and immutable release window.
 
 ## Remaining integration gate
 
-Independently review the direct-USDC adapter and runnable command, then execute a separately
-approved, capped Base Sepolia test with a designated customer wallet and
+Independently review both adapters and the runnable command, then execute a separately
+approved, capped Base Sepolia escrow test with a designated customer wallet and
 configured receipt public key. This module does not authorize that funded test
 by itself, and mainnet remains blocked.
 
-The command currently rejects `escrow` and `x402`. Do not cite its direct-USDC
-pilot gate as CallEscrow limit enforcement.
+The command rejects `x402`. Escrow readiness remains false until the funded
+reference-signer Sepolia path is canonically reconciled.

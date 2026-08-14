@@ -92,8 +92,10 @@ and amount itself; the signer supplies only its signed transaction hash, sender,
 outcome, and broadcast time. One authorization deterministically maps to one
 execution. A callback arriving after a chain halt is retained as
 `PENDING_CHAIN_RECOVERY`, because the wallet may already have submitted it.
-This intake is restricted to `direct_usdc`; x402 facilitator settlements and
-escrow calls require their own protocol-aware registration and event decoders.
+The escrow signer posts the same proof shape to
+`POST /v1/signer/escrow-broadcasts`; FlowOps binds it to the exact issued
+escrow terms and registers only a FUND candidate. x402 facilitator settlements
+still require their own protocol-aware registration.
 The hash-chained execution event preserves the exact authorization, signed
 receipt, and verifying public key. The reconciliation engine independently
 recomputes the authorization digest, re-verifies the signature, and matches all
@@ -225,12 +227,12 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
 - select and contractually assess at least two production Base RPC providers;
 - complete and record the multi-hour Sepolia confirmation, stall-age,
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
-- implement a customer-side escrow executor that independently validates the
-  signed terms and exact calldata before wallet access; the current reference
-  signer still rejects escrow and the registry itself never broadcasts;
+- complete the separately approved funded Sepolia proof for the customer-side
+  escrow executor; local tests already validate signed terms and exact calldata,
+  and the registry itself never broadcasts;
 - add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
-- implement concrete EOA/HSM wallet adapters and runnable customer-side signer
-  packaging; the deployed no-funds pilot worker remains idle until a
+- assess and document production Clef/HSM operations for the runnable
+  customer-side signer packaging; the deployed no-funds pilot worker remains idle until a
   design partner provisions a signer receipt public key and supplies a real
   transaction;
 - expose status, exceptions, backfill progress, and manual gates in the dashboard;

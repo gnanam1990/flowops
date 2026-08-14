@@ -92,7 +92,7 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 // intentionally idempotent: once BROADCASTING is durable, no call path can
 // invoke WalletAdapter.Broadcast for that authorization again.
 func (e *Executor) Execute(ctx context.Context, signed envelope.SignedAuthorization) (Attempt, error) {
-	if signed.Authorization.Rail != envelope.RailDirect {
+	if signed.Authorization.Rail != envelope.RailDirect && signed.Authorization.Rail != envelope.RailEscrow {
 		return Attempt{}, ErrUnsupportedRail
 	}
 	e.mu.Lock()

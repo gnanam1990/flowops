@@ -106,19 +106,20 @@ type EscrowTransitionCandidate struct {
 }
 
 type EscrowTransition struct {
-	Expected                EscrowExpectedReceipt `json:"expected"`
-	State                   EscrowTransitionState `json:"state"`
-	ReorgedFrom             EscrowTransitionState `json:"reorgedFrom,omitempty"`
-	RegisteredAt            time.Time             `json:"registeredAt"`
-	ResolvedAt              *time.Time            `json:"resolvedAt,omitempty"`
-	BlockNumber             uint64                `json:"blockNumber,omitempty"`
-	BlockHash               string                `json:"blockHash,omitempty"`
-	Resolution              string                `json:"resolution,omitempty"`
-	EvidenceDigest          string                `json:"evidenceDigest,omitempty"`
-	LedgerTransactionID     string                `json:"ledgerTransactionId,omitempty"`
-	CorrectionTransactionID string                `json:"correctionTransactionId,omitempty"`
-	FinalityCheckedAt       *time.Time            `json:"finalityCheckedAt,omitempty"`
-	FinalityCheckedHead     uint64                `json:"finalityCheckedHead,omitempty"`
+	Expected                EscrowExpectedReceipt       `json:"expected"`
+	State                   EscrowTransitionState       `json:"state"`
+	ReorgedFrom             EscrowTransitionState       `json:"reorgedFrom,omitempty"`
+	RegisteredAt            time.Time                   `json:"registeredAt"`
+	BroadcastAttestation    *EscrowBroadcastAttestation `json:"broadcastAttestation,omitempty"`
+	ResolvedAt              *time.Time                  `json:"resolvedAt,omitempty"`
+	BlockNumber             uint64                      `json:"blockNumber,omitempty"`
+	BlockHash               string                      `json:"blockHash,omitempty"`
+	Resolution              string                      `json:"resolution,omitempty"`
+	EvidenceDigest          string                      `json:"evidenceDigest,omitempty"`
+	LedgerTransactionID     string                      `json:"ledgerTransactionId,omitempty"`
+	CorrectionTransactionID string                      `json:"correctionTransactionId,omitempty"`
+	FinalityCheckedAt       *time.Time                  `json:"finalityCheckedAt,omitempty"`
+	FinalityCheckedHead     uint64                      `json:"finalityCheckedHead,omitempty"`
 }
 
 type EscrowCall struct {
@@ -177,9 +178,59 @@ func (e *Engine) RegisterEscrowIntent(ctx context.Context, intent EscrowIntent) 
 	return cloneEscrowCall(call), nil
 }
 
+// RegisterAttestedEscrowBroadcast recovers an already-broadcast customer fund
+// even when the callback arrives after authorization expiry or during a chain
+// pause. Authority comes from the signed in-window receipt; chain outcome is
+// still left pending for quorum reconciliation.
+func (e *Engine) RegisterAttestedEscrowBroadcast(ctx context.Context, intent EscrowIntent, candidate EscrowTransitionCandidate, attestation EscrowBroadcastAttestation) (EscrowCall, error) {
+	if err := intent.Validate(); err != nil {
+		return EscrowCall{}, err
+	}
+	if err := attestation.validateIntent(intent); err != nil {
+		return EscrowCall{}, err
+	}
+	prospective := EscrowCall{Intent: intent, State: EscrowPositionRegistered}
+	expected, err := expectedEscrowTransition(prospective, candidate)
+	if err != nil {
+		return EscrowCall{}, err
+	}
+	if err := attestation.validate(expected); err != nil {
+		return EscrowCall{}, err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if intent.ChainID != e.config.ChainID || e.config.EscrowContract == "" || intent.Contract != e.config.EscrowContract || intent.Asset != e.config.EscrowAsset || intent.ReleaseWindow != e.config.EscrowReleaseWindow {
+		return EscrowCall{}, fmt.Errorf("%w: intent does not match the configured reviewed tuple", ErrEscrowDeployment)
+	}
+	call, exists := e.escrowCalls[intent.CallID]
+	if exists {
+		if !equalJSON(call.Intent, intent) {
+			return EscrowCall{}, ErrConflict
+		}
+	} else {
+		if other, ok := e.escrowByAuth[intent.AuthorizationID]; ok && other != intent.CallID {
+			return EscrowCall{}, ErrConflict
+		}
+		now := e.config.Clock().UTC()
+		call = EscrowCall{Intent: intent, State: EscrowPositionRegistered, RegisteredAt: now, Transitions: []EscrowTransition{}}
+		event, err := e.journal.append(ctx, now, eventEscrowIntent, intent.CallID, escrowPayload{Call: call})
+		if err != nil {
+			return EscrowCall{}, err
+		}
+		if err := e.apply(event); err != nil {
+			return EscrowCall{}, err
+		}
+	}
+	return e.registerEscrowTransitionLocked(ctx, intent.OrganizationID, intent.CallID, candidate, &attestation)
+}
+
 func (e *Engine) RegisterEscrowTransition(ctx context.Context, organizationID, callID string, candidate EscrowTransitionCandidate) (EscrowCall, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.registerEscrowTransitionLocked(ctx, organizationID, callID, candidate, nil)
+}
+
+func (e *Engine) registerEscrowTransitionLocked(ctx context.Context, organizationID, callID string, candidate EscrowTransitionCandidate, attestation *EscrowBroadcastAttestation) (EscrowCall, error) {
 	call, ok := e.escrowCalls[callID]
 	if !ok || call.Intent.OrganizationID != organizationID {
 		return EscrowCall{}, ErrUnknownExecution
@@ -187,6 +238,11 @@ func (e *Engine) RegisterEscrowTransition(ctx context.Context, organizationID, c
 	for _, transition := range call.Transitions {
 		if transition.Expected.TransactionHash == candidate.TransactionHash {
 			if escrowCandidateMatchesExpected(candidate, transition.Expected) {
+				if attestation != nil {
+					if err := attestation.validate(transition.Expected); err != nil || transition.BroadcastAttestation == nil || !equalJSON(*transition.BroadcastAttestation, *attestation) {
+						return EscrowCall{}, ErrConflict
+					}
+				}
 				return cloneEscrowCall(call), nil
 			}
 			return EscrowCall{}, ErrConflict
@@ -202,8 +258,16 @@ func (e *Engine) RegisterEscrowTransition(ctx context.Context, organizationID, c
 	if err != nil {
 		return EscrowCall{}, err
 	}
+	if attestation != nil {
+		if err := attestation.validate(expected); err != nil {
+			return EscrowCall{}, err
+		}
+	}
 	if call.Pending != nil {
 		if equalJSON(call.Pending.Expected, expected) {
+			if attestation != nil && (call.Pending.BroadcastAttestation == nil || !equalJSON(*call.Pending.BroadcastAttestation, *attestation)) {
+				return EscrowCall{}, ErrConflict
+			}
 			return cloneEscrowCall(call), nil
 		}
 		return EscrowCall{}, ErrConflict
@@ -222,6 +286,10 @@ func (e *Engine) RegisterEscrowTransition(ctx context.Context, organizationID, c
 		resolution = "registered during chain pause; canonical escrow outcome required"
 	}
 	pending := EscrowTransition{Expected: expected, State: state, RegisteredAt: now, Resolution: resolution}
+	if attestation != nil {
+		copy := *attestation
+		pending.BroadcastAttestation = &copy
+	}
 	call.Pending = &pending
 	event, err := e.journal.append(ctx, now, eventEscrowPending, callID, escrowPayload{Call: call})
 	if err != nil {
@@ -611,6 +679,11 @@ func (c EscrowCall) validateSnapshot(chainID uint64) error {
 		if err := transition.Expected.Validate(); err != nil || transition.RegisteredAt.IsZero() {
 			return errors.New("durable escrow transition is invalid")
 		}
+		if transition.BroadcastAttestation != nil {
+			if transition.Expected.Action != EscrowFund || transition.BroadcastAttestation.validate(transition.Expected) != nil || transition.BroadcastAttestation.validateIntent(c.Intent) != nil {
+				return errors.New("durable escrow broadcast attestation is invalid")
+			}
+		}
 		if !escrowExpectedMatchesIntent(transition.Expected, c.Intent) || !escrowActionAllowed(historicalState, transition.Expected.Action, transition.Expected.RefundedFromState) {
 			return errors.New("durable escrow transition does not follow its immutable call")
 		}
@@ -674,6 +747,9 @@ func (c EscrowCall) validateSnapshot(chainID uint64) error {
 	if c.Pending != nil {
 		if err := c.Pending.Expected.Validate(); err != nil || c.Pending.RegisteredAt.IsZero() || c.Pending.ReorgedFrom != "" || c.Pending.State != EscrowTransitionBroadcast && c.Pending.State != EscrowTransitionPendingRecovery {
 			return errors.New("durable pending escrow transition is invalid")
+		}
+		if c.Pending.BroadcastAttestation != nil && (c.Pending.Expected.Action != EscrowFund || c.Pending.BroadcastAttestation.validate(c.Pending.Expected) != nil || c.Pending.BroadcastAttestation.validateIntent(c.Intent) != nil) {
+			return errors.New("durable pending escrow broadcast attestation is invalid")
 		}
 		if _, exists := seenTransactions[c.Pending.Expected.TransactionHash]; exists {
 			return errors.New("durable pending escrow transition hash is duplicated")
@@ -905,6 +981,14 @@ func cloneEscrowTransitionTimes(transition *EscrowTransition) {
 	if transition.Expected.BuyerAccepted != nil {
 		accepted := *transition.Expected.BuyerAccepted
 		transition.Expected.BuyerAccepted = &accepted
+	}
+	if transition.BroadcastAttestation != nil {
+		copy := *transition.BroadcastAttestation
+		if copy.Authorization.Escrow != nil {
+			terms := *copy.Authorization.Escrow
+			copy.Authorization.Escrow = &terms
+		}
+		transition.BroadcastAttestation = &copy
 	}
 	if transition.ResolvedAt != nil {
 		value := *transition.ResolvedAt

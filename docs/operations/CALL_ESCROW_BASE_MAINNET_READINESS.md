@@ -27,8 +27,9 @@ The canonical blocked record is
 `deployments/base-mainnet-readiness.json`. It intentionally contains no
 contract address, transaction hash, block, reviewed source commit, or deployer.
 It records the proposed but still unfunded 1 USDC per-call and 10 USDC
-per-customer pilot profile. Full enforcement remains false because the current
-reference signer accepts direct USDC only and rejects escrow calls.
+per-customer pilot profile. Full enforcement remains false because the escrow
+signer path has not yet completed its funded, canonically reconciled Sepolia
+proof.
 
 ## Stage 1: evidence and production dependencies
 
@@ -49,9 +50,9 @@ Complete all items in a separate promotion package:
    credential-bearing URLs only in the deployment secret manager.
 7. Rehearse source verification, constructor decoding, runtime bytecode hashing,
    immutable getter reads, and dual-provider receipt confirmation.
-8. Implement and test the escrow signer path for exact approval and exact fund
-   calldata. The control plane and direct-USDC signer already enforce the
-   proposed profile, but they are not evidence of CallEscrow enforcement.
+8. Complete the separately approved funded Sepolia proof for the implemented
+   exact-allowance-check and exact-fund-calldata customer signer. Local and
+   no-funds tests are not evidence of a canonical funded outcome.
 
 ## Stage 2: local and read-only verification
 
