@@ -14,9 +14,10 @@ import (
 )
 
 type rpcFixture struct {
-	chainID string
-	blocks  map[string]rpcBlock
-	receipt *rpcReceipt
+	chainID  string
+	blocks   map[string]rpcBlock
+	receipt  *rpcReceipt
+	receipts map[string]*rpcReceipt
 }
 
 type fixtureTransport struct {
@@ -52,7 +53,12 @@ func (t *fixtureTransport) RoundTrip(request *http.Request) (*http.Response, err
 			result = block
 		}
 	case "eth_getTransactionReceipt":
-		result = fixture.receipt
+		hash, _ := call.Params[0].(string)
+		if fixture.receipts != nil {
+			result = fixture.receipts[hash]
+		} else {
+			result = fixture.receipt
+		}
 	default:
 		return nil, fmt.Errorf("unexpected method %s", call.Method)
 	}

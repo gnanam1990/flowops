@@ -77,11 +77,12 @@ type rpcBlock struct {
 }
 
 type rpcReceipt struct {
-	TransactionHash string   `json:"transactionHash"`
-	BlockNumber     string   `json:"blockNumber"`
-	BlockHash       string   `json:"blockHash"`
-	Status          string   `json:"status"`
-	Logs            []rpcLog `json:"logs"`
+	TransactionHash  string   `json:"transactionHash"`
+	TransactionIndex string   `json:"transactionIndex,omitempty"`
+	BlockNumber      string   `json:"blockNumber"`
+	BlockHash        string   `json:"blockHash"`
+	Status           string   `json:"status"`
+	Logs             []rpcLog `json:"logs"`
 }
 
 type rpcLog struct {
