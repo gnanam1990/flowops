@@ -1,8 +1,13 @@
 # CallEscrow Base Sepolia Deployment
 
-Status: prepared; Wallet 1 is designated but unfunded on Base Sepolia
+Status: deployed, canonically confirmed, and source verified on Base Sepolia
 
 Mainnet: prohibited by this runbook
+
+Canonical deployment evidence is recorded in
+`deployments/base-sepolia.json`. The transaction was confirmed at block
+`45457034`; two independent RPC providers agreed on the receipt, immutable
+state, deployed bytecode, and runtime code hash before this status changed.
 
 ## Pinned configuration
 

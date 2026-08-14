@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow smoke-escrow-deployment
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow smoke-escrow-deployment
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -14,6 +14,12 @@ fmt-check:
 solidity-fmt-check:
 	forge fmt --check
 
+deployment-evidence-check:
+	deploy/call-escrow/check-base-sepolia-evidence.sh
+
+test-deployment-evidence:
+	deploy/call-escrow/test-base-sepolia-evidence.sh
+
 dashboard-deps:
 	npm ci --prefix apps/dashboard
 
@@ -22,7 +28,7 @@ dashboard-check: dashboard-deps
 	npm run lint --prefix apps/dashboard
 	npm test --prefix apps/dashboard
 
-check: fmt-check solidity-fmt-check dashboard-check
+check: fmt-check solidity-fmt-check test-deployment-evidence dashboard-check
 	go vet $(GO_PACKAGES)
 	go test -race $(GO_PACKAGES)
 	forge build --sizes
