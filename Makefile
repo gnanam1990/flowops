@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow smoke-escrow-deployment smoke-escrow-reconciliation
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence mainnet-readiness-check test-mainnet-readiness dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -20,6 +20,13 @@ deployment-evidence-check:
 test-deployment-evidence:
 	deploy/call-escrow/test-base-sepolia-evidence.sh
 
+mainnet-readiness-check:
+	deploy/call-escrow/check-base-mainnet-readiness.sh
+
+test-mainnet-readiness:
+	deploy/call-escrow/test-base-mainnet-readiness.sh
+	forge test --match-path contracts/test/DeployCallEscrowBaseMainnet.t.sol
+
 dashboard-deps:
 	npm ci --prefix apps/dashboard
 
@@ -28,7 +35,7 @@ dashboard-check: dashboard-deps
 	npm run lint --prefix apps/dashboard
 	npm test --prefix apps/dashboard
 
-check: fmt-check solidity-fmt-check test-deployment-evidence dashboard-check
+check: fmt-check solidity-fmt-check test-deployment-evidence test-mainnet-readiness dashboard-check
 	go vet $(GO_PACKAGES)
 	go test -race $(GO_PACKAGES)
 	forge build --sizes
@@ -57,6 +64,10 @@ smoke-escrow:
 
 smoke-escrow-deployment:
 	forge test --match-path contracts/test/DeployCallEscrowBaseSepolia.t.sol -vv
+
+smoke-escrow-mainnet-readiness:
+	deploy/call-escrow/smoke-base-mainnet-readiness.sh
+	forge test --match-path contracts/test/DeployCallEscrowBaseMainnet.t.sol --match-test test_promotedHarnessDeploysPinnedConstructorWithoutAdminRole --fork-url https://mainnet.base.org -vv
 
 smoke-escrow-reconciliation:
 	go test -race -run '^(TestObserverSetDecodesCompleteEscrowReleaseLifecycle|TestObserverSetDecodesBothEscrowRefundPaths|TestEscrowReceiptRejectsSubstitutionDuplicateAndWrongLogOrder)$$' ./internal/reconciliation

@@ -27,6 +27,9 @@ docs/adr/               architecture decisions
 ## Build rules
 
 - Base Sepolia before Base mainnet.
+- Base mainnet deployment code must remain structurally blocked until its
+  deployer, external review, production observers, and explicit broadcast
+  approval are recorded in a separate reviewed promotion.
 - No private key is accepted by the FlowOps control plane.
 - No settlement, release, or refund state without canonical chain evidence.
 - No module commit until that module's tests pass.
