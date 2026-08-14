@@ -1,8 +1,9 @@
 # CallEscrow Module Contract
 
 Status: local implementation, verified Base Sepolia deployment, read-only
-lifecycle receipt verifier, and live Evidence Fetch release and forced-expiry
-refund complete; mainnet gates remain open
+lifecycle receipt verifier, live Evidence Fetch release and forced-expiry
+refund complete, and structurally blocked Base mainnet deployment package;
+mainnet promotion gates remain open
 Date: 2026-08-14
 
 ## Purpose and promise
@@ -85,6 +86,15 @@ The current local suite includes 21 unit/fuzz tests and three stateful invariant
   registration and reorg correction; the current conformance command is
   deliberately read-only.
 - Complete independent security and legal review before any Base mainnet deployment or non-trivial value.
+
+The Base mainnet preparation package pins the chain, native USDC asset, and
+release window while leaving the deployer and external-review digest empty and
+broadcast disabled. Its blocked record, mutation tests, read-only two-RPC smoke,
+and promotion ceremony are documented in
+`docs/operations/CALL_ESCROW_BASE_MAINNET_READINESS.md`. Passing those
+preparation checks is not permission to deploy. The read-only observation and
+expected broadcast refusal are recorded in
+`docs/evidence/BASE_MAINNET_READINESS_2026-08-14.md`.
 
 The successful release and failed-delivery refund lifecycles are recorded in
 `docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_LIVE_2026-08-14.md` and

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "evidenceDocument": "docs/evidence/BASE_MAINNET_READINESS_2026-08-14.md",
+  "status": "blocked-no-deployment",
+  "mainnetApproved": false,
+  "broadcastEnabled": false,
+  "canonicalUsdc": {
+    "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "source": "https://developers.circle.com/stablecoins/usdc-contract-addresses",
+    "symbol": "USDC",
+    "decimals": 6,
+    "runtimeCodeHash": "0xa6705a10bb756b5dea144591118be77d7af0c3eee3bf2dfe2583dcb0364fefab"
+  },
+  "callEscrow": {
+    "address": null,
+    "deploymentTransaction": null,
+    "deploymentBlock": null,
+    "reviewedSourceCommit": null,
+    "optimisticReleaseWindowSeconds": 3600,
+    "compiler": "0.8.26",
+    "optimizerRuns": 200,
+    "evmVersion": "cancun",
+    "contract": "contracts/src/CallEscrow.sol:CallEscrow"
+  },
+  "gates": {
+    "designatedDeployer": null,
+    "keyOwnershipDocumented": false,
+    "externalSecurityReview": {
+      "complete": false,
+      "reportDigestAlgorithm": "sha256",
+      "reportDigest": null
+    },
+    "legalReviewComplete": false,
+    "durableEscrowReconciliation": false,
+    "independentPaidRpcProviders": false,
+    "referenceSignerFundedSepoliaProof": false,
+    "sourceVerificationPlanApproved": false,
+    "explicitBroadcastApproval": false
+  },
+  "pilot": {
+    "fundingEnabled": false,
+    "limitsEnforced": false,
+    "maximumPerCallUsdc": null,
+    "maximumOutstandingUsdc": null,
+    "exactApprovalOnly": true
+  },
+  "verification": {
+    "verifiedAt": "2026-08-14T11:48:32Z",
+    "canonicalAnchor": {
+      "block": 49959378,
+      "hash": "0x1b1d9662ac4844e5d7b0b767648cd9adef4cf326194fd042ed8cd623943c4596"
+    },
+    "rpcEvidence": [
+      {
+        "provider": "Base public RPC",
+        "url": "https://mainnet.base.org",
+        "chainId": 8453,
+        "observedHead": 49959378,
+        "assetRuntimeCodeHash": "0xa6705a10bb756b5dea144591118be77d7af0c3eee3bf2dfe2583dcb0364fefab",
+        "productionEligible": false
+      },
+      {
+        "provider": "PublicNode",
+        "url": "https://base-rpc.publicnode.com",
+        "chainId": 8453,
+        "observedHead": 49959379,
+        "assetRuntimeCodeHash": "0xa6705a10bb756b5dea144591118be77d7af0c3eee3bf2dfe2583dcb0364fefab",
+        "productionEligible": false
+      }
+    ]
+  },
+  "notes": "Read-only public-RPC preflight only. No mainnet deployment or fund movement exists. Public endpoints are not approved production observers."
+}

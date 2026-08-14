@@ -16,7 +16,11 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
 6. x402 V2 Base Sepolia adapter and Builder Code conformance fixture.
 7. Evidence Fetch provider. **Implementation complete; verification commands are documented in the module contract.**
 8. Base reconciliation and halt-safe state. **Continuous production observer wiring, durable quorum progress, customer-signer receipt registration, receipt/finality worker, bounded reorg correction, customer-side one-way transaction executor, and the manual operator gate are implemented; concrete wallet integration, dedicated provider selection, and extended Sepolia threshold measurements remain external gates.**
-9. Escrow contracts after the dispute-state redesign. **Local implementation and a chain/deployer/USDC-pinned Base Sepolia deployment package are complete; funded deployment, event reconciliation, and external review remain gated.**
+9. Escrow contracts after the dispute-state redesign. **Local implementation,
+   a verified Base Sepolia deployment, funded release/refund evidence, and a
+   structurally blocked Base mainnet readiness package are complete; durable
+   event registration, production dependencies, and external review remain
+   gated.**
 10. Dashboard and operator workflows. **Preview-safe surface and membership-bound live reads implemented; step-up write UX and ledger-backed aggregates remain integration gates.**
 11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, and explicit edge-proxy transport checks are implemented; managed PostgreSQL deployment and Base observer wiring remain live gates.**
 
@@ -28,10 +32,13 @@ Each item lands as one or more isolated conventional commits with focused tests.
 - Reference-signer Base Sepolia wallet has not been designated or funded.
 - The hosted-facilitator calldata experiment remains `UNRESOLVED`.
 - Dedicated production facilitator and independent paid Base RPC providers are not selected; the public Sepolia pair is only an integration drill.
-- Base Sepolia escrow Wallet 1 and Circle's native test USDC are designated in
-  the pending registry. Wallet 1 is unfunded, the broadcast window is not yet
-  approved, and the external reviewer is not designated.
+- Base Sepolia CallEscrow has one funded release and one funded refund proof.
+  Those proofs do not designate a production deployer or external reviewer and
+  do not authorize Base mainnet.
 - External security and legal reviews have not started.
+- The Base mainnet deployment script deliberately has a zero deployer, zero
+  review digest, and disabled broadcast. Public-RPC USDC observations are
+  read-only preflight evidence and are not approved production observers.
 - Dashboard live writes are intentionally unavailable until a separate fresh
   step-up ceremony and durable browser command-recovery flow are implemented.
 - Sites owner provisioning and exchange-token rotation must be executed and
