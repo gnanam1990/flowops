@@ -170,6 +170,23 @@ contract CallEscrowTest is Test {
         assertEq(uint8(feeEscrow.stateOf(feeCallId)), uint8(CallEscrow.State.None));
     }
 
+    function test_unsolicitedAssetCannotChangeLockedAccountingAndRemainsUnrecoverable() public {
+        _fund(CALL_ID);
+        uint256 unsolicited = 7;
+        usdc.mint(address(escrow), unsolicited);
+
+        assertEq(escrow.totalLocked(), AMOUNT);
+        assertEq(usdc.balanceOf(address(escrow)), AMOUNT + unsolicited);
+
+        _deliver(CALL_ID);
+        vm.prank(buyer);
+        escrow.acceptDelivery(CALL_ID);
+
+        assertEq(escrow.totalLocked(), 0);
+        assertEq(usdc.balanceOf(provider), AMOUNT);
+        assertEq(usdc.balanceOf(address(escrow)), unsolicited);
+    }
+
     function test_acknowledgeOnlySnapshottedProviderAtInclusiveDeadline() public {
         (uint64 acknowledgeBy,) = _fund(CALL_ID);
         vm.expectRevert(abi.encodeWithSelector(CallEscrow.NotProvider.selector, CALL_ID, stranger));

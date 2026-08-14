@@ -40,14 +40,12 @@ while IFS= read -r candidate; do
 done < <(find "${repo_root}/contracts/out/build-info" -type f -name '*.json' -print | sort)
 test -n "${build_info}"
 
-# Canonicalize the exact portable compiler input Foundry used. Foundry adds
-# checkout-absolute allow/base/include paths around the Solidity standard JSON;
-# those transport fields are machine-specific and do not change the embedded
-# sources, remappings, settings, or compiler output we bind below. Unlike
-# `forge verify-contract --show-standard-json-input`, this does not initialize
-# an explorer verifier or require its network metadata merely to prove the
-# local build inputs.
-jq -S '.input | del(.allowPaths, .basePath, .includePaths)' "${build_info}" >"${standard_json}"
+# Bind the contract-scoped production import closure. Whole-project build-info
+# also contains tests and unrelated scripts, so hashing its full input would
+# make a test-only edit look like production bytecode drift. `forge inspect`
+# emits literal source content for the target and its transitive imports using
+# relative paths; sorting it makes the input portable across checkout roots.
+forge inspect "${contract}" standardJson | jq -S . >"${standard_json}"
 
 source_sha="$(sha256_file "${repo_root}/contracts/src/CallEscrow.sol")"
 config_sha="$(sha256_file "${repo_root}/foundry.toml")"
@@ -90,7 +88,7 @@ jq -e \
   and .creationInputHash == $creation_input_hash
   and .deployedBytecodeTemplateHash == $deployed_template_hash
   and .standardJsonSha256 == $standard_json_sha
-  and .standardJsonSource == "portable canonical Foundry build-info input"
+  and .standardJsonSource == "portable contract-scoped Foundry standard JSON input"
   and .verificationTarget == "BaseScan"
   and .sourceVerificationApproved == false
   and (.notes | contains("immutable placeholders"))
@@ -98,12 +96,14 @@ jq -e \
 
 jq -e '
   .language == "Solidity"
-  and .version == "0.8.26"
   and .settings.optimizer.enabled == true
   and .settings.optimizer.runs == 200
   and .settings.evmVersion == "cancun"
   and .settings.viaIR == false
   and .sources["contracts/src/CallEscrow.sol"] != null
+  and (.sources | keys | all(startswith("contracts/src/") or startswith("lib/openzeppelin-contracts/contracts/")))
+  and (.sources | keys | any(contains("contracts/test/")) | not)
+  and (.sources | keys | any(contains("contracts/script/")) | not)
 ' "${standard_json}" >/dev/null
 
 jq -e '

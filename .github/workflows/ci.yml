@@ -15,6 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
           submodules: recursive
       - uses: actions/setup-go@v7
@@ -45,6 +46,8 @@ jobs:
         run: make test-mainnet-readiness
       - name: Validate Base mainnet deployer and source ceremony
         run: make test-mainnet-deployer-verification
+      - name: Validate external security-review package remains fail-closed
+        run: make test-security-review-package
       - name: Install dashboard dependencies
         run: npm ci --prefix apps/dashboard
       - name: Audit dashboard runtime dependencies

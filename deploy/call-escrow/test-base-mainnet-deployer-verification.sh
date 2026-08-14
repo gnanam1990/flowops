@@ -75,6 +75,11 @@ if ! grep -Fq 'env -u FLOWOPS_MAINNET_SOURCE_REHEARSAL_RECORD' "${broadcast_wrap
   printf 'hardware wrapper does not clear the source-rehearsal test override\n' >&2
   exit 1
 fi
+if ! grep -Fq 'env -u FLOWOPS_SECURITY_REVIEW_MANIFEST' "${broadcast_wrapper}" || \
+  ! grep -Fq 'security/call-escrow/check-review-package.sh' "${broadcast_wrapper}"; then
+  printf 'hardware wrapper does not validate the canonical completed security-review package\n' >&2
+  exit 1
+fi
 if test "$(grep -Fc 'FOUNDRY_ETH_RPC_URL="${BASE_MAINNET_RPC_URL_PRIMARY}" forge script' "${broadcast_wrapper}")" -ne 2; then
   printf 'hardware simulation and broadcast are not both bound to the production RPC environment\n' >&2
   exit 1

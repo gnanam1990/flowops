@@ -91,9 +91,23 @@ provider has been selected or paid for.
 rehearsal pins the exact `CallEscrow` source and Foundry configuration hashes,
 dependency gitlinks, Solidity `0.8.26` compiler metadata, optimizer runs, Cancun
 EVM target, canonical Base USDC constructor encoding, creation-input hash, and
-canonical standard JSON compiler input. The test mutates each load-bearing
+contract-scoped production-import standard JSON compiler input. Test-only and
+unrelated-script sources are excluded so they cannot create false production
+source drift. The test mutates each load-bearing
 field and requires rejection. It does not contact Base or submit source to an
 explorer.
+
+`make test-security-review-package` passed. It binds the contract and mainnet
+deployment-ceremony scope to source commit
+`808caa4c9905334c52d6f237863f5ff33b11ffb0`, the exact source/configuration
+hashes, dependency commits, compiler settings, ABI, storage layout, method
+identifiers, source rehearsal, threat model, reviewer brief, test commands, and
+seven explicit known limitations. Independent mutations of the scope, source,
+commit, compiler, ABI, limitations, reviewer, report, and completion state were
+rejected. Focused high/medium Solidity lint, 22 unit/fuzz tests, and the
+invariant suite passed. This evidence proves that a reproducible review package
+exists and remains fail-closed; it is not evidence that an external review has
+occurred.
 
 The hardware ceremony record remains deliberately unassigned. Negative tests
 prove that inventing a deployer, selecting a software keystore, inventing an
@@ -109,7 +123,8 @@ wrapper refuses both missing and explicitly false approval.
 - the hardware-wallet ceremony is implemented and fail-closed, but no
   production deployer, ownership attestation, or approved recovery runbook
   exists;
-- no independent security review or bound report digest;
+- the exact external-review package is prepared, but no independent reviewer,
+  completed review, retest, or bound report digest exists;
 - no completed legal review;
 - no durable escrow event registration and reorg correction integration;
 - no funded reference-signer Base Sepolia proof;
