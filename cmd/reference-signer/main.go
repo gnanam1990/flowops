@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	configVersion  = "flowops.reference-signer.v1"
+	configVersion  = "flowops.reference-signer.v2"
 	maxConfigBytes = 256 * 1024
 	maxInputBytes  = 256 * 1024
 )

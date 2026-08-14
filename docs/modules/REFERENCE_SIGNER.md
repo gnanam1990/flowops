@@ -2,8 +2,9 @@
 
 Status: verifier, durable nonce store, one-way executor, signed receipt,
 strict callback transport, Clef direct-USDC adapter, and runnable command
-implemented; independent durable pilot exposure limits are enforced; live Base
-Sepolia execution remains separately approved and open
+implemented; independent durable direct-USDC pilot exposure limits are
+enforced; escrow execution and live Base Sepolia execution remain separately
+approved and open
 
 Packages: `pkg/referencesigner`, `pkg/referencewallet`
 Command: `cmd/reference-signer`
@@ -67,9 +68,17 @@ The smoke target executes the full command wiring against in-memory Base, Clef,
 and FlowOps transports. It validates a real signed EIP-1559 transaction but
 never contacts Base or moves funds.
 
+The required aggregate cap changed the strict file schema to
+`flowops.reference-signer.v2`. Version `v1` is rejected rather than guessed;
+operators must add `maxOutstandingAtomic`, review the value, and explicitly
+update the version before restarting.
+
 ## Remaining integration gate
 
-Independently review the adapter and runnable command, then execute a separately
+Independently review the direct-USDC adapter and runnable command, then execute a separately
 approved, capped Base Sepolia test with a designated customer wallet and
 configured receipt public key. This module does not authorize that funded test
 by itself, and mainnet remains blocked.
+
+The command currently rejects `escrow` and `x402`. Do not cite its direct-USDC
+pilot gate as CallEscrow limit enforcement.

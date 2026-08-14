@@ -1,6 +1,6 @@
 # ADR-0019: Independent Capped-Pilot Limits
 
-Status: Accepted and implemented; funding remains disabled
+Status: Accepted; control plane and direct-USDC signer implemented, escrow open
 Date: 2026-08-14
 
 ## Context
@@ -13,8 +13,8 @@ therefore undermine a limit written only in an operations document.
 
 ## Decision
 
-The initial Base mainnet profile is exactly 1 USDC per action and 10 USDC of
-maximum conservative signer exposure. Both values use native USDC's six-decimal
+The proposed initial Base mainnet profile is exactly 1 USDC per action and 10
+USDC of maximum conservative exposure per customer signer. Both values use native USDC's six-decimal
 atomic representation (`1000000` and `10000000`). Changing either value
 requires a reviewed code and readiness-record diff.
 
@@ -23,7 +23,7 @@ an intent. It counts all pending, approved, and issued reservations for the
 same organization and customer. A pilot refusal is durably recorded with a
 specific denial reason and cannot be converted into an authorization.
 
-The customer signer applies the same gate before authorization verification,
+The direct-USDC customer signer applies the same gate before authorization verification,
 wallet preparation, signing, or broadcast. It reconstructs exposure from its
 process-locked, hash-chained attempt journal on every restart. Until an
 independently verified settlement-release protocol is implemented, every
@@ -31,8 +31,8 @@ durable prepared attempt remains reserved for the lifetime of that pilot
 journal. This is stricter than outstanding-balance accounting and cannot
 understate exposure after an ambiguous transaction.
 
-Base Sepolia may use separately approved test limits. A Base mainnet reference
-signer refuses configuration that differs from the committed initial profile.
+Base Sepolia may use separately approved test limits. A Base mainnet direct-USDC
+reference signer refuses configuration that differs from the committed initial profile.
 The production control-plane loader carries the same check for the future
 mainnet observer promotion path.
 
@@ -48,6 +48,13 @@ mainnet observer promotion path.
   accepted workaround.
 - Funding remains separately disabled. Implemented limits do not authorize a
   mainnet deployment or transfer.
+- `CallEscrow` is not covered yet: the current executor rejects the `escrow`
+  rail. The CallEscrow readiness gate stays false until an exact-approval and
+  fund-call signer path enforces the same profile and passes funded Sepolia
+  reconciliation.
+- The 10 USDC value is per customer signer, not a platform-global ceiling.
+  Mainnet admission remains blocked until a single-customer pilot or a reviewed
+  aggregate allocation mechanism is enforced.
 
 ## Verification
 

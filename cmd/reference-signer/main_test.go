@@ -145,6 +145,15 @@ func TestLoadConfigPinsInitialBaseMainnetPilotLimits(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsLegacyV1AfterRequiredLimitMigration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	writePrivate(t, path, `{"version":"flowops.reference-signer.v1","organizationId":"org-1","customerId":"customer-1","receiptKeyId":"receipt-1","maxAmountAtomic":"1000000"}`)
+	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "config version") {
+		t.Fatalf("legacy config error = %v", err)
+	}
+}
+
 func validConfig(dir string, flowPublic ed25519.PublicKey, walletKey *ecdsa.PrivateKey, receiptPath, freezePath string) fileConfig {
 	return fileConfig{
 		Version: configVersion, OrganizationID: "org-1", CustomerID: "customer-1",

@@ -89,9 +89,10 @@ The current local suite includes 21 unit/fuzz tests and three stateful invariant
 
 The Base mainnet preparation package pins the chain, native USDC asset, and
 release window while leaving the deployer and external-review digest empty and
-broadcast disabled. Its blocked record also pins the independently enforced,
-unfunded initial pilot profile at 1 USDC per call and 10 USDC conservative
-signer exposure. Its mutation tests, read-only two-RPC smoke,
+broadcast disabled. Its blocked record pins the proposed profile at 1 USDC per
+call and 10 USDC conservative exposure per customer signer, while explicitly
+recording that the current direct-USDC signer does not enforce escrow calls.
+Its mutation tests, read-only two-RPC smoke,
 and promotion ceremony are documented in
 `docs/operations/CALL_ESCROW_BASE_MAINNET_READINESS.md`. Passing those
 preparation checks is not permission to deploy. The read-only observation and

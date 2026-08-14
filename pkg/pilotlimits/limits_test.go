@@ -64,17 +64,24 @@ func TestBaseMainnetReadinessRecordMatchesProfile(t *testing.T) {
 	}
 	var record struct {
 		Pilot struct {
+			ProfileSelected         bool   `json:"profileSelected"`
 			LimitsEnforced          bool   `json:"limitsEnforced"`
 			MaximumPerCallUSDC      string `json:"maximumPerCallUsdc"`
 			MaximumOutstandingUSDC  string `json:"maximumOutstandingUsdc"`
 			SignerAccountingPosture string `json:"signerAccountingPosture"`
+			ExposureScope           string `json:"exposureScope"`
+			ControlPlaneEnforced    bool   `json:"controlPlaneEnforced"`
+			DirectSignerEnforced    bool   `json:"directUsdcSignerEnforced"`
+			EscrowSignerEnforced    bool   `json:"escrowSignerEnforced"`
 		} `json:"pilot"`
 	}
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
-	if !record.Pilot.LimitsEnforced || record.Pilot.MaximumPerCallUSDC != "1.000000" ||
-		record.Pilot.MaximumOutstandingUSDC != "10.000000" || record.Pilot.SignerAccountingPosture != "conservative-lifetime-reservation" {
+	if !record.Pilot.ProfileSelected || record.Pilot.LimitsEnforced || record.Pilot.MaximumPerCallUSDC != "1.000000" ||
+		record.Pilot.MaximumOutstandingUSDC != "10.000000" || record.Pilot.ExposureScope != "per-customer-signer" ||
+		record.Pilot.SignerAccountingPosture != "conservative-lifetime-reservation" || !record.Pilot.ControlPlaneEnforced ||
+		!record.Pilot.DirectSignerEnforced || record.Pilot.EscrowSignerEnforced {
 		t.Fatalf("readiness pilot profile drifted: %+v", record.Pilot)
 	}
 }

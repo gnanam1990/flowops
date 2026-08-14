@@ -23,7 +23,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
    gated.**
 10. Dashboard and operator workflows. **Preview-safe surface and membership-bound live reads implemented; step-up write UX and ledger-backed aggregates remain integration gates.**
 11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, and explicit edge-proxy transport checks are implemented; managed PostgreSQL deployment and Base observer wiring remain live gates.**
-12. Independent capped-pilot limits. **The control plane and customer signer now enforce the same initial Base mainnet profile before the wallet boundary, with restart-safe conservative exposure reconstruction; funding remains disabled.**
+12. Independent capped-pilot limits. **The control plane and direct-USDC customer signer enforce the proposed per-customer Base mainnet profile before the wallet boundary, with restart-safe conservative exposure reconstruction. Escrow signer enforcement and pilot admission remain open; funding remains disabled.**
 
 Each item lands as one or more isolated conventional commits with focused tests. Cross-module integration comes only after both module contracts are stable.
 
@@ -40,8 +40,9 @@ Each item lands as one or more isolated conventional commits with focused tests.
 - The Base mainnet deployment script deliberately has a zero deployer, zero
   review digest, and disabled broadcast. Public-RPC USDC observations are
   read-only preflight evidence and are not approved production observers.
-- Initial pilot caps are structurally pinned at 1 USDC per action and 10 USDC
-  conservative signer exposure, but that does not enable funding or mainnet.
+- The proposed pilot profile is structurally pinned at 1 USDC per action and 10
+  USDC conservative exposure per direct-USDC customer signer. Escrow enforcement
+  and single-customer or aggregate pilot admission remain hard blockers.
 - Dashboard live writes are intentionally unavailable until a separate fresh
   step-up ceremony and durable browser command-recovery flow are implemented.
 - Sites owner provisioning and exchange-token rotation must be executed and

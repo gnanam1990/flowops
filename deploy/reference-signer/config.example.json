@@ -1,5 +1,5 @@
 {
-  "version": "flowops.reference-signer.v1",
+  "version": "flowops.reference-signer.v2",
   "organizationId": "replace-org",
   "customerId": "replace-customer",
   "trustKeys": [

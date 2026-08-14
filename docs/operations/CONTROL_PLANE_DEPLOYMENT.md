@@ -58,6 +58,11 @@ The API service requires:
 | `FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `1000000` |
 | `FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `10000000` |
 
+The outstanding ceiling is scoped to one organization/customer pair in the
+control plane and one customer-owned signer journal. It is not a global
+platform ceiling. Mainnet remains blocked until pilot admission restricts the
+deployment to one customer or a reviewed allocation layer bounds the aggregate.
+
 Do not set `FLOWOPS_CONTROL_ADDR` on the selected runtime; `PORT` produces the
 required `0.0.0.0:PORT` listener and still requires explicit trusted-proxy
 mode. Apply migrations with a transient privileged database credential through

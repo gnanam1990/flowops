@@ -5,6 +5,10 @@ authorization public keys and the callback URL; it never receives the Clef
 keystore, wallet key, receipt private key, raw transaction, RPC credentials, or
 local journals.
 
+Current strict config version: `flowops.reference-signer.v2`. Existing `v1`
+files must be copied, given a reviewed `maxOutstandingAtomic`, and explicitly
+versioned to `v2`; the command fails closed instead of migrating economic limits.
+
 ## Prepare customer-owned files
 
 1. Copy `deploy/reference-signer/config.example.json` outside the repository,
