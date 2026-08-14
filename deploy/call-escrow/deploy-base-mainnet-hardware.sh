@@ -66,6 +66,17 @@ test -z "$(git -C "${repo_root}" status --short)"
 deployer="$(jq -r '.signing.deployer' "${record}")"
 derivation_path="$(jq -r '.signing.derivationPath' "${record}")"
 review_digest="$(jq -r '.externalReviewSha256' "${record}")"
+security_manifest="${repo_root}/security/call-escrow/review-manifest.json"
+
+env -u FLOWOPS_SECURITY_REVIEW_MANIFEST \
+  "${repo_root}/security/call-escrow/check-review-package.sh" >/dev/null
+jq -e --arg review_digest "${review_digest}" '
+  .externalReview.complete == true
+  and .externalReview.reportSha256 == $review_digest
+  and .externalReview.retestComplete == true
+  and .externalReview.unresolvedCritical == 0
+  and .externalReview.unresolvedHigh == 0
+' "${security_manifest}" >/dev/null
 
 jq -e \
   --arg deployer "${deployer}" \
@@ -82,6 +93,8 @@ jq -e \
   and (.callEscrow.minimumDeploymentConfirmations | type == "number" and floor == . and . > 0 and . <= 10000)
   and (.gates.designatedDeployer | ascii_downcase) == $deployer
   and .gates.keyOwnershipDocumented == true
+  and .gates.externalSecurityReview.packagePrepared == true
+  and .gates.externalSecurityReview.packageManifest == "security/call-escrow/review-manifest.json"
   and .gates.externalSecurityReview.complete == true
   and .gates.externalSecurityReview.reportDigestAlgorithm == "sha256"
   and .gates.externalSecurityReview.reportDigest == $review_digest

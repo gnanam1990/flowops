@@ -29,6 +29,8 @@ jq -e '
   and .callEscrow.contract == "contracts/src/CallEscrow.sol:CallEscrow"
   and .gates.designatedDeployer == null
   and .gates.keyOwnershipDocumented == false
+  and .gates.externalSecurityReview.packagePrepared == true
+  and .gates.externalSecurityReview.packageManifest == "security/call-escrow/review-manifest.json"
   and .gates.externalSecurityReview.complete == false
   and .gates.externalSecurityReview.reportDigestAlgorithm == "sha256"
   and .gates.externalSecurityReview.reportDigest == null
@@ -67,6 +69,17 @@ contract_identifier="$(jq -r '.callEscrow.contract' "${record}")"
 source_path="${contract_identifier%%:*}"
 test -f "${repo_root}/${source_path}"
 test -f "${repo_root}/$(jq -r '.evidenceDocument' "${record}")"
+security_manifest="${repo_root}/$(jq -r '.gates.externalSecurityReview.packageManifest' "${record}")"
+test -f "${security_manifest}"
+jq -e '
+  .schemaVersion == 1
+  and .packageStatus == "prepared-external-review-not-complete"
+  and .network == "base-mainnet"
+  and .chainId == 8453
+  and .externalReview.complete == false
+  and .externalReview.reviewer == null
+  and .externalReview.reportSha256 == null
+' "${security_manifest}" >/dev/null
 
 foundry_config="$(forge config --json)"
 test "$(jq -r '.solc' <<<"${foundry_config}")" = "$(jq -r '.callEscrow.compiler' "${record}")"

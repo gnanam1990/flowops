@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "packageStatus": "prepared-external-review-not-complete",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "reviewedSourceCommit": "808caa4c9905334c52d6f237863f5ff33b11ffb0",
+  "scope": {
+    "contract": "contracts/src/CallEscrow.sol:CallEscrow",
+    "deploymentScript": "contracts/script/DeployCallEscrowBaseMainnet.s.sol",
+    "buildConfig": "foundry.toml",
+    "importedProductionFiles": [
+      "lib/openzeppelin-contracts/contracts/interfaces/IERC1363.sol",
+      "lib/openzeppelin-contracts/contracts/interfaces/IERC165.sol",
+      "lib/openzeppelin-contracts/contracts/interfaces/IERC20.sol",
+      "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol",
+      "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol",
+      "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol",
+      "lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+    ],
+    "deploymentCeremony": [
+      "deploy/call-escrow/deploy-base-mainnet-hardware.sh",
+      "deploy/call-escrow/verify-base-mainnet-deployment-readonly.sh",
+      "deploy/call-escrow/submit-base-mainnet-source-verification.sh"
+    ],
+    "explicitlyOutOfScope": [
+      "customer signer and wallet implementations",
+      "control-plane policy and authorization services",
+      "durable reconciliation, ledger, and RPC admission services",
+      "frontend and provider implementation",
+      "legal, regulatory, and operational-custody analysis"
+    ]
+  },
+  "sourceBindings": {
+    "contractSha256": "8ba347e7047856a73d133b51401ea5ad0f14f3122da3b0525d9b3e6e39f41e08",
+    "deploymentScriptSha256": "c1a51be3131284fe557a0412be27d6d850c6e7cd48ddd1dcbb84fa09898b4702",
+    "foundryConfigSha256": "e843a712bc7043b7ac16ef357ee29c300ba663a0d971d6f229c1c11b84bd88b0",
+    "abiSha256": "c96c9b83207942d4dfa4b483c67c37da142f9b61d821be9ca011a3d4081aa6b7",
+    "storageLayoutSha256": "ab0bc8696c8dceb3c774fb94eb9a7a8aedcdf8799b6cf45d845e26817157a388",
+    "methodIdentifiersSha256": "e0827409e0f845ca79e4b0e814c8f41599aab6b3f94ce885546f369b88e37098"
+  },
+  "ceremonyBindings": {
+    "hardwareBroadcastWrapperSha256": "d87fe21682e8913875d202a8642fa6566633de40e324e7562947e7653ee0d4c2",
+    "readOnlyDeploymentVerifierSha256": "ae692254f325841da9c841dce7e880fec13a0684c25943679a0140df825cc16d",
+    "sourceSubmissionWrapperSha256": "c3a05d2f0cce92ddcc7328ef8a6a977ab157bb579d35b58777b830512db3a016"
+  },
+  "dependencies": {
+    "forgeStdCommit": "77041d2ce690e692d6e03cc812b57d1ddaa4d505",
+    "openzeppelinContractsCommit": "c64a1edb67b6e3f4a15cca8909c9482ad33a02b0"
+  },
+  "compiler": {
+    "solidity": "0.8.26+commit.8a97fa7a",
+    "optimizerEnabled": true,
+    "optimizerRuns": 200,
+    "evmVersion": "cancun",
+    "viaIR": false
+  },
+  "sourceRehearsal": {
+    "record": "deployments/base-mainnet-source-rehearsal.json",
+    "standardJsonSha256": "aaf8fee6177e0f5963c796181097376f9ff71c811a67869acec2de7f83f30728",
+    "creationBytecodeHash": "0x347d3b087c737a3249b43d7bc8c93a4ca4776a28c32d521314fc75d771031900",
+    "deployedBytecodeTemplateHash": "0xd6def0f2990bc2064522118822e489118a5302f3f31b980b108f1c1acc446318"
+  },
+  "reviewDocuments": {
+    "threatModel": "docs/security/CALL_ESCROW_THREAT_MODEL.md",
+    "reviewBrief": "docs/security/CALL_ESCROW_EXTERNAL_REVIEW_BRIEF.md"
+  },
+  "requiredTestCommands": [
+    "forge lint contracts/src/CallEscrow.sol --severity high med --deny warnings",
+    "forge lint contracts/script/DeployCallEscrowBaseMainnet.s.sol --severity high med --deny warnings",
+    "forge test --match-path contracts/test/CallEscrow.t.sol",
+    "forge test --match-path contracts/test/CallEscrow.invariant.t.sol",
+    "make test-mainnet-deployer-verification"
+  ],
+  "knownLimitations": [
+    "KL-01-DIGESTS-PROVE-BYTES-NOT-QUALITY",
+    "KL-02-OWNERLESS-NO-PAUSE-RESCUE-OR-UPGRADE",
+    "KL-03-UNSOLICITED-ASSET-REMAINS-UNRECOVERABLE",
+    "KL-04-USDC-UPGRADE-FREEZE-BLACKLIST-DEPENDENCY",
+    "KL-05-CHAIN-TIME-HALT-AND-REORG-DEPENDENCY",
+    "KL-06-ANYONE-MAY-FINALIZE-PINNED-RECIPIENT",
+    "KL-07-EXTERNAL-SIGNER-AND-RECONCILIATION-REQUIRE-SEPARATE-REVIEW"
+  ],
+  "externalReview": {
+    "complete": false,
+    "reviewer": null,
+    "reportSha256": null,
+    "completedAt": null,
+    "retestComplete": false,
+    "unresolvedCritical": null,
+    "unresolvedHigh": null
+  }
+}

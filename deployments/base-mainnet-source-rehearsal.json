@@ -23,8 +23,8 @@
   "creationBytecodeHash": "0x347d3b087c737a3249b43d7bc8c93a4ca4776a28c32d521314fc75d771031900",
   "creationInputHash": "0xdb92ea3282cf56afc1d7752f4bea175c638eb4bed59fb4fbdd5c0ec28c93838d",
   "deployedBytecodeTemplateHash": "0xd6def0f2990bc2064522118822e489118a5302f3f31b980b108f1c1acc446318",
-  "standardJsonSha256": "7a8ff827792992234a85e4417aae948723eb4b6b7533f9d141458e8c2a9f7633",
-  "standardJsonSource": "portable canonical Foundry build-info input",
+  "standardJsonSha256": "aaf8fee6177e0f5963c796181097376f9ff71c811a67869acec2de7f83f30728",
+  "standardJsonSource": "portable contract-scoped Foundry standard JSON input",
   "verificationTarget": "BaseScan",
   "sourceVerificationApproved": false,
   "notes": "Deterministic local rehearsal only. The deployed-bytecode template still contains immutable placeholders; post-deployment verification must compare the exact creation input and live runtime independently. No source was submitted to an explorer."

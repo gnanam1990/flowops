@@ -31,13 +31,23 @@ per-customer pilot profile. Full enforcement remains false because the escrow
 signer path has not yet completed its funded, canonically reconciled Sepolia
 proof.
 
+The external-review package is now prepared at
+`security/call-escrow/review-manifest.json`. It binds the exact contract and
+deployment-ceremony scope, compiler/dependencies, ABI/storage/method surface,
+threat model, tests, and known limitations to reviewed source commit
+`808caa4c9905334c52d6f237863f5ff33b11ffb0`. This is reviewer input, not a
+completed audit. Reviewer identity, report digest, retest, and finding counts
+remain empty; the contract keeps its `UNAUDITED` mainnet prohibition.
+
 Two additional records make the future ceremony reviewable without filling in
 facts that do not exist yet:
 
 - `deployments/base-mainnet-source-rehearsal.json` binds the exact source,
   Foundry configuration, dependency commits, compiler settings, constructor
-  encoding, creation bytecode, and canonical standard JSON compiler input. It
-  is a local rehearsal and is not explorer verification.
+  encoding, creation bytecode, and contract-scoped production-import standard
+  JSON compiler input. Test-only and unrelated-script edits cannot alter that
+  source-verification hash. It is a local rehearsal and is not explorer
+  verification.
 - `deployments/base-mainnet-promotion.json` is intentionally
   `blocked-unassigned`. Its hardware-wallet identity, ownership attestation,
   external-review digest, source-verification approval, and gas-capped
@@ -79,6 +89,7 @@ Run the deterministic checks:
 ```bash
 make test-mainnet-readiness
 make test-mainnet-deployer-verification
+make test-security-review-package
 make smoke-rpc-admission
 make smoke-escrow-mainnet-readiness
 make check
@@ -132,6 +143,11 @@ ceilings, the approved readiness and promotion records, production RPC
 admission, the deterministic source rehearsal, and the read-only mainnet
 preflight. Today the committed records and Solidity constants make the wrapper
 refuse before simulation or broadcast.
+
+The wrapper also requires the canonical security-review package to remain
+declared as prepared and requires a separately completed review plus its exact
+SHA-256 report digest. Preparing the package cannot satisfy that completion
+gate.
 
 The approval pins the deployer's expected nonce. Both providers must report
 that nonce for `latest` and `pending` before and after simulation. Immediately

@@ -29,6 +29,8 @@
     "designatedDeployer": null,
     "keyOwnershipDocumented": false,
     "externalSecurityReview": {
+      "packagePrepared": true,
+      "packageManifest": "security/call-escrow/review-manifest.json",
       "complete": false,
       "reportDigestAlgorithm": "sha256",
       "reportDigest": null
