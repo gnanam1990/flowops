@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence mainnet-readiness-check test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -23,6 +23,12 @@ test-deployment-evidence:
 mainnet-readiness-check:
 	deploy/call-escrow/check-base-mainnet-readiness.sh
 
+mainnet-final-audit:
+	@deploy/call-escrow/audit-base-mainnet-readiness.sh --report
+
+test-mainnet-final-audit:
+	deploy/call-escrow/test-base-mainnet-audit.sh
+
 test-mainnet-readiness:
 	deploy/call-escrow/test-base-mainnet-readiness.sh
 	forge test --match-path contracts/test/DeployCallEscrowBaseMainnet.t.sol
@@ -41,7 +47,7 @@ dashboard-check: dashboard-deps
 	npm run lint --prefix apps/dashboard
 	npm test --prefix apps/dashboard
 
-check: fmt-check solidity-fmt-check test-deployment-evidence test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package smoke-rpc-admission dashboard-check
+check: fmt-check solidity-fmt-check test-deployment-evidence test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit smoke-rpc-admission dashboard-check
 	go vet $(GO_PACKAGES)
 	go test -race $(GO_PACKAGES)
 	forge build --sizes

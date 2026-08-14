@@ -31,6 +31,15 @@ per-customer pilot profile. Full enforcement remains false because the escrow
 signer path has not yet completed its funded, canonically reconciled Sepolia
 proof.
 
+The aggregate decision is produced by
+`deploy/call-escrow/audit-base-mainnet-readiness.sh`. It authenticates this
+record together with the promotion, source-rehearsal, and security-review
+records, verifies their cross-bindings, and distinguishes completed code from
+missing production evidence. `make mainnet-final-audit` currently returns a
+secret-free JSON `BLOCKED` report with twelve promotion blockers. The only
+hardware broadcast wrapper invokes the same audit with `--require-ready` and
+must refuse before simulation or a hardware prompt.
+
 The external-review package is now prepared at
 `security/call-escrow/review-manifest.json`. It binds the exact contract and
 deployment-ceremony scope, compiler/dependencies, ABI/storage/method surface,
@@ -90,6 +99,7 @@ Run the deterministic checks:
 make test-mainnet-readiness
 make test-mainnet-deployer-verification
 make test-security-review-package
+make test-mainnet-final-audit
 make smoke-rpc-admission
 make smoke-escrow-mainnet-readiness
 make check
@@ -143,6 +153,11 @@ ceilings, the approved readiness and promotion records, production RPC
 admission, the deterministic source rehearsal, and the read-only mainnet
 preflight. Today the committed records and Solidity constants make the wrapper
 refuse before simulation or broadcast.
+
+Before evaluating those individual promotion fields, the wrapper runs the
+canonical aggregate audit in `--require-ready` mode with every test record-path
+override removed. A future promotion must therefore make the full joined
+evidence set ready; changing one JSON file cannot bypass the other gates.
 
 The wrapper also requires the canonical security-review package to remain
 declared as prepared and requires a separately completed review plus its exact

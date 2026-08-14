@@ -25,6 +25,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
 10. Dashboard and operator workflows. **Preview-safe surface and membership-bound live reads implemented; step-up write UX and ledger-backed aggregates remain integration gates.**
 11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, and explicit edge-proxy transport checks are implemented; managed PostgreSQL deployment and Base observer wiring remain live gates.**
 12. Independent capped-pilot limits. **The control plane and both customer signer rails enforce the proposed per-customer Base mainnet profile before the wallet boundary, with restart-safe conservative exposure reconstruction. Escrow pilot admission remains open until funded signer evidence; mainnet funding remains disabled.**
+13. Final Base mainnet readiness audit. **One read-only aggregate gate now authenticates the readiness, promotion, source-rehearsal, and security-review records, separates implementation evidence from twelve production blockers, and is required by the hardware broadcast wrapper. Its current and correct decision is `BLOCKED`.**
 
 Each item lands as one or more isolated conventional commits with focused tests. Cross-module integration comes only after both module contracts are stable.
 

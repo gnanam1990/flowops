@@ -16,6 +16,17 @@ cd "${repo_root}"
 : "${FLOWOPS_BASE_RPC_PROVIDERS_JSON:?load the production provider secret JSON}"
 : "${FLOWOPS_BASE_RPC_ADMISSION_JSON:?load the reviewed production provider admission JSON}"
 
+env \
+  -u FLOWOPS_MAINNET_AUDIT_READINESS_RECORD \
+  -u FLOWOPS_MAINNET_AUDIT_PROMOTION_RECORD \
+  -u FLOWOPS_MAINNET_AUDIT_SOURCE_RECORD \
+  -u FLOWOPS_MAINNET_AUDIT_REVIEW_MANIFEST \
+  -u FLOWOPS_MAINNET_READINESS_RECORD \
+  -u FLOWOPS_MAINNET_PROMOTION_RECORD \
+  -u FLOWOPS_MAINNET_SOURCE_REHEARSAL_RECORD \
+  -u FLOWOPS_SECURITY_REVIEW_MANIFEST \
+  "${repo_root}/deploy/call-escrow/audit-base-mainnet-readiness.sh" --require-ready >/dev/null
+
 approved_at="$(jq -er '.broadcastApproval.approvedAt' "${record}")"
 expires_at="$(jq -er '.broadcastApproval.expiresAt' "${record}")"
 parse_epoch() {

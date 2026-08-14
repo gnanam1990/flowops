@@ -33,6 +33,7 @@ expect_rejected removed-limitation '.knownLimitations -= ["KL-04-USDC-UPGRADE-FR
 expect_rejected wrong-compiler '.compiler.solidity = "0.8.27"'
 expect_rejected wrong-abi '.sourceBindings.abiSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 expect_rejected changed-ceremony '.ceremonyBindings.hardwareBroadcastWrapperSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+expect_rejected changed-final-audit '.ceremonyBindings.finalReadinessAuditSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 expect_rejected premature-source-approval '.sourceRehearsal.creationBytecodeHash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 
 grep -Fq 'UNAUDITED: Base mainnet use is prohibited' contracts/src/CallEscrow.sol

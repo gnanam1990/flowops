@@ -67,7 +67,7 @@ if grep -Eq -- '--rpc-url|--etherscan-api-key' "${broadcast_wrapper}" "${readonl
   printf 'ceremony exposes secret RPC or explorer credentials in process arguments\n' >&2
   exit 1
 fi
-if grep -Eq -- 'FLOWOPS_MAINNET_(PROMOTION|READINESS)_RECORD' "${broadcast_wrapper}" "${readonly_verifier}" "${submit_verifier}"; then
+if grep -Eq -- '\$\{?FLOWOPS_MAINNET_(PROMOTION|READINESS)_RECORD' "${broadcast_wrapper}" "${readonly_verifier}" "${submit_verifier}"; then
   printf 'production ceremony permits an unreviewed record-path override\n' >&2
   exit 1
 fi
