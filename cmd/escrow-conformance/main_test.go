@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,6 +44,45 @@ func TestReadManifestAcceptsStrictValidatedLifecycle(t *testing.T) {
 	got, err := readManifest(path)
 	if err != nil || len(got.Transitions) != 2 {
 		t.Fatalf("readManifest() = %+v, %v", got, err)
+	}
+}
+
+func TestCommittedEvidenceFetchLifecycleBindsExactResponse(t *testing.T) {
+	t.Parallel()
+	evidenceDirectory := filepath.Join("..", "..", "docs", "evidence")
+	manifest, err := readManifest(filepath.Join(evidenceDirectory, "call-escrow-evidence-fetch-2026-08-14.lifecycle.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Transitions) != 4 || manifest.Transitions[2].Action != reconciliation.EscrowDeliver || manifest.Transitions[3].Action != reconciliation.EscrowRelease {
+		t.Fatalf("committed lifecycle has unexpected path: %+v", manifest.Transitions)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(evidenceDirectory, "call-escrow-evidence-fetch-2026-08-14.response.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasSuffix(raw, []byte{'\n'}) || bytes.Count(raw, []byte{'\n'}) != 1 {
+		t.Fatal("committed response must be one canonical JSON line plus the repository line feed")
+	}
+	canonical := bytes.TrimSuffix(raw, []byte{'\n'})
+	var response struct {
+		RequestDigest string `json:"requestDigest"`
+		ContentSHA256 string `json:"contentSha256"`
+	}
+	if err := json.Unmarshal(canonical, &response); err != nil {
+		t.Fatal(err)
+	}
+	delivery := manifest.Transitions[2]
+	if response.RequestDigest != delivery.TaskDigest {
+		t.Fatalf("response parent digest = %s, want task digest %s", response.RequestDigest, delivery.TaskDigest)
+	}
+	if response.ContentSHA256 != delivery.ResponseDigest {
+		t.Fatalf("response digest = %s, want %s", response.ContentSHA256, delivery.ResponseDigest)
+	}
+	evidenceHash := sha256.Sum256(canonical)
+	if got := fmt.Sprintf("0x%x", evidenceHash); got != delivery.EvidenceDigest {
+		t.Fatalf("evidence digest = %s, want %s", got, delivery.EvidenceDigest)
 	}
 }
 
