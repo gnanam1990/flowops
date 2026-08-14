@@ -17,10 +17,11 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
 7. Evidence Fetch provider. **Implementation complete; verification commands are documented in the module contract.**
 8. Base reconciliation and halt-safe state. **Continuous production observer wiring, durable quorum progress, customer-signer receipt registration, receipt/finality worker, bounded reorg correction, customer-side one-way transaction executor, and the manual operator gate are implemented; concrete wallet integration, dedicated provider selection, and extended Sepolia threshold measurements remain external gates.**
 9. Escrow contracts after the dispute-state redesign. **Local implementation,
-   a verified Base Sepolia deployment, funded release/refund evidence, and a
-   structurally blocked Base mainnet readiness package are complete; durable
-   event registration, production dependencies, and external review remain
-   gated.**
+   a verified Base Sepolia deployment, funded release/refund evidence, durable
+   intent/transition reconciliation with reorg correction, and a structurally
+   blocked Base mainnet readiness package are complete; the independently
+   enforcing customer escrow signer, production dependencies, and external
+   review remain gated.**
 10. Dashboard and operator workflows. **Preview-safe surface and membership-bound live reads implemented; step-up write UX and ledger-backed aggregates remain integration gates.**
 11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, and explicit edge-proxy transport checks are implemented; managed PostgreSQL deployment and Base observer wiring remain live gates.**
 12. Independent capped-pilot limits. **The control plane and direct-USDC customer signer enforce the proposed per-customer Base mainnet profile before the wallet boundary, with restart-safe conservative exposure reconstruction. Escrow signer enforcement and pilot admission remain open; funding remains disabled.**

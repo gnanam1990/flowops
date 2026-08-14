@@ -176,6 +176,119 @@ func controlIntent(id string, amount string) PaymentIntent {
 	}
 }
 
+func TestPaymentIntentRequiresExactRailSpecificEscrowTerms(t *testing.T) {
+	intent := controlIntent("intent_escrow_terms", "100")
+	intent.Rail = envelope.RailEscrow
+	if err := intent.Validate(); err == nil {
+		t.Fatal("escrow intent without exact terms was accepted")
+	}
+	contract := "0x86e145397f58e71c134c0e054320db929483227a"
+	buyer := "0x079bdde909e28e437768a06d7001eb40896668d4"
+	taskDigest := "0x" + strings.Repeat("31", 32)
+	requestDigest := "0x" + strings.Repeat("42", 32)
+	callID, err := envelope.DeriveEscrowCallID(intent.ChainID, contract, buyer, taskDigest, requestDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.Escrow = &envelope.EscrowTerms{
+		Contract: contract, Buyer: buyer, Provider: intent.Recipient, CallID: callID,
+		TaskDigest: taskDigest, RequestDigest: requestDigest,
+		AcknowledgeBy: 1_800_000_000, DeliverBy: 1_800_003_600, ReleaseWindow: 3600,
+	}
+	if err := intent.Validate(); err != nil {
+		t.Fatalf("valid escrow terms: %v", err)
+	}
+	direct := controlIntent("intent_direct_terms", "100")
+	direct.Escrow = intent.Escrow
+	if err := direct.Validate(); err == nil {
+		t.Fatal("non-escrow intent accepted escrow terms")
+	}
+}
+
+func TestEscrowAuthorizationCannotOutliveOrStartAfterAcknowledgeDeadline(t *testing.T) {
+	newEscrowLifecycle := func(clock *fakeClock, name string) (*Lifecycle, *Journal) {
+		t.Helper()
+		policyEngine, err := policy.Compile(policy.Config{
+			Version: "policy_escrow_deadline", Enabled: true, AllowedChainIDs: []uint64{84532},
+			AllowedRails: []envelope.Rail{envelope.RailEscrow}, AllowedAssets: []string{controlTestUSDC},
+			AllowedRecipients: []string{controlTestRecipient}, PerActionLimitAtomic: "100", AutoApproveThresholdAtomic: "100",
+			TaskBudgetAtomic: "100", DailyBudgetAtomic: "100",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		journal, err := OpenJournal(filepath.Join(t.TempDir(), name+".log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, privateKey := controlKeys(t)
+		ids := &sources{}
+		pilot, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: "100", MaxOutstandingAtomic: "100"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lifecycle, err := New(Config{
+			Policy: policyEngine, ActivePolicyVersion: func() string { return "policy_escrow_deadline" }, Journal: journal,
+			FreezeGate: &fakeFreeze{}, ChainGate: healthyControlChain{}, Clock: clock.Now,
+			ApprovalTTL: 10 * time.Minute, AuthorizationTTL: 5 * time.Minute,
+			RequestIDSource: ids.requestID, AuthorizationIDSource: ids.authorizationID, NonceSource: ids.nextNonce,
+			EnvelopeKeyID: "flowops_control_escrow_deadline", EnvelopePrivateKey: privateKey, PilotLimits: pilot,
+		})
+		if err != nil {
+			_ = journal.Close()
+			t.Fatal(err)
+		}
+		return lifecycle, journal
+	}
+	intentAt := func(t *testing.T, acknowledgeBy time.Time) PaymentIntent {
+		t.Helper()
+		contract := "0x86e145397f58e71c134c0e054320db929483227a"
+		buyer := "0x079bdde909e28e437768a06d7001eb40896668d4"
+		taskDigest := "0x" + strings.Repeat("31", 32)
+		requestDigest := "0x" + strings.Repeat("42", 32)
+		callID, err := envelope.DeriveEscrowCallID(84532, contract, buyer, taskDigest, requestDigest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return PaymentIntent{
+			IntentID: "intent_escrow_deadline", OrganizationID: "org_demo", CustomerID: "cust_acme", AgentID: "agent_research",
+			TaskID: "task_escrow", ActionID: "action_escrow", Rail: envelope.RailEscrow, ChainID: 84532,
+			Recipient: controlTestRecipient, Asset: controlTestUSDC, AmountAtomic: "100", Resource: "https://evidence.flowops.example/v1/fetch",
+			Category: "research_data", Purpose: "delivery assured fetch",
+			Escrow: &envelope.EscrowTerms{
+				Contract: contract, Buyer: buyer, Provider: controlTestRecipient, CallID: callID, TaskDigest: taskDigest, RequestDigest: requestDigest,
+				AcknowledgeBy: uint64(acknowledgeBy.Unix()), DeliverBy: uint64(acknowledgeBy.Add(time.Hour).Unix()), ReleaseWindow: 3600,
+			},
+		}
+	}
+
+	now := time.Date(2026, 8, 14, 17, 0, 0, 0, time.UTC)
+	clock := &fakeClock{now: now}
+	lifecycle, journal := newEscrowLifecycle(clock, "clamped")
+	defer journal.Close()
+	acknowledgeBy := now.Add(2 * time.Minute)
+	record, err := lifecycle.Submit(context.Background(), intentAt(t, acknowledgeBy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := lifecycle.Issue(context.Background(), record.RequestID)
+	if err != nil || signed.Authorization.ExpiresAt != acknowledgeBy.Unix() {
+		t.Fatalf("escrow authorization expiry=%d want=%d err=%v", signed.Authorization.ExpiresAt, acknowledgeBy.Unix(), err)
+	}
+
+	lateClock := &fakeClock{now: now}
+	lateLifecycle, lateJournal := newEscrowLifecycle(lateClock, "elapsed")
+	defer lateJournal.Close()
+	lateRecord, err := lateLifecycle.Submit(context.Background(), intentAt(t, now.Add(30*time.Second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lateClock.Add(31 * time.Second)
+	if _, err := lateLifecycle.Issue(context.Background(), lateRecord.RequestID); err == nil || !strings.Contains(err.Error(), "acknowledgement deadline elapsed") {
+		t.Fatalf("late escrow issuance error = %v", err)
+	}
+}
+
 func TestApprovalIssueIsExactIdempotentAndRestartSafe(t *testing.T) {
 	now := time.Date(2026, 8, 11, 14, 0, 0, 0, time.UTC)
 	clock, freeze, version, ids := &fakeClock{now: now}, &fakeFreeze{}, &policyVersion{version: "policy_7"}, &sources{}

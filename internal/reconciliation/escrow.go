@@ -5,12 +5,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"sort"
 	"strings"
 	"sync"
 
-	"golang.org/x/crypto/sha3"
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
 const (
@@ -19,7 +20,6 @@ const (
 	escrowDeliveredTopic    = "0x41bba665699291563190f5d3a33f981e14b60c1287e4825493edc005192cfd7e"
 	escrowReleasedTopic     = "0x947d4120eecc0620f53a07f44b9512520ecff811db5f82de7082073dd07a40c7"
 	escrowRefundedTopic     = "0xd6edf0b889f4ff3b49ee288998e6efa15c9e6fcf822c49066e55723cd9164e8c"
-	escrowCallIDDomain      = "0xf940ea33aeb6531575da935c033b99d0eb2092e5dd42c23a1f9ff5bd84961d72"
 )
 
 type EscrowAction string
@@ -100,7 +100,7 @@ func (e EscrowExpectedReceipt) Validate() error {
 	if _, err := positiveInteger(e.AmountAtomic); err != nil {
 		return fmt.Errorf("amountAtomic: %w", err)
 	}
-	if e.AcknowledgeBy == 0 || e.DeliverBy <= e.AcknowledgeBy || e.ReleaseWindow == 0 || e.ReleaseWindow > 30*24*60*60 {
+	if e.AcknowledgeBy == 0 || e.AcknowledgeBy > math.MaxInt64 || e.DeliverBy <= e.AcknowledgeBy || e.DeliverBy > math.MaxInt64 || e.ReleaseWindow == 0 || e.ReleaseWindow > 30*24*60*60 {
 		return errors.New("escrow deadlines or release window are invalid")
 	}
 	want, err := DeriveEscrowCallID(e.ChainID, e.Contract, e.Buyer, e.TaskDigest, e.RequestDigest)
@@ -142,20 +142,7 @@ func (e EscrowExpectedReceipt) Validate() error {
 const zeroHash = "0x0000000000000000000000000000000000000000000000000000000000000000"
 
 func DeriveEscrowCallID(chainID uint64, contract, buyer, taskDigest, requestDigest string) (string, error) {
-	if chainID == 0 || !addressPattern.MatchString(contract) || !addressPattern.MatchString(buyer) || !hashPattern.MatchString(taskDigest) || !hashPattern.MatchString(requestDigest) {
-		return "", errors.New("call ID inputs are invalid")
-	}
-	words := make([]byte, 0, 32*6)
-	for _, encoded := range []string{escrowCallIDDomain, uint256Hex(new(big.Int).SetUint64(chainID)), addressWord(contract), addressWord(buyer), taskDigest, requestDigest} {
-		raw, err := hex.DecodeString(strings.TrimPrefix(encoded, "0x"))
-		if err != nil || len(raw) != 32 {
-			return "", errors.New("call ID input could not be ABI encoded")
-		}
-		words = append(words, raw...)
-	}
-	hash := sha3.NewLegacyKeccak256()
-	_, _ = hash.Write(words)
-	return "0x" + hex.EncodeToString(hash.Sum(nil)), nil
+	return envelope.DeriveEscrowCallID(chainID, contract, buyer, taskDigest, requestDigest)
 }
 
 func (s *ObserverSet) EscrowReceiptQuorum(ctx context.Context, expected EscrowExpectedReceipt) EscrowReceiptResult {
@@ -241,6 +228,11 @@ func (s *ObserverSet) escrowReceipt(ctx context.Context, provider RPCProvider, e
 		ConfirmedHead: latest.number, Success: status == 1, CallID: expected.CallID,
 	}
 	if status == 0 {
+		for _, event := range receipt.Logs {
+			if !event.Removed {
+				return EscrowReceiptEvidence{}, errors.New("reverted escrow receipt contains non-removed logs")
+			}
+		}
 		return evidence, nil
 	}
 	deliveredAt, releasableAt, err := verifyEscrowLogs(receipt.Logs, expected)
@@ -267,6 +259,12 @@ func verifyEscrowLogs(logs []rpcLog, expected EscrowExpectedReceipt) (uint64, ui
 			continue
 		}
 		address := strings.ToLower(event.Address)
+		if address == expected.Contract && len(event.Topics) >= 2 && strings.ToLower(event.Topics[1]) == expected.CallID {
+			eventTopic := strings.ToLower(event.Topics[0])
+			if isEscrowLifecycleTopic(eventTopic) && eventTopic != topic {
+				return 0, 0, errors.New("receipt contains another CallEscrow lifecycle transition for the expected call")
+			}
+		}
 		if address == expected.Contract && len(event.Topics) > 0 && strings.ToLower(event.Topics[0]) == topic {
 			if err := matchEscrowEvent(event, expected, &deliveredAt, &releasableAt); err != nil {
 				return 0, 0, err
@@ -299,6 +297,15 @@ func verifyEscrowLogs(logs []rpcLog, expected EscrowExpectedReceipt) (uint64, ui
 		return 0, 0, errors.New("escrow asset Transfer must precede the terminal or funding transition event")
 	}
 	return deliveredAt, releasableAt, nil
+}
+
+func isEscrowLifecycleTopic(topic string) bool {
+	switch topic {
+	case escrowFundedTopic, escrowAcknowledgedTopic, escrowDeliveredTopic, escrowReleasedTopic, escrowRefundedTopic:
+		return true
+	default:
+		return false
+	}
 }
 
 func matchEscrowEvent(event rpcLog, expected EscrowExpectedReceipt, deliveredAt, releasableAt *uint64) error {

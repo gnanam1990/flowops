@@ -43,6 +43,15 @@ the public key to organization, customer, and key ID, then derives all economic
 facts from the already-issued authorization before creating reconciliation
 state. It never accepts a raw transaction or wallet key.
 
+Escrow registration is a fourth entry flow. A still-valid issued escrow
+authorization already contains the exact signed call terms. The registration
+route accepts only its authorization ID and derives the durable intent from the
+control-plane journal. Transition registration accepts action-specific dynamic
+fields and an already-broadcast transaction hash from a step-up-authenticated
+Owner or Admin; it cannot sign or submit a transaction. Tenant and economic
+fields are never accepted as caller authority. The exact reviewed deployment
+contract, asset, and immutable release window are runtime admission settings.
+
 ## Endpoints
 
 | Method | Route | Permission | Result |
@@ -57,10 +66,14 @@ state. It never accepts a raw transaction or wallet key.
 | `GET` | `/v1/commands/{commandID}` | organization member; agents see only their commands | Authoritative command outcome |
 | `GET` | `/v1/dashboard/snapshot` | human organization member | Live tenant-scoped agents, approvals, and chain state |
 | `POST` | `/v1/signer/broadcasts` | customer signer receipt signature | Authorization-bound expected execution awaiting Base reconciliation |
+| `POST` | `/v1/escrow/intents/{authorizationID}` | own-agent `escrow:register` scope or authorized human | Authorization-derived durable escrow intent before broadcast |
+| `POST` | `/v1/escrow/calls/{callID}/transitions` | Owner/Admin with active step-up | Durable candidate for one already-broadcast escrow transition |
+| `GET` | `/v1/escrow/calls/{callID}` | organization read permission; agents only their own call | Tenant-scoped canonical escrow timeline |
 
 Signer broadcast intake currently accepts only `direct_usdc` authorizations.
-x402 facilitator responses and escrow calls are not routed through the direct
-USDC receipt worker.
+x402 facilitator responses are not routed through the direct USDC receipt
+worker. Escrow uses its separate strict event decoder and transition worker;
+its registry never broadcasts.
 
 ## Persistence
 
@@ -111,6 +124,10 @@ the live view.
   substitution: `BROADCAST_BINDING_REJECTED`; no reconciliation state changes.
 - No configured customer signer public keys:
   `SIGNER_BROADCASTS_UNAVAILABLE`; the endpoint is fail-closed.
+- Missing, expired, cross-tenant, non-escrow, or altered escrow authorization:
+  `NOT_FOUND` or `STATE_CONFLICT`; no durable call is created.
+- Reordered action, reused transaction hash, or altered dynamic transition:
+  durable conflict; the worker retains the prior canonical state.
 
 ## Verification
 
@@ -133,6 +150,10 @@ organization-bound snapshot reads, and absence of step-up authority.
 Signer receipt tests additionally cover every signed-field mutation, key and
 tenant scoping, exact authorization derivation, future/expired timestamps,
 halted-chain intake, idempotency conflict, and restart replay.
+Escrow registration tests additionally cover exact signed call-term binding,
+authorization expiry, cross-tenant non-disclosure, transaction-hash
+idempotency, strict action order, halt retention, restart replay, canonical
+ledger posting, and cascading reorg correction.
 
 ## Remaining live gates
 

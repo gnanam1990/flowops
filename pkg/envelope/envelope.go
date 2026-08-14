@@ -10,9 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"regexp"
 	"strings"
+
+	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -45,23 +48,38 @@ func ValidIdentifier(value string) bool {
 // money and addresses use one canonical form so different runtimes cannot sign
 // different byte sequences for the same-looking action.
 type Authorization struct {
-	Version         string `json:"version"`
-	AuthorizationID string `json:"authorizationId"`
-	OrganizationID  string `json:"organizationId"`
-	CustomerID      string `json:"customerId"`
-	AgentID         string `json:"agentId"`
-	TaskID          string `json:"taskId"`
-	ActionID        string `json:"actionId"`
-	Rail            Rail   `json:"rail"`
-	ChainID         uint64 `json:"chainId"`
-	Recipient       string `json:"recipient"`
-	Asset           string `json:"asset"`
-	AmountAtomic    string `json:"amountAtomic"`
-	Resource        string `json:"resource"`
-	PolicyVersion   string `json:"policyVersion"`
-	Nonce           string `json:"nonce"`
-	IssuedAt        int64  `json:"issuedAt"`
-	ExpiresAt       int64  `json:"expiresAt"`
+	Version         string       `json:"version"`
+	AuthorizationID string       `json:"authorizationId"`
+	OrganizationID  string       `json:"organizationId"`
+	CustomerID      string       `json:"customerId"`
+	AgentID         string       `json:"agentId"`
+	TaskID          string       `json:"taskId"`
+	ActionID        string       `json:"actionId"`
+	Rail            Rail         `json:"rail"`
+	ChainID         uint64       `json:"chainId"`
+	Recipient       string       `json:"recipient"`
+	Asset           string       `json:"asset"`
+	AmountAtomic    string       `json:"amountAtomic"`
+	Resource        string       `json:"resource"`
+	PolicyVersion   string       `json:"policyVersion"`
+	Nonce           string       `json:"nonce"`
+	IssuedAt        int64        `json:"issuedAt"`
+	ExpiresAt       int64        `json:"expiresAt"`
+	Escrow          *EscrowTerms `json:"escrow,omitempty"`
+}
+
+// EscrowTerms is the exact CallEscrow calldata authority. It is absent on all
+// other rails and signed as part of the authorization canonical bytes.
+type EscrowTerms struct {
+	Contract      string `json:"contract"`
+	Buyer         string `json:"buyer"`
+	Provider      string `json:"provider"`
+	CallID        string `json:"callId"`
+	TaskDigest    string `json:"taskDigest"`
+	RequestDigest string `json:"requestDigest"`
+	AcknowledgeBy uint64 `json:"acknowledgeBy"`
+	DeliverBy     uint64 `json:"deliverBy"`
+	ReleaseWindow uint64 `json:"releaseWindowSeconds"`
 }
 
 type SignedAuthorization struct {
@@ -90,6 +108,16 @@ func (a Authorization) Validate() error {
 	if a.Rail != RailX402 && a.Rail != RailDirect && a.Rail != RailEscrow {
 		return fmt.Errorf("rail: unsupported value %q", a.Rail)
 	}
+	if a.Rail == RailEscrow {
+		if a.Escrow == nil {
+			return errors.New("escrow: exact escrow terms are required")
+		}
+		if err := a.Escrow.Validate(a.ChainID, a.Recipient); err != nil {
+			return fmt.Errorf("escrow: %w", err)
+		}
+	} else if a.Escrow != nil {
+		return errors.New("escrow: terms are forbidden on non-escrow rails")
+	}
 	if a.ChainID == 0 {
 		return errors.New("chainId: must be positive")
 	}
@@ -114,7 +142,68 @@ func (a Authorization) Validate() error {
 	if a.ExpiresAt <= a.IssuedAt {
 		return errors.New("expiresAt: must be after issuedAt")
 	}
+	if a.Escrow != nil && (a.IssuedAt >= int64(a.Escrow.AcknowledgeBy) || a.ExpiresAt > int64(a.Escrow.AcknowledgeBy)) {
+		return errors.New("escrow: authorization must be issued before and expire no later than acknowledgeBy")
+	}
 	return nil
+}
+
+func (t EscrowTerms) Validate(chainID uint64, recipient string) error {
+	if chainID != 8453 && chainID != 84532 {
+		return errors.New("escrow terms support Base mainnet or Base Sepolia only")
+	}
+	for name, value := range map[string]string{"contract": t.Contract, "buyer": t.Buyer, "provider": t.Provider} {
+		if !addressPattern.MatchString(value) {
+			return fmt.Errorf("%s must be a lowercase 20-byte EVM address", name)
+		}
+	}
+	if t.Provider != recipient {
+		return errors.New("provider must equal the approved recipient")
+	}
+	if t.Buyer == t.Provider {
+		return errors.New("buyer and provider must differ")
+	}
+	for name, value := range map[string]string{"callId": t.CallID, "taskDigest": t.TaskDigest, "requestDigest": t.RequestDigest} {
+		if !noncePattern.MatchString(value) || value == "0x"+strings.Repeat("0", 64) {
+			return fmt.Errorf("%s must be a canonical non-zero 32-byte hash", name)
+		}
+	}
+	if t.AcknowledgeBy == 0 || t.AcknowledgeBy > math.MaxInt64 || t.DeliverBy <= t.AcknowledgeBy || t.DeliverBy > math.MaxInt64 || t.ReleaseWindow == 0 || t.ReleaseWindow > 30*24*60*60 {
+		return errors.New("deadlines or release window are invalid")
+	}
+	want, err := DeriveEscrowCallID(chainID, t.Contract, t.Buyer, t.TaskDigest, t.RequestDigest)
+	if err != nil || want != t.CallID {
+		return errors.New("callId does not bind the approved chain, contract, buyer, task, and request")
+	}
+	return nil
+}
+
+func DeriveEscrowCallID(chainID uint64, contract, buyer, taskDigest, requestDigest string) (string, error) {
+	if chainID == 0 || !addressPattern.MatchString(contract) || !addressPattern.MatchString(buyer) || !noncePattern.MatchString(taskDigest) || !noncePattern.MatchString(requestDigest) {
+		return "", errors.New("call ID inputs are invalid")
+	}
+	domainHash := sha3.NewLegacyKeccak256()
+	_, _ = domainHash.Write([]byte("FLOWOPS_CALL_ESCROW_V1"))
+	domain := domainHash.Sum(nil)
+	words := make([]byte, 0, 32*6)
+	words = append(words, domain...)
+	chainWord := make([]byte, 32)
+	chain := new(big.Int).SetUint64(chainID).Bytes()
+	copy(chainWord[32-len(chain):], chain)
+	words = append(words, chainWord...)
+	for _, address := range []string{contract, buyer} {
+		raw, _ := hex.DecodeString(strings.TrimPrefix(address, "0x"))
+		word := make([]byte, 32)
+		copy(word[12:], raw)
+		words = append(words, word...)
+	}
+	for _, digest := range []string{taskDigest, requestDigest} {
+		raw, _ := hex.DecodeString(strings.TrimPrefix(digest, "0x"))
+		words = append(words, raw...)
+	}
+	hash := sha3.NewLegacyKeccak256()
+	_, _ = hash.Write(words)
+	return "0x" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func validateAtomicAmount(value string) error {

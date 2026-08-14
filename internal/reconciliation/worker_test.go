@@ -17,6 +17,20 @@ type workerSource struct {
 	queries  int
 }
 
+type escrowWorkerSource struct {
+	*workerSource
+	escrowReceipts map[string]EscrowReceiptResult
+	escrowBlocks   map[string]ReorgResult
+}
+
+func (s *escrowWorkerSource) EscrowReceiptQuorum(_ context.Context, expected EscrowExpectedReceipt) EscrowReceiptResult {
+	return s.escrowReceipts[expected.TransactionHash]
+}
+
+func (s *escrowWorkerSource) EscrowCanonicalBlockQuorum(_ context.Context, transition EscrowTransition) ReorgResult {
+	return s.escrowBlocks[transition.Expected.TransactionHash]
+}
+
 func (s *workerSource) ReceiptQuorum(ctx context.Context, expected ExpectedExecution) ReceiptResult {
 	s.mu.Lock()
 	s.queries++
@@ -48,6 +62,15 @@ func testWorker(t *testing.T, source *workerSource, engine *Engine, clock *testC
 	worker, err := NewWorker(source, engine, WorkerConfig{
 		Interval: time.Second, QueryTimeout: 50 * time.Millisecond, Clock: clock.Now,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return worker
+}
+
+func testEscrowWorker(t *testing.T, source *escrowWorkerSource, engine *Engine, clock *testClock) *Worker {
+	t.Helper()
+	worker, err := NewWorker(source, engine, WorkerConfig{Interval: time.Second, QueryTimeout: 50 * time.Millisecond, Clock: clock.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +120,52 @@ func TestWorkerFinalizesCanonicalReceiptExactlyOnce(t *testing.T) {
 	cycle, err = worker.RunOnce(context.Background())
 	if err != nil || cycle.Settled != 0 || engine.Balance(expected.OrganizationID, "agent_service_expense") != expected.AmountAtomic {
 		t.Fatalf("second cycle = %+v, %v", cycle, err)
+	}
+}
+
+func TestWorkerContinuouslyReconcilesAndFinalizesDurableEscrowTransition(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 14, 16, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "escrow-worker.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 300)
+	intent := durableEscrowIntent(t)
+	if _, err := engine.RegisterEscrowIntent(context.Background(), intent); err != nil {
+		t.Fatal(err)
+	}
+	call, err := engine.RegisterEscrowTransition(context.Background(), intent.OrganizationID, intent.CallID, EscrowTransitionCandidate{Action: EscrowFund, TransactionHash: testHash(261)})
+	if err != nil || call.Pending == nil {
+		t.Fatalf("pending fund = %+v, %v", call, err)
+	}
+	source := &escrowWorkerSource{
+		workerSource: &workerSource{receipts: map[string]ReceiptResult{}, blocks: map[string]ReorgResult{}},
+		escrowReceipts: map[string]EscrowReceiptResult{
+			call.Pending.Expected.TransactionHash: {Evidence: durableEscrowEvidence(call.Pending.Expected, 261)},
+		},
+		escrowBlocks: make(map[string]ReorgResult),
+	}
+	worker := testEscrowWorker(t, source, engine, clock)
+	cycle, err := worker.RunOnce(context.Background())
+	if err != nil || cycle.EscrowCandidates != 1 || cycle.EscrowConfirmed != 1 || cycle.EscrowFinalized != 0 {
+		t.Fatalf("receipt cycle = %+v, %v", cycle, err)
+	}
+	confirmed, _ := engine.EscrowCall(intent.OrganizationID, intent.CallID)
+	transition := confirmed.Transitions[0]
+	source.escrowBlocks[transition.Expected.TransactionHash] = ReorgResult{Evidence: durableEscrowReorgEvidence(transition, transition.BlockHash, 310)}
+	cycle, err = worker.RunOnce(context.Background())
+	if err != nil || cycle.EscrowFinalized != 1 || cycle.EscrowCandidates != 0 {
+		t.Fatalf("finality cycle = %+v, %v", cycle, err)
+	}
+	finalized, _ := engine.EscrowCall(intent.OrganizationID, intent.CallID)
+	if finalized.Transitions[0].FinalityCheckedAt == nil || engine.Balance(intent.OrganizationID, "escrow_locked") != "100" {
+		t.Fatalf("finalized transition = %+v balance=%s", finalized.Transitions[0], engine.Balance(intent.OrganizationID, "escrow_locked"))
+	}
+	cycle, err = worker.RunOnce(context.Background())
+	if err != nil || cycle.EscrowFinalized != 0 || engine.Balance(intent.OrganizationID, "escrow_locked") != "100" {
+		t.Fatalf("idempotent cycle = %+v, %v", cycle, err)
 	}
 }
 

@@ -1,9 +1,9 @@
 # CallEscrow Module Contract
 
-Status: local implementation, verified Base Sepolia deployment, read-only
-lifecycle receipt verifier, live Evidence Fetch release and forced-expiry
-refund complete, and structurally blocked Base mainnet deployment package;
-mainnet promotion gates remain open
+Status: local implementation, verified Base Sepolia deployment, durable
+lifecycle reconciliation, live Evidence Fetch release and forced-expiry refund
+complete, and structurally blocked Base mainnet deployment package; customer
+escrow signer and mainnet promotion gates remain open
 Date: 2026-08-14
 
 ## Purpose and promise
@@ -82,9 +82,12 @@ The current local suite includes 21 unit/fuzz tests and three stateful invariant
 
 ## Remaining gates
 
-- Wire the completed escrow-specific event decoder into durable intent
-  registration and reorg correction; the current conformance command is
-  deliberately read-only.
+- Implement the customer-side escrow executor that independently validates the
+  signed exact terms and generated calldata. Durable registration and reorg
+  correction are complete, but the current reference signer still rejects the
+  escrow rail.
+- Configure and verify the exact reviewed deployment contract, asset, and
+  immutable release window; partial or mismatched tuples fail closed.
 - Complete independent security and legal review before any Base mainnet deployment or non-trivial value.
 
 The Base mainnet preparation package pins the chain, native USDC asset, and

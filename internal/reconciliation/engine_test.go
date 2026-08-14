@@ -43,9 +43,25 @@ func (c *testClock) Add(duration time.Duration) {
 
 func testConfig(clock *testClock) Config {
 	return Config{
-		ChainID: 84532, ObserverQuorum: 2, HaltConfirmations: 2, RecoveryObservations: 2,
+		ChainID: 84532, EscrowContract: testEscrow, EscrowAsset: testEscrowAsset, EscrowReleaseWindow: 3600,
+		ObserverQuorum: 2, HaltConfirmations: 2, RecoveryObservations: 2,
 		MinConfirmations: 2, MaxHeadSkew: 2, StallThreshold: time.Minute,
 		ObservationMaxAge: 20 * time.Second, MaxFutureClockSkew: 5 * time.Second, Clock: clock.Now,
+	}
+}
+
+func TestConfigRejectsPartialOrInvalidEscrowDeploymentTuple(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)}
+	partial := testConfig(clock)
+	partial.EscrowAsset = ""
+	if _, err := Open(filepath.Join(t.TempDir(), "partial.log"), partial); err == nil {
+		t.Fatal("partial escrow deployment configuration was accepted")
+	}
+	identical := testConfig(clock)
+	identical.EscrowAsset = identical.EscrowContract
+	if _, err := Open(filepath.Join(t.TempDir(), "identical.log"), identical); err == nil {
+		t.Fatal("identical escrow contract and asset were accepted")
 	}
 }
 

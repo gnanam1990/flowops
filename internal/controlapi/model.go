@@ -43,12 +43,13 @@ const (
 type Permission string
 
 const (
-	PermissionRead         Permission = "READ"
-	PermissionCreateIntent Permission = "CREATE_INTENT"
-	PermissionIssue        Permission = "ISSUE_AUTHORIZATION"
-	PermissionDecide       Permission = "DECIDE_APPROVAL"
-	PermissionPause        Permission = "PAUSE_AGENT"
-	PermissionReadCommand  Permission = "READ_COMMAND"
+	PermissionRead                     Permission = "READ"
+	PermissionCreateIntent             Permission = "CREATE_INTENT"
+	PermissionIssue                    Permission = "ISSUE_AUTHORIZATION"
+	PermissionDecide                   Permission = "DECIDE_APPROVAL"
+	PermissionPause                    Permission = "PAUSE_AGENT"
+	PermissionReadCommand              Permission = "READ_COMMAND"
+	PermissionRegisterEscrowTransition Permission = "REGISTER_ESCROW_TRANSITION"
 )
 
 type Principal struct {
@@ -87,7 +88,7 @@ func (p Principal) Can(permission Permission) bool {
 	switch permission {
 	case PermissionRead, PermissionReadCommand:
 		return true
-	case PermissionCreateIntent, PermissionIssue, PermissionDecide, PermissionPause:
+	case PermissionCreateIntent, PermissionIssue, PermissionDecide, PermissionPause, PermissionRegisterEscrowTransition:
 		if p.ReadOnly {
 			return false
 		}
@@ -99,6 +100,8 @@ func (p Principal) Can(permission Permission) bool {
 		return p.Role == RoleApprover || p.Role == RoleFinance || p.Role == RoleAdmin || p.Role == RoleOwner
 	case PermissionPause:
 		return p.Role == RoleAdmin || p.Role == RoleOwner
+	case PermissionRegisterEscrowTransition:
+		return p.Kind == PrincipalHuman && (p.Role == RoleAdmin || p.Role == RoleOwner)
 	default:
 		return false
 	}

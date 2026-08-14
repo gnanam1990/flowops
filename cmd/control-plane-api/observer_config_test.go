@@ -39,7 +39,7 @@ func TestLoadObserverRuntimeConfigValidatesTimingThresholdsAndChain(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.engine.ChainID != 84532 || cfg.engine.ObserverQuorum != 2 || cfg.engine.ObservationMaxAge != 45*time.Second || cfg.interval != 15*time.Second || cfg.timeout != 10*time.Second || cfg.reconciliationInterval != 20*time.Second || cfg.reconciliationTimeout != 10*time.Second {
+	if cfg.engine.ChainID != 84532 || cfg.engine.EscrowContract != "0x86e145397f58e71c134c0e054320db929483227a" || cfg.engine.EscrowAsset != "0x036cbd53842c5426634e7929541ec2318f3dcf7e" || cfg.engine.EscrowReleaseWindow != 3600 || cfg.engine.ObserverQuorum != 2 || cfg.engine.ObservationMaxAge != 45*time.Second || cfg.interval != 15*time.Second || cfg.timeout != 10*time.Second || cfg.reconciliationInterval != 20*time.Second || cfg.reconciliationTimeout != 10*time.Second {
 		t.Fatalf("observer config = %+v", cfg)
 	}
 
@@ -66,6 +66,20 @@ func TestLoadObserverRuntimeConfigValidatesTimingThresholdsAndChain(t *testing.T
 		t.Setenv("FLOWOPS_BASE_CHAIN_ID", "8453")
 		if _, err := loadObserverRuntimeConfig(); err == nil || !strings.Contains(err.Error(), "mainnet gate") {
 			t.Fatalf("mainnet observer config error = %v", err)
+		}
+	})
+	t.Run("partial escrow deployment is rejected", func(t *testing.T) {
+		setObserverRuntime(t)
+		t.Setenv("FLOWOPS_ESCROW_ASSET", "")
+		if _, err := loadObserverRuntimeConfig(); err == nil || !strings.Contains(err.Error(), "configured together") {
+			t.Fatalf("partial escrow deployment error = %v", err)
+		}
+	})
+	t.Run("escrow deployment requires canonical distinct addresses", func(t *testing.T) {
+		setObserverRuntime(t)
+		t.Setenv("FLOWOPS_ESCROW_CONTRACT", "0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+		if _, err := loadObserverRuntimeConfig(); err == nil {
+			t.Fatal("mixed-case escrow deployment was accepted")
 		}
 	})
 }

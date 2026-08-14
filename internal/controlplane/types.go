@@ -29,20 +29,21 @@ const (
 )
 
 type PaymentIntent struct {
-	IntentID       string        `json:"intentId"`
-	OrganizationID string        `json:"organizationId"`
-	CustomerID     string        `json:"customerId"`
-	AgentID        string        `json:"agentId"`
-	TaskID         string        `json:"taskId"`
-	ActionID       string        `json:"actionId"`
-	Rail           envelope.Rail `json:"rail"`
-	ChainID        uint64        `json:"chainId"`
-	Recipient      string        `json:"recipient"`
-	Asset          string        `json:"asset"`
-	AmountAtomic   string        `json:"amountAtomic"`
-	Resource       string        `json:"resource"`
-	Category       string        `json:"category"`
-	Purpose        string        `json:"purpose"`
+	IntentID       string                `json:"intentId"`
+	OrganizationID string                `json:"organizationId"`
+	CustomerID     string                `json:"customerId"`
+	AgentID        string                `json:"agentId"`
+	TaskID         string                `json:"taskId"`
+	ActionID       string                `json:"actionId"`
+	Rail           envelope.Rail         `json:"rail"`
+	ChainID        uint64                `json:"chainId"`
+	Recipient      string                `json:"recipient"`
+	Asset          string                `json:"asset"`
+	AmountAtomic   string                `json:"amountAtomic"`
+	Resource       string                `json:"resource"`
+	Category       string                `json:"category"`
+	Purpose        string                `json:"purpose"`
+	Escrow         *envelope.EscrowTerms `json:"escrow,omitempty"`
 }
 
 func (i PaymentIntent) Validate() error {
@@ -56,6 +57,16 @@ func (i PaymentIntent) Validate() error {
 	}
 	if i.Rail != envelope.RailX402 && i.Rail != envelope.RailDirect && i.Rail != envelope.RailEscrow {
 		return errors.New("rail is unsupported")
+	}
+	if i.Rail == envelope.RailEscrow {
+		if i.Escrow == nil {
+			return errors.New("escrow terms are required for the escrow rail")
+		}
+		if err := i.Escrow.Validate(i.ChainID, i.Recipient); err != nil {
+			return fmt.Errorf("escrow: %w", err)
+		}
+	} else if i.Escrow != nil {
+		return errors.New("escrow terms are forbidden on non-escrow rails")
 	}
 	if i.ChainID == 0 {
 		return errors.New("chainId must be positive")
@@ -169,12 +180,20 @@ func decisionState(decision policy.Decision) (State, error) {
 }
 
 func cloneRecord(record Record) Record {
+	if record.Intent.Escrow != nil {
+		escrow := *record.Intent.Escrow
+		record.Intent.Escrow = &escrow
+	}
 	if record.Approval != nil {
 		approval := *record.Approval
 		record.Approval = &approval
 	}
 	if record.Authorization != nil {
 		authorization := *record.Authorization
+		if authorization.Escrow != nil {
+			escrow := *authorization.Escrow
+			authorization.Escrow = &escrow
+		}
 		record.Authorization = &authorization
 	}
 	return record

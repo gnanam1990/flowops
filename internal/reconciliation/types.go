@@ -59,10 +59,16 @@ var (
 	ErrResumeBlocked     = errors.New("autonomous resume is blocked")
 	ErrInvalidOperator   = errors.New("operator is invalid")
 	ErrInvalidHaltReason = errors.New("halt reason is invalid")
+	ErrEscrowTransition  = errors.New("escrow transition is invalid")
+	ErrEscrowDeployment  = errors.New("escrow deployment is not admitted")
+	ErrEscrowFinality    = errors.New("escrow transition finality is unresolved")
 )
 
 type Config struct {
 	ChainID              uint64
+	EscrowContract       string
+	EscrowAsset          string
+	EscrowReleaseWindow  uint64
 	ObserverQuorum       int
 	HaltConfirmations    int
 	RecoveryObservations int
@@ -78,6 +84,18 @@ type Config struct {
 func (c *Config) defaults() error {
 	if c.ChainID != 8453 && c.ChainID != 84532 {
 		return errors.New("reconciliation supports Base mainnet or Base Sepolia only")
+	}
+	escrowFields := 0
+	for _, present := range []bool{c.EscrowContract != "", c.EscrowAsset != "", c.EscrowReleaseWindow != 0} {
+		if present {
+			escrowFields++
+		}
+	}
+	if escrowFields != 0 && escrowFields != 3 {
+		return errors.New("escrow deployment contract, asset, and release window must be configured together")
+	}
+	if escrowFields == 3 && (!addressPattern.MatchString(c.EscrowContract) || !addressPattern.MatchString(c.EscrowAsset) || c.EscrowContract == c.EscrowAsset || c.EscrowReleaseWindow > 30*24*60*60) {
+		return errors.New("configured escrow deployment tuple is invalid")
 	}
 	if c.ObserverQuorum == 0 {
 		c.ObserverQuorum = 2
