@@ -39,6 +39,8 @@ jobs:
         run: forge build --sizes
       - name: Test Solidity contracts
         run: forge test
+      - name: Validate Base Sepolia deployment evidence
+        run: make test-deployment-evidence
       - name: Install dashboard dependencies
         run: npm ci --prefix apps/dashboard
       - name: Audit dashboard runtime dependencies
