@@ -55,6 +55,8 @@ The API service requires:
 | `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` | Maximum tolerated future timestamp skew |
 | `FLOWOPS_OPERATOR_CONTROL_KEY_B64` | Exactly 32 random bytes, base64; global halt/resume authority |
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
+| `FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `1000000` |
+| `FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `10000000` |
 
 Do not set `FLOWOPS_CONTROL_ADDR` on the selected runtime; `PORT` produces the
 required `0.0.0.0:PORT` listener and still requires explicit trusted-proxy

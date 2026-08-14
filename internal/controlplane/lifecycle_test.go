@@ -17,6 +17,7 @@ import (
 
 	"github.com/gnanam1990/flowops/internal/policy"
 	"github.com/gnanam1990/flowops/pkg/envelope"
+	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 )
 
 const (
@@ -108,17 +109,62 @@ func newLifecycleForTest(t *testing.T, path string, clock *fakeClock, freeze *fa
 		t.Fatal(err)
 	}
 	publicKey, privateKey := controlKeys(t)
+	pilot, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: "200", MaxOutstandingAtomic: "300"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	lifecycle, err := New(Config{
 		Policy: controlPolicy(t), ActivePolicyVersion: version.get, Journal: journal, FreezeGate: freeze, ChainGate: healthyControlChain{},
 		Clock: clock.Now, ApprovalTTL: 10 * time.Minute, AuthorizationTTL: 5 * time.Minute,
 		RequestIDSource: ids.requestID, AuthorizationIDSource: ids.authorizationID, NonceSource: ids.nextNonce,
 		EnvelopeKeyID: "flowops_control_1", EnvelopePrivateKey: privateKey,
+		PilotLimits: pilot,
 	})
 	if err != nil {
 		_ = journal.Close()
 		t.Fatal(err)
 	}
 	return lifecycle, journal, publicKey
+}
+
+func TestPilotLimitsOverridePermissivePolicyAndSurviveRestart(t *testing.T) {
+	now := time.Date(2026, 8, 11, 14, 0, 0, 0, time.UTC)
+	clock, freeze, version, ids := &fakeClock{now: now}, &fakeFreeze{}, &policyVersion{version: "policy_7"}, &sources{}
+	path := filepath.Join(t.TempDir(), "control.log")
+	lifecycle, journal, _ := newLifecycleForTest(t, path, clock, freeze, version, ids)
+
+	first, err := lifecycle.Submit(context.Background(), controlIntent("pilot_first", "200"))
+	if err != nil || first.State != StatePendingApproval {
+		t.Fatalf("first pilot reservation = %+v, %v", first, err)
+	}
+	secondIntent := controlIntent("pilot_second", "101")
+	secondIntent.TaskID = "task_other"
+	second, err := lifecycle.Submit(context.Background(), secondIntent)
+	if err != nil || second.State != StateDenied || second.Decision.Reason != policy.ReasonPilotOutstandingLimit {
+		t.Fatalf("outstanding denial = %+v, %v", second, err)
+	}
+	stricter, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: "199", MaxOutstandingAtomic: "300"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.pilotLimits = stricter
+	overPerAction := controlIntent("pilot_per_action", "200")
+	overPerAction.TaskID = "task_third"
+	third, err := lifecycle.Submit(context.Background(), overPerAction)
+	if err != nil || third.State != StateDenied || third.Decision.Reason != policy.ReasonPilotPerActionLimit {
+		t.Fatalf("per-action denial = %+v, %v", third, err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, reopened, _ := newLifecycleForTest(t, path, clock, freeze, version, ids)
+	defer reopened.Close()
+	afterRestart := controlIntent("pilot_restart", "101")
+	afterRestart.TaskID = "task_restart"
+	denied, err := restarted.Submit(context.Background(), afterRestart)
+	if err != nil || denied.Decision.Reason != policy.ReasonPilotOutstandingLimit {
+		t.Fatalf("restart reset pilot exposure: %+v, %v", denied, err)
+	}
 }
 
 func controlIntent(id string, amount string) PaymentIntent {

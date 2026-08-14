@@ -41,9 +41,10 @@
   },
   "pilot": {
     "fundingEnabled": false,
-    "limitsEnforced": false,
-    "maximumPerCallUsdc": null,
-    "maximumOutstandingUsdc": null,
+    "limitsEnforced": true,
+    "maximumPerCallUsdc": "1.000000",
+    "maximumOutstandingUsdc": "10.000000",
+    "signerAccountingPosture": "conservative-lifetime-reservation",
     "exactApprovalOnly": true
   },
   "verification": {

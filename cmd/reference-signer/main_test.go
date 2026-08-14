@@ -128,13 +128,31 @@ func TestValidateConfigRejectsNestedDuplicateAndUnsafePermissions(t *testing.T) 
 	}
 }
 
+func TestLoadConfigPinsInitialBaseMainnetPilotLimits(t *testing.T) {
+	dir := t.TempDir()
+	config := fileConfig{
+		Version: configVersion, OrganizationID: "org-1", CustomerID: "customer-1", ReceiptKeyID: "receipt-1",
+		ChainID: 8453, MaxAmountAtomic: "1000000", MaxOutstandingAtomic: "10000001",
+		MaxTTLSeconds: 300, MaxFutureSkewSeconds: 5, StallThresholdSeconds: 120,
+		MaxFutureBlockSkewSeconds: 5, RequestTimeoutSeconds: 2, ObserverQuorum: 2,
+		NonceJournalPath: filepath.Join(dir, "nonces.log"), AttemptJournalPath: filepath.Join(dir, "attempts.log"),
+	}
+	raw, _ := json.Marshal(config)
+	path := filepath.Join(dir, "config.json")
+	writePrivate(t, path, string(raw))
+	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "initial Base mainnet profile") {
+		t.Fatalf("changed mainnet pilot profile error = %v", err)
+	}
+}
+
 func validConfig(dir string, flowPublic ed25519.PublicKey, walletKey *ecdsa.PrivateKey, receiptPath, freezePath string) fileConfig {
 	return fileConfig{
 		Version: configVersion, OrganizationID: "org-1", CustomerID: "customer-1",
 		TrustKeys: []trustKeyConfig{{KeyID: "flowops-1", PublicKeyB64: base64.StdEncoding.EncodeToString(flowPublic)}},
 		ChainID:   84532, Asset: "0x1111111111111111111111111111111111111111",
 		AllowedRecipients: []string{"0x2222222222222222222222222222222222222222"}, MaxAmountAtomic: "10000000",
-		MaxTTLSeconds: 300, MaxFutureSkewSeconds: 5,
+		MaxOutstandingAtomic: "50000000",
+		MaxTTLSeconds:        300, MaxFutureSkewSeconds: 5,
 		BaseRPCProviders: []reconciliation.RPCProvider{{Name: "alpha", URL: "https://alpha.rpc.example"}, {Name: "beta", URL: "https://beta.rpc.example"}},
 		PrimaryBaseRPC:   "alpha", ObserverQuorum: 2, MaxHeadSkew: 2, StallThresholdSeconds: 120, MaxFutureBlockSkewSeconds: 5,
 		WalletRPCURL: "http://127.0.0.1:8550", Sender: strings.ToLower(crypto.PubkeyToAddress(walletKey.PublicKey).Hex()),

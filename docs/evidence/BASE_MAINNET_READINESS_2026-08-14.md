@@ -88,7 +88,8 @@ arguments; the fork rehearsal uses the documented public Base endpoint.
 - no funded reference-signer Base Sepolia proof;
 - no selected independent paid production RPC providers;
 - no approved source-verification ceremony;
-- no independently enforced capped-pilot limits; and
+- capped-pilot limits are independently enforced, but funding remains disabled
+  and all other promotion gates remain open;
 - no explicit mainnet broadcast approval.
 
 Until all gates are independently evidenced in a separate promotion PR, the

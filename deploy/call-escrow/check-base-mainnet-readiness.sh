@@ -38,9 +38,10 @@ jq -e '
   and .gates.sourceVerificationPlanApproved == false
   and .gates.explicitBroadcastApproval == false
   and .pilot.fundingEnabled == false
-  and .pilot.limitsEnforced == false
-  and .pilot.maximumPerCallUsdc == null
-  and .pilot.maximumOutstandingUsdc == null
+  and .pilot.limitsEnforced == true
+  and .pilot.maximumPerCallUsdc == "1.000000"
+  and .pilot.maximumOutstandingUsdc == "10.000000"
+  and .pilot.signerAccountingPosture == "conservative-lifetime-reservation"
   and .pilot.exactApprovalOnly == true
   and (.verification.verifiedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
   and (.verification.canonicalAnchor.block | type == "number" and . > 0)

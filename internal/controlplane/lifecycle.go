@@ -14,6 +14,7 @@ import (
 
 	"github.com/gnanam1990/flowops/internal/policy"
 	"github.com/gnanam1990/flowops/pkg/envelope"
+	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 )
 
 const (
@@ -86,6 +87,7 @@ type Config struct {
 	NonceSource           func() (string, error)
 	EnvelopeKeyID         string
 	EnvelopePrivateKey    ed25519.PrivateKey
+	PilotLimits           *pilotlimits.Limits
 }
 
 type Lifecycle struct {
@@ -102,6 +104,7 @@ type Lifecycle struct {
 	nonceSource            func() (string, error)
 	envelopeKeyID          string
 	envelopePrivateKey     ed25519.PrivateKey
+	pilotLimits            *pilotlimits.Limits
 	records                map[string]Record
 	requestByIntent        map[string]string
 	requestByAuthorization map[string]string
@@ -113,8 +116,8 @@ func New(cfg Config) (*Lifecycle, error) {
 	if provider == nil && cfg.Policy != nil && cfg.ActivePolicyVersion != nil {
 		provider = staticPolicyProvider{engine: cfg.Policy, activeVersion: cfg.ActivePolicyVersion}
 	}
-	if provider == nil || cfg.Journal == nil || cfg.FreezeGate == nil || cfg.ChainGate == nil {
-		return nil, errors.New("policy provider, journal, freeze gate, and chain gate are required")
+	if provider == nil || cfg.Journal == nil || cfg.FreezeGate == nil || cfg.ChainGate == nil || cfg.PilotLimits == nil {
+		return nil, errors.New("policy provider, journal, freeze gate, chain gate, and pilot limits are required")
 	}
 	if cfg.RequestIDSource == nil || cfg.AuthorizationIDSource == nil || cfg.NonceSource == nil {
 		return nil, errors.New("request ID, authorization ID, and nonce sources are required")
@@ -135,7 +138,8 @@ func New(cfg Config) (*Lifecycle, error) {
 		authorizationTTL: cfg.AuthorizationTTL, requestIDSource: cfg.RequestIDSource,
 		authorizationIDSource: cfg.AuthorizationIDSource, nonceSource: cfg.NonceSource,
 		envelopeKeyID: cfg.EnvelopeKeyID, envelopePrivateKey: append(ed25519.PrivateKey(nil), cfg.EnvelopePrivateKey...),
-		records: make(map[string]Record), requestByIntent: make(map[string]string),
+		pilotLimits: cfg.PilotLimits,
+		records:     make(map[string]Record), requestByIntent: make(map[string]string),
 		requestByAuthorization: make(map[string]string), requestByNonce: make(map[string]string),
 	}
 	for _, event := range cfg.Journal.Events() {
@@ -174,6 +178,18 @@ func (l *Lifecycle) Submit(ctx context.Context, intent PaymentIntent) (Record, e
 	}
 	if !idPattern.MatchString(decision.PolicyVersion) {
 		return Record{}, errors.New("policy returned an invalid version identifier")
+	}
+	if decision.Outcome != policy.Deny {
+		if limitErr := l.pilotLimits.Check(intent.AmountAtomic, l.pilotOutstanding(intent)); limitErr != nil {
+			switch {
+			case errors.Is(limitErr, pilotlimits.ErrPerActionExceeded):
+				decision = policy.Decision{Outcome: policy.Deny, Reason: policy.ReasonPilotPerActionLimit, PolicyVersion: decision.PolicyVersion}
+			case errors.Is(limitErr, pilotlimits.ErrOutstandingExceeded):
+				decision = policy.Decision{Outcome: policy.Deny, Reason: policy.ReasonPilotOutstandingLimit, PolicyVersion: decision.PolicyVersion}
+			default:
+				return Record{}, fmt.Errorf("evaluate pilot limits: %w", limitErr)
+			}
+		}
 	}
 	state, err := decisionState(decision)
 	if err != nil {
@@ -437,6 +453,20 @@ func (l *Lifecycle) spendSnapshot(intent PaymentIntent, now time.Time) policy.Sp
 		TaskSpentAtomic: "0", TaskReservedAtomic: taskReserved.String(),
 		DailySpentAtomic: "0", DailyReservedAtomic: dailyReserved.String(),
 	}
+}
+
+func (l *Lifecycle) pilotOutstanding(intent PaymentIntent) string {
+	total := new(big.Int)
+	for _, record := range l.records {
+		if !reservationActive(record.State) || record.Intent.OrganizationID != intent.OrganizationID || record.Intent.CustomerID != intent.CustomerID {
+			continue
+		}
+		amount, ok := new(big.Int).SetString(record.Intent.AmountAtomic, 10)
+		if ok {
+			total.Add(total, amount)
+		}
+	}
+	return total.String()
 }
 
 func reservationActive(state State) bool {

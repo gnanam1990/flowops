@@ -16,6 +16,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 		"FLOWOPS_DATABASE_URL", "FLOWOPS_ENVELOPE_KEY_ID", "FLOWOPS_ENVELOPE_PRIVATE_KEY_B64",
 		"FLOWOPS_SITE_SESSION_KEY_B64", "FLOWOPS_RECONCILIATION_JOURNAL", "FLOWOPS_OPERATOR_CONTROL_KEY_B64",
 		"FLOWOPS_BASE_RPC_PROVIDERS_JSON",
+		"FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC",
 	} {
 		t.Setenv(name, "")
 	}
@@ -157,6 +158,25 @@ func setObserverRuntime(t *testing.T) {
 	t.Helper()
 	t.Setenv("FLOWOPS_OPERATOR_CONTROL_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32))))
 	t.Setenv("FLOWOPS_BASE_RPC_PROVIDERS_JSON", `[{"name":"rpc_alpha","url":"https://alpha.rpc.example/v1"},{"name":"rpc_beta","url":"https://beta.rpc.example/v1"}]`)
+	t.Setenv("FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "1000000")
+	t.Setenv("FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC", "10000000")
+}
+
+func TestLoadConfigRejectsUnsafePilotLimits(t *testing.T) {
+	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("l", ed25519.SeedSize)))
+	setObserverRuntime(t)
+	t.Setenv("FLOWOPS_DATABASE_URL", strings.Join([]string{"postgres", "://flowops@localhost/flowops?sslmode=require"}, ""))
+	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
+	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
+	t.Setenv("FLOWOPS_SITE_SESSION_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
+	t.Setenv("FLOWOPS_RECONCILIATION_JOURNAL", "/var/lib/flowops/reconciliation.log")
+	for _, value := range []string{"", "0", "010", "10000001"} {
+		t.Setenv("FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", value)
+		t.Setenv("FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC", "10000000")
+		if _, err := loadConfig(); err == nil {
+			t.Fatalf("unsafe per-action pilot limit %q accepted", value)
+		}
+	}
 }
 
 func TestExpirySweeperRejectsInvalidConfiguration(t *testing.T) {

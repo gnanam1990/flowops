@@ -20,6 +20,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 	"github.com/gnanam1990/flowops/pkg/envelope"
+	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 	"github.com/gnanam1990/flowops/pkg/referencesigner"
 	"github.com/gnanam1990/flowops/pkg/referencewallet"
 )
@@ -39,6 +40,7 @@ type fileConfig struct {
 	Asset                     string                       `json:"asset"`
 	AllowedRecipients         []string                     `json:"allowedRecipients"`
 	MaxAmountAtomic           string                       `json:"maxAmountAtomic"`
+	MaxOutstandingAtomic      string                       `json:"maxOutstandingAtomic"`
 	MaxTTLSeconds             int64                        `json:"maxTtlSeconds"`
 	MaxFutureSkewSeconds      int64                        `json:"maxFutureSkewSeconds"`
 	BaseRPCProviders          []reconciliation.RPCProvider `json:"baseRpcProviders"`
@@ -183,9 +185,16 @@ func buildRuntime(config fileConfig, client *http.Client) (*runtime, error) {
 		_ = nonces.Close()
 		return nil, err
 	}
+	pilot, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: config.MaxAmountAtomic, MaxOutstandingAtomic: config.MaxOutstandingAtomic})
+	if err != nil {
+		_ = attempts.Close()
+		_ = nonces.Close()
+		return nil, err
+	}
 	executor, err := referencesigner.NewExecutor(referencesigner.ExecutorConfig{
 		Verifier: verifier, Wallet: wallet, Registration: registration, Journal: attempts,
 		ReceiptKeyID: config.ReceiptKeyID, ReceiptPrivateKey: receiptKey,
+		PilotLimits: pilot,
 	})
 	if err != nil {
 		_ = attempts.Close()
@@ -205,6 +214,9 @@ func validateExternalFiles(config fileConfig, client *http.Client) error {
 		StallThreshold: time.Duration(config.StallThresholdSeconds) * time.Second,
 		MaxFutureSkew:  time.Duration(config.MaxFutureBlockSkewSeconds) * time.Second,
 	}); err != nil {
+		return err
+	}
+	if _, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: config.MaxAmountAtomic, MaxOutstandingAtomic: config.MaxOutstandingAtomic}); err != nil {
 		return err
 	}
 	if config.NonceJournalPath == config.AttemptJournalPath {
@@ -285,6 +297,15 @@ func loadConfig(path string) (fileConfig, error) {
 	}
 	if config.ObserverQuorum < 2 || config.ObserverQuorum > 5 || config.MaxHeadSkew > 32 || config.NonceJournalPath == config.AttemptJournalPath {
 		return fileConfig{}, errors.New("reference signer observer or journal configuration is invalid")
+	}
+	if _, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: config.MaxAmountAtomic, MaxOutstandingAtomic: config.MaxOutstandingAtomic}); err != nil {
+		return fileConfig{}, fmt.Errorf("reference signer pilot limits: %w", err)
+	}
+	if config.ChainID == 8453 {
+		limits, _ := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: config.MaxAmountAtomic, MaxOutstandingAtomic: config.MaxOutstandingAtomic})
+		if err := limits.RequireInitialBaseMainnetProfile(); err != nil {
+			return fileConfig{}, err
+		}
 	}
 	return config, nil
 }

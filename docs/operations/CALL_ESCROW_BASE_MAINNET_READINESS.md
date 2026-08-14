@@ -25,8 +25,9 @@ variable.
 
 The canonical blocked record is
 `deployments/base-mainnet-readiness.json`. It intentionally contains no
-contract address, transaction hash, block, reviewed source commit, deployer, or
-pilot limit.
+contract address, transaction hash, block, reviewed source commit, or deployer.
+It records the implemented but still unfunded 1 USDC per-call and 10 USDC
+conservative aggregate pilot profile.
 
 ## Stage 1: evidence and production dependencies
 
@@ -47,8 +48,8 @@ Complete all items in a separate promotion package:
    credential-bearing URLs only in the deployment secret manager.
 7. Rehearse source verification, constructor decoding, runtime bytecode hashing,
    immutable getter reads, and dual-provider receipt confirmation.
-8. Enforce the same pilot caps in the control plane and customer signer. The
-   readiness record must not claim limits before both enforcement tests pass.
+8. Re-run the independent pilot-cap tests. The control plane and customer
+   signer now enforce the pinned profile, but this does not enable funding.
 
 ## Stage 2: local and read-only verification
 
@@ -92,7 +93,7 @@ Only after Stage 1 is evidenced may a separate PR:
 - designate the production deployer in the script and readiness registry;
 - set the external-review digest;
 - set `MAINNET_BROADCAST_ENABLED = true`;
-- pin the reviewed source commit and executable pilot caps;
+- pin the reviewed source commit without changing the executable pilot caps;
 - add a Base mainnet deployment evidence validator; and
 - include the exact source-verification command for the selected explorer.
 

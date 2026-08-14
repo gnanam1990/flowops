@@ -9,6 +9,9 @@ local journals.
 
 1. Copy `deploy/reference-signer/config.example.json` outside the repository,
    replace every placeholder, and set mode `0600`.
+   For the initial Base mainnet profile, `maxAmountAtomic` must be `1000000`
+   and `maxOutstandingAtomic` must be `10000000`. The signer conservatively
+   retains every prepared attempt against that aggregate limit after restart.
 2. Create a mode-`0600` freeze file:
 
    ```json
