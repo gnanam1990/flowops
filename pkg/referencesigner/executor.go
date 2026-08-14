@@ -7,11 +7,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 	"github.com/gnanam1990/flowops/pkg/envelope"
+	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 )
 
 type AuthorizationVerifier interface {
@@ -42,6 +44,7 @@ type ExecutorConfig struct {
 	ReceiptKeyID      string
 	ReceiptPrivateKey ed25519.PrivateKey
 	Clock             func() time.Time
+	PilotLimits       *pilotlimits.Limits
 }
 
 type Executor struct {
@@ -54,11 +57,12 @@ type Executor struct {
 	receiptPrivateKey ed25519.PrivateKey
 	receiptPublicKey  ed25519.PublicKey
 	clock             func() time.Time
+	pilotLimits       *pilotlimits.Limits
 }
 
 func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
-	if cfg.Verifier == nil || cfg.Wallet == nil || cfg.Registration == nil || cfg.Journal == nil {
-		return nil, errors.New("verifier, wallet, registration sink, and attempt journal are required")
+	if cfg.Verifier == nil || cfg.Wallet == nil || cfg.Registration == nil || cfg.Journal == nil || cfg.PilotLimits == nil {
+		return nil, errors.New("verifier, wallet, registration sink, attempt journal, and pilot limits are required")
 	}
 	if !envelope.ValidIdentifier(cfg.ReceiptKeyID) || len(cfg.ReceiptPrivateKey) != ed25519.PrivateKeySize {
 		return nil, errors.New("receipt attestation identity is invalid")
@@ -80,6 +84,7 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 		verifier: cfg.Verifier, wallet: cfg.Wallet, registration: cfg.Registration, journal: cfg.Journal,
 		receiptKeyID: cfg.ReceiptKeyID, receiptPrivateKey: privateKey,
 		receiptPublicKey: append(ed25519.PublicKey(nil), publicKey...), clock: clock,
+		pilotLimits: cfg.PilotLimits,
 	}, nil
 }
 
@@ -97,6 +102,9 @@ func (e *Executor) Execute(ctx context.Context, signed envelope.SignedAuthorizat
 			return Attempt{}, ErrAttemptConflict
 		}
 		return e.advance(ctx, existing)
+	}
+	if err := e.pilotLimits.Check(signed.Authorization.AmountAtomic, e.pilotOutstanding()); err != nil {
+		return Attempt{}, err
 	}
 	authorized, err := e.verifier.Authorize(ctx, signed)
 	if err != nil {
@@ -122,6 +130,20 @@ func (e *Executor) Execute(ctx context.Context, signed envelope.SignedAuthorizat
 		return Attempt{}, err
 	}
 	return e.advance(ctx, attempt)
+}
+
+// pilotOutstanding is deliberately conservative: every durable prepared
+// attempt remains reserved until a future independently verified settlement
+// release protocol exists. Restart therefore cannot silently reset exposure.
+func (e *Executor) pilotOutstanding() string {
+	total := new(big.Int)
+	for _, attempt := range e.journal.Attempts() {
+		amount, ok := new(big.Int).SetString(attempt.Authorized.Authorization.AmountAtomic, 10)
+		if ok {
+			total.Add(total, amount)
+		}
+	}
+	return total.String()
 }
 
 // ResumePending recovers every durable non-terminal attempt in authorization

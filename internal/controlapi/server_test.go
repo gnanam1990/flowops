@@ -22,6 +22,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/policy"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/envelope"
+	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 )
 
 const (
@@ -382,6 +383,10 @@ func testLifecycleWithClock(t *testing.T, store Store, chain *mutableChain, cloc
 	}
 	seed, _ := hex.DecodeString(strings.Repeat("07", ed25519.SeedSize))
 	privateKey := ed25519.NewKeyFromSeed(seed)
+	pilot, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: "200", MaxOutstandingAtomic: "1000"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var request, authorization, nonce atomic.Uint64
 	lifecycle, err := controlplane.New(controlplane.Config{
 		Policy: engine, ActivePolicyVersion: func() string { return "policy_1" }, Journal: journal,
@@ -391,6 +396,7 @@ func testLifecycleWithClock(t *testing.T, store Store, chain *mutableChain, cloc
 		AuthorizationIDSource: func() (string, error) { return fmt.Sprintf("auth_%d", authorization.Add(1)), nil },
 		NonceSource:           func() (string, error) { return fmt.Sprintf("0x%064x", nonce.Add(1)), nil },
 		EnvelopeKeyID:         "flowops_control_1", EnvelopePrivateKey: privateKey,
+		PilotLimits: pilot,
 	})
 	if err != nil {
 		journal.Close()

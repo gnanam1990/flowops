@@ -14,6 +14,7 @@ import (
 
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 	"github.com/gnanam1990/flowops/pkg/envelope"
+	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -172,10 +173,15 @@ func newExecutorFixture(t *testing.T) *executorFixture {
 
 func (f *executorFixture) newExecutor(t *testing.T, journal *AttemptJournal, verifier AuthorizationVerifier, wallet WalletAdapter, sink RegistrationSink) *Executor {
 	t.Helper()
+	pilot, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: "100000", MaxOutstandingAtomic: "1000000"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	executor, err := NewExecutor(ExecutorConfig{
 		Verifier: verifier, Wallet: wallet, Registration: sink, Journal: journal,
 		ReceiptKeyID: "customer_receipt_1", ReceiptPrivateKey: f.receiptKey,
-		Clock: func() time.Time { return f.now },
+		Clock:       func() time.Time { return f.now },
+		PilotLimits: pilot,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -518,11 +524,50 @@ func TestExecutorRejectsNonCanonicalReceiptPrivateKey(t *testing.T) {
 	f := newExecutorFixture(t)
 	bad := append(ed25519.PrivateKey(nil), f.receiptKey...)
 	bad[len(bad)-1] ^= 1
+	pilot, _ := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: "100000", MaxOutstandingAtomic: "1000000"})
 	if _, err := NewExecutor(ExecutorConfig{
 		Verifier: f.verifier, Wallet: f.wallet, Registration: f.sink, Journal: f.journal,
 		ReceiptKeyID: "customer_receipt_1", ReceiptPrivateKey: bad,
+		PilotLimits: pilot,
 	}); err == nil {
 		t.Fatal("non-canonical receipt key accepted")
+	}
+}
+
+func TestExecutorPilotOutstandingLimitIsDurableAndPreWallet(t *testing.T) {
+	f := newExecutorFixture(t)
+	pilot, err := pilotlimits.Compile(pilotlimits.Config{MaxPerActionAtomic: "1000", MaxOutstandingAtomic: "1500"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.executor.pilotLimits = pilot
+	f.signed.Authorization.AmountAtomic = "1000"
+	if _, err := f.executor.Execute(context.Background(), f.signed); err != nil {
+		t.Fatal(err)
+	}
+	second := f.signed
+	second.Authorization.AuthorizationID = "auth_executor_2"
+	second.Authorization.Nonce = "0x" + strings.Repeat("b", 64)
+	second.Authorization.AmountAtomic = "501"
+	if _, err := f.executor.Execute(context.Background(), second); !errors.Is(err, pilotlimits.ErrOutstandingExceeded) {
+		t.Fatalf("outstanding limit error = %v", err)
+	}
+	prepareCalls, broadcastCalls := f.wallet.calls()
+	if prepareCalls != 1 || broadcastCalls != 1 || f.verifier.authorizeCalls != 1 {
+		t.Fatalf("limit crossing reached signer boundary: prepare=%d broadcast=%d authorize=%d", prepareCalls, broadcastCalls, f.verifier.authorizeCalls)
+	}
+	if err := f.journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenAttemptJournal(f.journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restarted := f.newExecutor(t, reopened, f.verifier, f.wallet, f.sink)
+	restarted.pilotLimits = pilot
+	if _, err := restarted.Execute(context.Background(), second); !errors.Is(err, pilotlimits.ErrOutstandingExceeded) {
+		t.Fatalf("restart reset signer pilot exposure: %v", err)
 	}
 }
 

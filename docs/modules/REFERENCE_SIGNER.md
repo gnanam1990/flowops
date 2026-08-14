@@ -2,7 +2,9 @@
 
 Status: verifier, durable nonce store, one-way executor, signed receipt,
 strict callback transport, Clef direct-USDC adapter, and runnable command
-implemented; live Base Sepolia execution remains separately approved and open
+implemented; independent durable direct-USDC pilot exposure limits are
+enforced; escrow execution and live Base Sepolia execution remain separately
+approved and open
 
 Packages: `pkg/referencesigner`, `pkg/referencewallet`
 Command: `cmd/reference-signer`
@@ -27,12 +29,15 @@ and a Base transaction.
 
 1. Verify signature, identity, limits, time, freeze, chain health, and a durable
    one-time nonce.
-2. Ask the wallet adapter to prepare, but not submit, one exact transaction.
-3. Validate and durably store the raw transaction/hash in `PREPARED`.
-4. Re-verify the current trust root and all local gates.
-5. Durably enter `BROADCASTING`, then invoke the wallet exactly once.
-6. Persist `SUBMITTED` or `AMBIGUOUS` even if the caller was cancelled.
-7. Sign and retry only the FlowOps receipt callback until `REGISTERED`.
+2. Refuse the configured per-action or conservative aggregate pilot ceiling
+   before wallet preparation. Reconstruct the aggregate from the durable
+   attempt journal after restart.
+3. Ask the wallet adapter to prepare, but not submit, one exact transaction.
+4. Validate and durably store the raw transaction/hash in `PREPARED`.
+5. Re-verify the current trust root and all local gates.
+6. Durably enter `BROADCASTING`, then invoke the wallet exactly once.
+7. Persist `SUBMITTED` or `AMBIGUOUS` even if the caller was cancelled.
+8. Sign and retry only the FlowOps receipt callback until `REGISTERED`.
 
 ## Output
 
@@ -56,15 +61,24 @@ evidence before recognizing settlement.
 ```sh
 go test -race ./cmd/reference-signer ./pkg/referencesigner ./pkg/referencewallet ./pkg/broadcastreceipt
 make smoke-reference-signer
+make smoke-pilot-limits
 ```
 
 The smoke target executes the full command wiring against in-memory Base, Clef,
 and FlowOps transports. It validates a real signed EIP-1559 transaction but
 never contacts Base or moves funds.
 
+The required aggregate cap changed the strict file schema to
+`flowops.reference-signer.v2`. Version `v1` is rejected rather than guessed;
+operators must add `maxOutstandingAtomic`, review the value, and explicitly
+update the version before restarting.
+
 ## Remaining integration gate
 
-Independently review the adapter and runnable command, then execute a separately
+Independently review the direct-USDC adapter and runnable command, then execute a separately
 approved, capped Base Sepolia test with a designated customer wallet and
 configured receipt public key. This module does not authorize that funded test
 by itself, and mainnet remains blocked.
+
+The command currently rejects `escrow` and `x402`. Do not cite its direct-USDC
+pilot gate as CallEscrow limit enforcement.

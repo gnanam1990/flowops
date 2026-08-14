@@ -23,6 +23,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -47,6 +48,7 @@ type startupConfig struct {
 	reconciliationInterval time.Duration
 	reconciliationTimeout  time.Duration
 	signerReceiptKeys      []controlapi.BroadcastKey
+	pilotLimits            *pilotlimits.Limits
 }
 
 func main() {
@@ -109,6 +111,7 @@ func run(ctx context.Context) error {
 		AuthorizationIDSource: func() (string, error) { return randomID("auth") },
 		NonceSource:           func() (string, error) { return randomNonce() },
 		EnvelopeKeyID:         cfg.envelopeKeyID, EnvelopePrivateKey: cfg.envelopeKey,
+		PilotLimits: cfg.pilotLimits,
 	})
 	if err != nil {
 		return fmt.Errorf("create lifecycle: %w", err)
@@ -252,6 +255,14 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, err
 	}
 	cfg.signerReceiptKeys = signerReceiptKeys
+	pilot, err := pilotlimits.Compile(pilotlimits.Config{
+		MaxPerActionAtomic:   strings.TrimSpace(os.Getenv("FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC")),
+		MaxOutstandingAtomic: strings.TrimSpace(os.Getenv("FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC")),
+	})
+	if err != nil {
+		return startupConfig{}, fmt.Errorf("pilot limits: %w", err)
+	}
+	cfg.pilotLimits = pilot
 	observerRuntime, err := loadObserverRuntimeConfig()
 	if err != nil {
 		return startupConfig{}, err
@@ -262,6 +273,11 @@ func loadConfig() (startupConfig, error) {
 	cfg.observerTimeout = observerRuntime.timeout
 	cfg.reconciliationInterval = observerRuntime.reconciliationInterval
 	cfg.reconciliationTimeout = observerRuntime.reconciliationTimeout
+	if cfg.observerConfig.ChainID == 8453 {
+		if err := cfg.pilotLimits.RequireInitialBaseMainnetProfile(); err != nil {
+			return startupConfig{}, err
+		}
+	}
 	trustProxy, err := parseStrictBool("FLOWOPS_TRUST_PROXY_HEADERS", os.Getenv("FLOWOPS_TRUST_PROXY_HEADERS"))
 	if err != nil {
 		return startupConfig{}, err

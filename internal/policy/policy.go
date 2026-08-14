@@ -36,6 +36,8 @@ const (
 	ReasonDailyBudget            Reason = "DAILY_BUDGET_EXCEEDED"
 	ReasonHumanApprovalThreshold Reason = "HUMAN_APPROVAL_THRESHOLD"
 	ReasonRailRequiresApproval   Reason = "RAIL_REQUIRES_APPROVAL"
+	ReasonPilotPerActionLimit    Reason = "PILOT_PER_ACTION_LIMIT_EXCEEDED"
+	ReasonPilotOutstandingLimit  Reason = "PILOT_OUTSTANDING_LIMIT_EXCEEDED"
 )
 
 type Config struct {

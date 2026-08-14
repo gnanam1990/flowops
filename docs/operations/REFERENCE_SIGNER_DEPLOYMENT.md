@@ -5,10 +5,17 @@ authorization public keys and the callback URL; it never receives the Clef
 keystore, wallet key, receipt private key, raw transaction, RPC credentials, or
 local journals.
 
+Current strict config version: `flowops.reference-signer.v2`. Existing `v1`
+files must be copied, given a reviewed `maxOutstandingAtomic`, and explicitly
+versioned to `v2`; the command fails closed instead of migrating economic limits.
+
 ## Prepare customer-owned files
 
 1. Copy `deploy/reference-signer/config.example.json` outside the repository,
    replace every placeholder, and set mode `0600`.
+   For the initial Base mainnet profile, `maxAmountAtomic` must be `1000000`
+   and `maxOutstandingAtomic` must be `10000000`. The signer conservatively
+   retains every prepared attempt against that aggregate limit after restart.
 2. Create a mode-`0600` freeze file:
 
    ```json
