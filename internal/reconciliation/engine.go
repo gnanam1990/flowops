@@ -22,6 +22,10 @@ const (
 	eventExecutionReorged    = "execution_reorged"
 	eventExecutionQuarantine = "execution_quarantine"
 	eventLedgerPosted        = "ledger_posted"
+	eventEscrowIntent        = "escrow_intent_registered"
+	eventEscrowPending       = "escrow_transition_pending"
+	eventEscrowResolved      = "escrow_transition_resolved"
+	eventEscrowReorged       = "escrow_transition_reorged"
 )
 
 type chainPayload struct {
@@ -50,6 +54,9 @@ type Engine struct {
 	status             ChainStatus
 	executions         map[string]Execution
 	executionByHash    map[string]string
+	escrowCalls        map[string]EscrowCall
+	escrowByAuth       map[string]string
+	escrowByHash       map[string]string
 	ledger             map[string]LedgerTransaction
 	balances           map[string]map[string]*big.Int
 	lastResumeOperator string
@@ -71,6 +78,7 @@ func Open(path string, config Config) (*Engine, error) {
 			RequiredObserverQuorum: config.ObserverQuorum, StateChangedAt: now,
 		},
 		executions: make(map[string]Execution), executionByHash: make(map[string]string),
+		escrowCalls: make(map[string]EscrowCall), escrowByAuth: make(map[string]string), escrowByHash: make(map[string]string),
 		ledger: make(map[string]LedgerTransaction), balances: make(map[string]map[string]*big.Int),
 	}
 	engine.setPauseFlags(&engine.status)
@@ -288,6 +296,9 @@ func (e *Engine) RegisterBroadcast(ctx context.Context, expected ExpectedExecuti
 	if other, ok := e.executionByHash[expected.TransactionHash]; ok && other != expected.ExecutionID {
 		return Execution{}, ErrConflict
 	}
+	if _, ok := e.escrowByHash[expected.TransactionHash]; ok {
+		return Execution{}, ErrConflict
+	}
 	now := e.config.Clock().UTC()
 	if !e.chainUsable(now) {
 		return Execution{}, fmt.Errorf("%w: state=%s", ErrChainUnavailable, e.statusAt(now).State)
@@ -325,6 +336,9 @@ func (e *Engine) RegisterAttestedBroadcast(ctx context.Context, expected Expecte
 		return Execution{}, ErrConflict
 	}
 	if other, ok := e.executionByHash[expected.TransactionHash]; ok && other != expected.ExecutionID {
+		return Execution{}, ErrConflict
+	}
+	if _, ok := e.escrowByHash[expected.TransactionHash]; ok {
 		return Execution{}, ErrConflict
 	}
 	now := e.config.Clock().UTC()
@@ -639,6 +653,9 @@ func (e *Engine) apply(event journalEvent) error {
 		if err := e.preserveBroadcastAttestation(&payload.Execution); err != nil {
 			return err
 		}
+		if _, exists := e.escrowByHash[payload.Execution.Expected.TransactionHash]; exists {
+			return errors.New("execution transaction hash is already bound to an escrow transition")
+		}
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
 		e.executionByHash[payload.Execution.Expected.TransactionHash] = payload.Execution.Expected.ExecutionID
 	case eventExecutionResolved, eventExecutionReorged:
@@ -652,6 +669,69 @@ func (e *Engine) apply(event journalEvent) error {
 		e.executions[payload.Execution.Expected.ExecutionID] = cloneExecution(payload.Execution)
 		if payload.Ledger != nil {
 			e.applyLedger(*payload.Ledger)
+		}
+		if payload.Status != nil {
+			e.status = cloneStatus(*payload.Status)
+			e.trackManualRelease("")
+		}
+	case eventEscrowIntent, eventEscrowPending, eventEscrowResolved, eventEscrowReorged:
+		var payload escrowPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return err
+		}
+		callID := payload.Call.Intent.CallID
+		if event.Key != callID {
+			return errors.New("escrow event key does not match call identity")
+		}
+		if e.config.EscrowContract == "" || payload.Call.Intent.Contract != e.config.EscrowContract || payload.Call.Intent.Asset != e.config.EscrowAsset || payload.Call.Intent.ReleaseWindow != e.config.EscrowReleaseWindow {
+			return fmt.Errorf("%w: journal call does not match the configured reviewed tuple", ErrEscrowDeployment)
+		}
+		current, exists := e.escrowCalls[callID]
+		if event.Kind == eventEscrowIntent {
+			if exists || payload.Call.RegisteredAt != event.At || payload.Call.Pending != nil || len(payload.Call.Transitions) != 0 {
+				return errors.New("escrow intent event does not create exactly one new call")
+			}
+		} else if !exists || !equalJSON(current.Intent, payload.Call.Intent) || current.RegisteredAt != payload.Call.RegisteredAt {
+			return errors.New("escrow event changed immutable call identity")
+		}
+		if other, ok := e.escrowByAuth[payload.Call.Intent.AuthorizationID]; ok && other != callID {
+			return errors.New("escrow authorization is already bound to another call")
+		}
+		for _, transition := range payload.Call.Transitions {
+			if other, ok := e.escrowByHash[transition.Expected.TransactionHash]; ok && other != callID {
+				return errors.New("escrow transaction hash is already bound to another call")
+			}
+			if _, ok := e.executionByHash[transition.Expected.TransactionHash]; ok {
+				return errors.New("escrow transaction hash is already bound to a direct execution")
+			}
+		}
+		if payload.Call.Pending != nil {
+			if other, ok := e.escrowByHash[payload.Call.Pending.Expected.TransactionHash]; ok && other != callID {
+				return errors.New("pending escrow transaction hash is already bound to another call")
+			}
+			if _, ok := e.executionByHash[payload.Call.Pending.Expected.TransactionHash]; ok {
+				return errors.New("pending escrow transaction hash is already bound to a direct execution")
+			}
+		}
+		if err := payload.Call.validateSnapshot(e.config.ChainID); err != nil {
+			return fmt.Errorf("escrow snapshot: %w", err)
+		}
+		if err := e.validateEscrowEventEvolution(event.Kind, event.At, current, exists, payload); err != nil {
+			return fmt.Errorf("escrow event evolution: %w", err)
+		}
+		if err := validateEscrowLedgerBindings(payload.Call, payload.Ledgers, e.ledger, event.At); err != nil {
+			return fmt.Errorf("escrow ledger bindings: %w", err)
+		}
+		e.escrowCalls[callID] = cloneEscrowCall(payload.Call)
+		e.escrowByAuth[payload.Call.Intent.AuthorizationID] = callID
+		for _, transition := range payload.Call.Transitions {
+			e.escrowByHash[transition.Expected.TransactionHash] = callID
+		}
+		if payload.Call.Pending != nil {
+			e.escrowByHash[payload.Call.Pending.Expected.TransactionHash] = callID
+		}
+		for _, transaction := range payload.Ledgers {
+			e.applyLedger(transaction)
 		}
 		if payload.Status != nil {
 			e.status = cloneStatus(*payload.Status)
@@ -770,7 +850,7 @@ func (e *Engine) evaluateSnapshot(now time.Time, observations []Observation) (bo
 }
 
 func (e *Engine) validateReceiptQuorum(expected ExpectedExecution, evidence []ReceiptEvidence) (ReceiptEvidence, error) {
-	if len(evidence) < e.config.ObserverQuorum {
+	if len(evidence) < e.config.ObserverQuorum || len(evidence) > 5 {
 		return ReceiptEvidence{}, ErrUnsafeFinality
 	}
 	seen := make(map[string]struct{}, len(evidence))
@@ -904,6 +984,13 @@ func (e *Engine) markBroadcastsPending(status *ChainStatus) {
 			e.executions[id] = execution
 		}
 	}
+	for callID, call := range e.escrowCalls {
+		if call.Pending != nil && call.Pending.State == EscrowTransitionBroadcast {
+			call.Pending.State = EscrowTransitionPendingRecovery
+			call.Pending.Resolution = "chain halt requires canonical escrow transition reconciliation"
+			e.escrowCalls[callID] = call
+		}
+	}
 	status.AffectedExecutions = e.unresolvedCount()
 }
 
@@ -911,6 +998,11 @@ func (e *Engine) unresolvedCount() int {
 	count := 0
 	for _, execution := range e.executions {
 		if execution.State == ExecutionBroadcast || execution.State == ExecutionPendingChainRecovery {
+			count++
+		}
+	}
+	for _, call := range e.escrowCalls {
+		if call.Pending != nil && (call.Pending.State == EscrowTransitionBroadcast || call.Pending.State == EscrowTransitionPendingRecovery) {
 			count++
 		}
 	}

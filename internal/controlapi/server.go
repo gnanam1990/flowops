@@ -41,6 +41,7 @@ type ServerConfig struct {
 	SiteSessions             *SiteSessionCodec
 	OperatorControlKey       []byte
 	SignerBroadcasts         BroadcastRegistrar
+	Escrow                   *EscrowRegistrar
 }
 
 type Server struct {
@@ -53,6 +54,7 @@ type Server struct {
 	siteSessions             *SiteSessionCodec
 	operatorControlKey       []byte
 	signerBroadcasts         BroadcastRegistrar
+	escrow                   *EscrowRegistrar
 	handler                  http.Handler
 }
 
@@ -79,6 +81,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		commandCompletionTimeout: completionTimeout, siteSessions: cfg.SiteSessions,
 		operatorControlKey: append([]byte(nil), cfg.OperatorControlKey...),
 		signerBroadcasts:   cfg.SignerBroadcasts,
+		escrow:             cfg.Escrow,
 	}
 	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
 		return nil, errors.New("operator control key must contain exactly 32 bytes")
@@ -94,6 +97,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET /v1/commands/{commandID}", s.authenticate(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("GET /v1/dashboard/snapshot", s.authenticate(http.HandlerFunc(s.handleDashboardSnapshot)))
 	mux.HandleFunc("POST /v1/signer/broadcasts", s.handleSignerBroadcast)
+	if s.escrow != nil {
+		mux.Handle("POST /v1/escrow/intents/{authorizationID}", s.authenticate(http.HandlerFunc(s.handleEscrowIntent)))
+		mux.Handle("POST /v1/escrow/calls/{callID}/transitions", s.authenticate(http.HandlerFunc(s.handleEscrowTransition)))
+		mux.Handle("GET /v1/escrow/calls/{callID}", s.authenticate(http.HandlerFunc(s.handleEscrowCall)))
+	}
 	if len(s.operatorControlKey) == 32 {
 		mux.Handle("POST /v1/operator/chain/halt", s.authenticateOperator(http.HandlerFunc(s.handleOperatorHalt)))
 		mux.Handle("POST /v1/operator/chain/resume", s.authenticateOperator(http.HandlerFunc(s.handleOperatorResume)))
@@ -239,6 +247,88 @@ func (s *Server) handleSignerBroadcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"execution": execution})
+}
+
+func (s *Server) handleEscrowIntent(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if !s.authorize(w, principal, PermissionIssue, "escrow:register") {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	authorizationID := r.PathValue("authorizationID")
+	if principal.Kind == PrincipalAgent {
+		record, exists := s.lifecycle.GetByAuthorization(authorizationID)
+		if !exists || record.Intent.OrganizationID != principal.OrganizationID || record.Intent.AgentID != principal.AgentID {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+			return
+		}
+	}
+	if idempotencyKey != authorizationID {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_MISMATCH", errors.New("Idempotency-Key must equal authorizationId"), false, "")
+		return
+	}
+	command, created, ok := s.beginCommand(w, r, principal, "escrow.intent.register", authorizationID, idempotencyKey, digestJSON(map[string]string{"authorizationId": authorizationID}))
+	if !ok || !created {
+		if ok {
+			writeStoredCommand(w, command)
+		}
+		return
+	}
+	call, err := s.escrow.RegisterIntent(r.Context(), principal.OrganizationID, authorizationID)
+	if err != nil {
+		s.failCommand(w, r, command, err)
+		return
+	}
+	s.succeedCommand(w, r, command, call, http.StatusCreated)
+}
+
+func (s *Server) handleEscrowTransition(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if !s.authorize(w, principal, PermissionRegisterEscrowTransition, "escrow:transitions") || !s.requireStepUp(w, principal) {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var candidate reconciliation.EscrowTransitionCandidate
+	if err := decodeJSON(w, r, &candidate); err != nil {
+		return
+	}
+	if idempotencyKey != candidate.TransactionHash {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_MISMATCH", errors.New("Idempotency-Key must equal transactionHash"), false, "")
+		return
+	}
+	callID := r.PathValue("callID")
+	command, created, ok := s.beginCommand(w, r, principal, "escrow.transition.register", callID, idempotencyKey, digestJSON(candidate))
+	if !ok || !created {
+		if ok {
+			writeStoredCommand(w, command)
+		}
+		return
+	}
+	call, err := s.escrow.RegisterTransition(r.Context(), principal.OrganizationID, callID, candidate)
+	if err != nil {
+		s.failCommand(w, r, command, err)
+		return
+	}
+	s.succeedCommand(w, r, command, call, http.StatusCreated)
+}
+
+func (s *Server) handleEscrowCall(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if !s.authorize(w, principal, PermissionRead, "records:read") {
+		return
+	}
+	call, ok := s.escrow.Call(principal.OrganizationID, r.PathValue("callID"))
+	if !ok || principal.Kind == PrincipalAgent && call.Intent.AgentID != principal.AgentID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"call": call})
 }
 
 type operatorHaltRequest struct {
@@ -663,18 +753,23 @@ func classifyError(err error) (int, string, bool) {
 	switch {
 	case errors.Is(err, controlplane.ErrIdempotencyConflict), errors.Is(err, controlplane.ErrApprovalDigest),
 		errors.Is(err, controlplane.ErrNotPendingApproval), errors.Is(err, controlplane.ErrNotApproved),
-		errors.Is(err, controlplane.ErrPolicyChanged):
+		errors.Is(err, controlplane.ErrPolicyChanged), errors.Is(err, reconciliation.ErrConflict), errors.Is(err, reconciliation.ErrEscrowDeployment),
+		errors.Is(err, reconciliation.ErrEscrowFinality), errors.Is(err, ErrEscrowBinding):
 		return http.StatusConflict, "STATE_CONFLICT", false
+	case errors.Is(err, reconciliation.ErrEscrowTransition):
+		return http.StatusBadRequest, "INVALID_ESCROW_TRANSITION", false
 	case errors.Is(err, controlplane.ErrApprovalExpired):
 		return http.StatusGone, "APPROVAL_EXPIRED", false
 	case errors.Is(err, controlplane.ErrPolicyUnavailable):
 		return http.StatusConflict, "POLICY_UNAVAILABLE", false
 	case errors.Is(err, controlplane.ErrFrozen):
 		return http.StatusConflict, "AGENT_FROZEN", false
-	case errors.Is(err, controlplane.ErrUnknownRequest), errors.Is(err, ErrNotFound):
+	case errors.Is(err, controlplane.ErrUnknownRequest), errors.Is(err, reconciliation.ErrUnknownExecution), errors.Is(err, ErrNotFound):
 		return http.StatusNotFound, "NOT_FOUND", false
 	case errors.Is(err, reconciliation.ErrChainUnavailable):
 		return http.StatusServiceUnavailable, "CHAIN_UNAVAILABLE", true
+	case errors.Is(err, reconciliation.ErrUnsafeFinality):
+		return http.StatusServiceUnavailable, "CANONICAL_EVIDENCE_UNSAFE", true
 	case errors.Is(err, controlplane.ErrJournalStale):
 		return http.StatusServiceUnavailable, "CONTROL_JOURNAL_STALE", true
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):

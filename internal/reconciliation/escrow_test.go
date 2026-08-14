@@ -121,8 +121,12 @@ func TestEscrowReceiptRejectsSubstitutionDuplicateAndWrongLogOrder(t *testing.T)
 	}{
 		{name: "provider substitution", mutate: func(receipt *rpcReceipt) { receipt.Logs[1].Topics[2] = addressWord(testBuyer) }},
 		{name: "duplicate release", mutate: func(receipt *rpcReceipt) { receipt.Logs = append(receipt.Logs, receipt.Logs[1]) }},
+		{name: "another transition for same call", mutate: func(receipt *rpcReceipt) {
+			receipt.Logs = append(receipt.Logs, rpcLog{Address: base.Contract, Topics: []string{escrowAcknowledgedTopic, base.CallID, addressWord(base.Provider)}, Data: "0x"})
+		}},
 		{name: "release before transfer", mutate: func(receipt *rpcReceipt) { receipt.Logs[0], receipt.Logs[1] = receipt.Logs[1], receipt.Logs[0] }},
 		{name: "removed transfer", mutate: func(receipt *rpcReceipt) { receipt.Logs[0].Removed = true }},
+		{name: "reverted receipt with logs", mutate: func(receipt *rpcReceipt) { receipt.Status = "0x0" }},
 	}
 	for _, test := range tests {
 		test := test

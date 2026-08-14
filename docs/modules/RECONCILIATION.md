@@ -1,9 +1,9 @@
 # Base reconciliation and halt-safety module
 
 Status: production observer, signer receipt registration, receipt/finality
-worker wiring, read-only CallEscrow lifecycle conformance, and live Evidence
-Fetch release and acknowledged-refund manifests complete; dedicated provider
-selection and Sepolia measurement remain open
+worker wiring, durable CallEscrow intent and transition reconciliation, and
+live Evidence Fetch release and acknowledged-refund manifests complete;
+dedicated provider selection and funded signer proof remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
@@ -119,9 +119,20 @@ capped pilot and require operator incident handling.
 
 ## CallEscrow lifecycle evidence
 
-The read-only escrow adapter accepts a completed, strict lifecycle manifest and
+The escrow adapter accepts a completed, strict lifecycle manifest and
 queries two to five independent Base RPC providers for every transaction. It
 does not accept a wallet key and cannot sign, submit, retry, release, or refund.
+
+The control plane also registers one immutable escrow intent from an issued,
+still-valid exact authorization before broadcast. Its signed terms bind the
+contract, buyer, provider, call ID, digests, deadlines, and release window.
+Admission also requires the exact configured reviewed deployment contract,
+asset, and immutable release window; omitting that complete tuple disables
+escrow. After broadcast, a step-up-authenticated Owner or Admin supplies only
+the action-specific dynamic fields and transaction hash; the registry
+reconstructs all immutable receipt expectations and persists the candidate
+before the continuous worker queries it. Cross-tenant IDs, reordered actions,
+altered terms, duplicate hash reuse, and terminal replay are refused.
 
 For every successful transition it binds the canonical transaction and block to
 the deployed escrow contract, asset, call ID, buyer, provider, amount, task and
@@ -137,9 +148,13 @@ The manifest accepts only these state paths:
 - `FUND -> ACKNOWLEDGE -> REFUND` from `Acknowledged`; or
 - `FUND -> ACKNOWLEDGE -> DELIVER -> RELEASE`.
 
-The CLI proves a capped-pilot lifecycle after transactions already exist. It is
-not yet wired into the durable execution journal or ledger, so it must not be
-described as automated production escrow reconciliation.
+The CLI remains a portable proof for a completed lifecycle. The continuous
+worker now persists canonical funding, acknowledgement, delivery, release, and
+refund transitions in the hash-chained journal. Funding, release, and refund
+ledger entries are created only with matching quorum evidence. Confirmed
+transitions remain under bounded reorg watch; a removed transition reverses all
+dependent ledger effects and quarantines the call instead of inventing a
+replacement outcome.
 
 Run the completed manifest against independent public endpoints with:
 
@@ -186,6 +201,7 @@ and `docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_REFUND_2026-08-14.md`.
 go test -race ./internal/reconciliation ./internal/controlplane ./internal/controlapi ./pkg/referencesigner ./pkg/broadcastreceipt
 make smoke-reconciliation
 make smoke-escrow-reconciliation
+make smoke-escrow-durable
 ```
 
 The smoke drill enters healthy state, registers a broadcast, simulates responsive-but-stale observers, reaches `HALTED`, proves stale finalization/refund/rebroadcast are refused, resumes observations, reconciles one canonical outcome, and requires manual release without double-posting.
@@ -209,10 +225,9 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
 - select and contractually assess at least two production Base RPC providers;
 - complete and record the multi-hour Sepolia confirmation, stall-age,
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
-- register escrow transaction intents before broadcast, persist transition
-  evidence in the durable journal, and add reorg correction to the continuous
-  worker; the current strict decoder and multi-RPC conformance command are
-  read-only;
+- implement a customer-side escrow executor that independently validates the
+  signed terms and exact calldata before wallet access; the current reference
+  signer still rejects escrow and the registry itself never broadcasts;
 - add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
 - implement concrete EOA/HSM wallet adapters and runnable customer-side signer
   packaging; the deployed no-funds pilot worker remains idle until a

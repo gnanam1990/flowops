@@ -3,6 +3,7 @@ package envelope
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"math"
 	"strings"
 	"testing"
 )
@@ -122,5 +123,75 @@ func TestNormalizeAddress(t *testing.T) {
 	}
 	if want := "0x036cbd53842c5426634e7929541ec2318f3dcf7e"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestEscrowAuthorizationBindsEveryCallTermAndRejectsCrossRailTerms(t *testing.T) {
+	taskDigest := "0x" + strings.Repeat("31", 32)
+	requestDigest := "0x" + strings.Repeat("42", 32)
+	contract := "0x86e145397f58e71c134c0e054320db929483227a"
+	buyer := "0x079bdde909e28e437768a06d7001eb40896668d4"
+	provider := "0xc2f0967c4df966636e4ac1dad40abda65536cbb6"
+	callID, err := DeriveEscrowCallID(84532, contract, buyer, taskDigest, requestDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := fixtureAuthorization()
+	a.Rail, a.Recipient = RailEscrow, provider
+	a.Escrow = &EscrowTerms{
+		Contract: contract, Buyer: buyer, Provider: provider, CallID: callID,
+		TaskDigest: taskDigest, RequestDigest: requestDigest,
+		AcknowledgeBy: 1_786_700_000, DeliverBy: 1_786_703_600, ReleaseWindow: 3600,
+	}
+	publicKey, privateKey := fixtureKeys(t)
+	signed, err := Sign(a, "flowops_control_1", privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(signed, publicKey); err != nil {
+		t.Fatal(err)
+	}
+	mutations := []func(*EscrowTerms){
+		func(terms *EscrowTerms) { terms.Contract = "0x1111111111111111111111111111111111111111" },
+		func(terms *EscrowTerms) { terms.Provider = "0x2222222222222222222222222222222222222222" },
+		func(terms *EscrowTerms) { terms.DeliverBy++ },
+		func(terms *EscrowTerms) { terms.ReleaseWindow++ },
+	}
+	for index, mutate := range mutations {
+		changed := signed
+		terms := *changed.Authorization.Escrow
+		mutate(&terms)
+		changed.Authorization.Escrow = &terms
+		if err := Verify(changed, publicKey); err == nil {
+			t.Fatalf("escrow mutation %d verified", index)
+		}
+	}
+	missing := a
+	missing.Escrow = nil
+	if err := missing.Validate(); err == nil {
+		t.Fatal("escrow authorization without terms was accepted")
+	}
+	crossRail := fixtureAuthorization()
+	crossRail.Escrow = a.Escrow
+	if err := crossRail.Validate(); err == nil {
+		t.Fatal("non-escrow authorization accepted escrow terms")
+	}
+	nonBase := a
+	nonBase.ChainID = 1
+	if err := nonBase.Validate(); err == nil {
+		t.Fatal("non-Base escrow authorization was accepted")
+	}
+	overflow := a
+	overflowTerms := *a.Escrow
+	overflowTerms.AcknowledgeBy = uint64(math.MaxInt64) + 1
+	overflowTerms.DeliverBy = overflowTerms.AcknowledgeBy + 1
+	overflow.Escrow = &overflowTerms
+	if err := overflow.Validate(); err == nil {
+		t.Fatal("escrow timestamp outside signed int64 Unix time was accepted")
+	}
+	overlapsDeadline := a
+	overlapsDeadline.ExpiresAt = int64(a.Escrow.AcknowledgeBy) + 1
+	if err := overlapsDeadline.Validate(); err == nil {
+		t.Fatal("escrow authorization outliving acknowledgeBy was accepted")
 	}
 }

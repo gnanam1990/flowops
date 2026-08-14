@@ -270,6 +270,17 @@ func (s *ObserverSet) ReorgQuorum(ctx context.Context, execution Execution) Reor
 }
 
 func (s *ObserverSet) CanonicalBlockQuorum(ctx context.Context, execution Execution) ReorgResult {
+	return s.canonicalBlockQuorum(ctx, execution.Expected.TransactionHash, execution.BlockNumber, execution.BlockHash)
+}
+
+// EscrowCanonicalBlockQuorum checks whether the exact block that confirmed an
+// escrow transition remains canonical. It is read-only and cannot submit or
+// retry the transition.
+func (s *ObserverSet) EscrowCanonicalBlockQuorum(ctx context.Context, transition EscrowTransition) ReorgResult {
+	return s.canonicalBlockQuorum(ctx, transition.Expected.TransactionHash, transition.BlockNumber, transition.BlockHash)
+}
+
+func (s *ObserverSet) canonicalBlockQuorum(ctx context.Context, transactionHash string, blockNumber uint64, blockHash string) ReorgResult {
 	type providerResult struct {
 		provider string
 		evidence ReorgEvidence
@@ -286,7 +297,7 @@ func (s *ObserverSet) CanonicalBlockQuorum(ctx context.Context, execution Execut
 				results <- providerResult{provider: provider.Name, err: err}
 				return
 			}
-			canonical, err := s.block(ctx, provider, fmt.Sprintf("0x%x", execution.BlockNumber))
+			canonical, err := s.block(ctx, provider, fmt.Sprintf("0x%x", blockNumber))
 			if err != nil {
 				results <- providerResult{provider: provider.Name, err: err}
 				return
@@ -297,8 +308,8 @@ func (s *ObserverSet) CanonicalBlockQuorum(ctx context.Context, execution Execut
 				return
 			}
 			results <- providerResult{provider: provider.Name, evidence: ReorgEvidence{
-				Provider: provider.Name, ChainID: s.chainID, TransactionHash: execution.Expected.TransactionHash,
-				OriginalBlockNumber: execution.BlockNumber, OriginalBlockHash: execution.BlockHash,
+				Provider: provider.Name, ChainID: s.chainID, TransactionHash: transactionHash,
+				OriginalBlockNumber: blockNumber, OriginalBlockHash: blockHash,
 				CanonicalBlockHash: canonical.hash, ObservedHead: latest.number,
 			}}
 		}()

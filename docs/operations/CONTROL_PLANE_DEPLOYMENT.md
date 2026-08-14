@@ -40,6 +40,9 @@ The API service requires:
 | `RAILWAY_VOLUME_MOUNT_PATH` | Injected persistent mount; the entrypoint derives the journal path |
 | `FLOWOPS_BASE_RPC_PROVIDERS_JSON` | Secret strict JSON array of 2–5 unique names and HTTPS hosts |
 | `FLOWOPS_BASE_CHAIN_ID` | `84532` for the capped Sepolia pilot; `8453` requires a separate mainnet gate |
+| `FLOWOPS_ESCROW_CONTRACT` | Reviewed canonical lowercase CallEscrow deployment; omit the whole escrow tuple to disable escrow admission |
+| `FLOWOPS_ESCROW_ASSET` | Exact canonical lowercase asset held by the configured CallEscrow deployment |
+| `FLOWOPS_ESCROW_RELEASE_WINDOW_SECONDS` | Exact immutable optimistic-release window of the configured deployment |
 | `FLOWOPS_BASE_OBSERVER_INTERVAL` | Poll interval; must exceed the per-poll timeout |
 | `FLOWOPS_BASE_OBSERVER_TIMEOUT` | Overall timeout for one concurrent provider snapshot |
 | `FLOWOPS_BASE_RECONCILIATION_INTERVAL` | Receipt and finality worker interval; must exceed its query timeout |

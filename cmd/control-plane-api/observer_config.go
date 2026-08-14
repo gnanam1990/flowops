@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
 const maxObserverProvidersJSONBytes = 16 * 1024
@@ -41,6 +42,10 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	}
 	if chainID != 84532 {
 		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_CHAIN_ID must remain 84532 until the separate Base mainnet gate is approved")
+	}
+	escrowContract, escrowAsset, escrowReleaseWindow, err := parseEscrowDeployment()
+	if err != nil {
+		return observerRuntimeConfig{}, err
 	}
 	if _, err := reconciliation.NewObserverSet(chainID, providers, nil, nil); err != nil {
 		return observerRuntimeConfig{}, fmt.Errorf("Base observer configuration: %w", err)
@@ -116,12 +121,32 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 		providers: providers, interval: interval, timeout: timeout,
 		reconciliationInterval: reconciliationInterval, reconciliationTimeout: reconciliationTimeout,
 		engine: reconciliation.Config{
-			ChainID: chainID, ObserverQuorum: observerQuorum, HaltConfirmations: haltConfirmations,
+			ChainID: chainID, EscrowContract: escrowContract, EscrowAsset: escrowAsset, EscrowReleaseWindow: escrowReleaseWindow,
+			ObserverQuorum: observerQuorum, HaltConfirmations: haltConfirmations,
 			RecoveryObservations: recoveryObservations, MinConfirmations: minConfirmations,
 			ReorgLookback: reorgLookback, MaxHeadSkew: maxHeadSkew, StallThreshold: stallThreshold,
 			ObservationMaxAge: observationMaxAge, MaxFutureClockSkew: maxFutureClockSkew,
 		},
 	}, nil
+}
+
+func parseEscrowDeployment() (string, string, uint64, error) {
+	contract := strings.TrimSpace(os.Getenv("FLOWOPS_ESCROW_CONTRACT"))
+	asset := strings.TrimSpace(os.Getenv("FLOWOPS_ESCROW_ASSET"))
+	releaseRaw := strings.TrimSpace(os.Getenv("FLOWOPS_ESCROW_RELEASE_WINDOW_SECONDS"))
+	if contract == "" && asset == "" && releaseRaw == "" {
+		return "", "", 0, nil
+	}
+	if contract == "" || asset == "" || releaseRaw == "" {
+		return "", "", 0, errors.New("FLOWOPS_ESCROW_CONTRACT, FLOWOPS_ESCROW_ASSET, and FLOWOPS_ESCROW_RELEASE_WINDOW_SECONDS must be configured together")
+	}
+	normalizedContract, contractErr := envelope.NormalizeAddress(contract)
+	normalizedAsset, assetErr := envelope.NormalizeAddress(asset)
+	releaseWindow, releaseErr := strconv.ParseUint(releaseRaw, 10, 64)
+	if contractErr != nil || assetErr != nil || normalizedContract != contract || normalizedAsset != asset || contract == asset || releaseErr != nil || releaseWindow == 0 || releaseWindow > 30*24*60*60 {
+		return "", "", 0, errors.New("escrow deployment tuple must contain distinct canonical lowercase addresses and a 1-second to 30-day release window")
+	}
+	return contract, asset, releaseWindow, nil
 }
 
 func parseObserverProviders(raw string) ([]reconciliation.RPCProvider, error) {

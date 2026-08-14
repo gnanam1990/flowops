@@ -160,6 +160,9 @@ func setObserverRuntime(t *testing.T) {
 	t.Setenv("FLOWOPS_BASE_RPC_PROVIDERS_JSON", `[{"name":"rpc_alpha","url":"https://alpha.rpc.example/v1"},{"name":"rpc_beta","url":"https://beta.rpc.example/v1"}]`)
 	t.Setenv("FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "1000000")
 	t.Setenv("FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC", "10000000")
+	t.Setenv("FLOWOPS_ESCROW_CONTRACT", "0x86e145397f58e71c134c0e054320db929483227a")
+	t.Setenv("FLOWOPS_ESCROW_ASSET", "0x036cbd53842c5426634e7929541ec2318f3dcf7e")
+	t.Setenv("FLOWOPS_ESCROW_RELEASE_WINDOW_SECONDS", "3600")
 }
 
 func TestLoadConfigRejectsUnsafePilotLimits(t *testing.T) {

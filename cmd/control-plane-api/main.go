@@ -119,6 +119,10 @@ func run(ctx context.Context) error {
 	if _, err := lifecycle.SweepExpired(startupCtx); err != nil {
 		return fmt.Errorf("sweep expired approvals at startup: %w", err)
 	}
+	escrowRegistrar, err := controlapi.NewEscrowRegistrar(lifecycle, reconciliationEngine, nil)
+	if err != nil {
+		return fmt.Errorf("create escrow registrar: %w", err)
+	}
 	var signerBroadcasts controlapi.BroadcastRegistrar
 	if len(cfg.signerReceiptKeys) > 0 {
 		keys, err := controlapi.NewStaticBroadcastKeys(cfg.signerReceiptKeys)
@@ -146,7 +150,7 @@ func run(ctx context.Context) error {
 	reconciliationWorker, err := reconciliation.NewWorker(observers, reconciliationEngine, reconciliation.WorkerConfig{
 		Interval: cfg.reconciliationInterval, QueryTimeout: cfg.reconciliationTimeout,
 		OnCycle: func(cycle reconciliation.WorkerCycle) {
-			slog.Info("Base reconciliation cycle completed", "examined", cycle.Examined, "receiptCandidates", cycle.ReceiptCandidates, "settled", cycle.Settled, "reverted", cycle.Reverted, "finalityConfirmed", cycle.FinalityConfirmed, "reorgsReopened", cycle.ReorgsReopened, "deferred", cycle.Deferred, "skippedForChain", cycle.SkippedForChain)
+			slog.Info("Base reconciliation cycle completed", "examined", cycle.Examined, "receiptCandidates", cycle.ReceiptCandidates, "settled", cycle.Settled, "reverted", cycle.Reverted, "finalityConfirmed", cycle.FinalityConfirmed, "reorgsReopened", cycle.ReorgsReopened, "escrowCandidates", cycle.EscrowCandidates, "escrowConfirmed", cycle.EscrowConfirmed, "escrowReverted", cycle.EscrowReverted, "escrowFinalized", cycle.EscrowFinalized, "escrowReorgs", cycle.EscrowReorgs, "deferred", cycle.Deferred, "skippedForChain", cycle.SkippedForChain)
 		},
 	})
 	if err != nil {
@@ -154,7 +158,7 @@ func run(ctx context.Context) error {
 	}
 	api, err := controlapi.NewServer(controlapi.ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
-		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts,
+		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts, Escrow: escrowRegistrar,
 	})
 	if err != nil {
 		return err

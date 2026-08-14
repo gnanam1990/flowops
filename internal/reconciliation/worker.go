@@ -14,6 +14,11 @@ type ReceiptAndBlockSource interface {
 	CanonicalBlockQuorum(context.Context, Execution) ReorgResult
 }
 
+type EscrowReceiptAndBlockSource interface {
+	EscrowReceiptQuorum(context.Context, EscrowExpectedReceipt) EscrowReceiptResult
+	EscrowCanonicalBlockQuorum(context.Context, EscrowTransition) ReorgResult
+}
+
 type WorkerEngine interface {
 	Status() ChainStatus
 	Executions() []Execution
@@ -22,6 +27,13 @@ type WorkerEngine interface {
 	ConfirmFinality(context.Context, string, []ReorgEvidence) (Execution, error)
 	ReopenReorg(context.Context, string, []ReorgEvidence, LedgerTransaction) (Execution, error)
 	FinalityDepth() uint64
+}
+
+type EscrowWorkerEngine interface {
+	EscrowCalls() []EscrowCall
+	ReconcileEscrowTransition(context.Context, string, []EscrowReceiptEvidence) (EscrowCall, error)
+	ConfirmEscrowFinality(context.Context, string, string, []ReorgEvidence) (EscrowCall, error)
+	ReopenEscrowReorg(context.Context, string, string, []ReorgEvidence) (EscrowCall, error)
 }
 
 type WorkerConfig struct {
@@ -38,6 +50,11 @@ type WorkerCycle struct {
 	Reverted          int  `json:"reverted"`
 	FinalityConfirmed int  `json:"finalityConfirmed"`
 	ReorgsReopened    int  `json:"reorgsReopened"`
+	EscrowCandidates  int  `json:"escrowCandidates"`
+	EscrowConfirmed   int  `json:"escrowConfirmed"`
+	EscrowReverted    int  `json:"escrowReverted"`
+	EscrowFinalized   int  `json:"escrowFinalized"`
+	EscrowReorgs      int  `json:"escrowReorgs"`
 	Deferred          int  `json:"deferred"`
 	SkippedForChain   bool `json:"skippedForChain"`
 }
@@ -107,7 +124,92 @@ func (w *Worker) RunOnce(ctx context.Context) (WorkerCycle, error) {
 			}
 		}
 	}
+	escrowSource, sourceOK := w.source.(EscrowReceiptAndBlockSource)
+	escrowEngine, engineOK := w.engine.(EscrowWorkerEngine)
+	if sourceOK && engineOK {
+		for _, call := range escrowEngine.EscrowCalls() {
+			if call.Pending != nil {
+				cycle.EscrowCandidates++
+				if err := w.reconcileEscrowReceipt(ctx, escrowSource, escrowEngine, call, &cycle); err != nil {
+					return cycle, err
+				}
+			}
+			for _, transition := range call.Transitions {
+				if (transition.State != EscrowTransitionConfirmed && transition.State != EscrowTransitionReverted) || transition.FinalityCheckedAt != nil || status.LastTrusted.BlockNumber < transition.BlockNumber || status.LastTrusted.BlockNumber-transition.BlockNumber < w.engine.FinalityDepth() {
+					continue
+				}
+				reorgsBefore := cycle.EscrowReorgs
+				if err := w.checkEscrowFinality(ctx, escrowSource, escrowEngine, call, transition, &cycle); err != nil {
+					return cycle, err
+				}
+				if cycle.EscrowReorgs > reorgsBefore {
+					break
+				}
+			}
+		}
+	}
 	return cycle, nil
+}
+
+func (w *Worker) reconcileEscrowReceipt(ctx context.Context, source EscrowReceiptAndBlockSource, engine EscrowWorkerEngine, call EscrowCall, cycle *WorkerCycle) error {
+	queryCtx, cancel := context.WithTimeout(ctx, w.config.QueryTimeout)
+	result := source.EscrowReceiptQuorum(queryCtx, call.Pending.Expected)
+	cancel()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if len(result.Evidence) == 0 {
+		cycle.Deferred++
+		return nil
+	}
+	resolved, err := engine.ReconcileEscrowTransition(ctx, call.Intent.CallID, result.Evidence)
+	if err != nil {
+		if errors.Is(err, ErrUnsafeFinality) || errors.Is(err, ErrChainUnavailable) {
+			cycle.Deferred++
+			return nil
+		}
+		return fmt.Errorf("reconcile escrow receipt for %s: %w", call.Intent.CallID, err)
+	}
+	last := resolved.Transitions[len(resolved.Transitions)-1]
+	if last.State == EscrowTransitionConfirmed {
+		cycle.EscrowConfirmed++
+	} else if last.State == EscrowTransitionReverted {
+		cycle.EscrowReverted++
+	}
+	return nil
+}
+
+func (w *Worker) checkEscrowFinality(ctx context.Context, source EscrowReceiptAndBlockSource, engine EscrowWorkerEngine, call EscrowCall, transition EscrowTransition, cycle *WorkerCycle) error {
+	queryCtx, cancel := context.WithTimeout(ctx, w.config.QueryTimeout)
+	result := source.EscrowCanonicalBlockQuorum(queryCtx, transition)
+	cancel()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if len(result.Evidence) == 0 {
+		cycle.Deferred++
+		return nil
+	}
+	if result.Evidence[0].CanonicalBlockHash == transition.BlockHash {
+		if _, err := engine.ConfirmEscrowFinality(ctx, call.Intent.CallID, transition.Expected.TransactionHash, result.Evidence); err != nil {
+			if errors.Is(err, ErrUnsafeFinality) || errors.Is(err, ErrChainUnavailable) {
+				cycle.Deferred++
+				return nil
+			}
+			return fmt.Errorf("confirm escrow finality for %s: %w", call.Intent.CallID, err)
+		}
+		cycle.EscrowFinalized++
+		return nil
+	}
+	if _, err := engine.ReopenEscrowReorg(ctx, call.Intent.CallID, transition.Expected.TransactionHash, result.Evidence); err != nil {
+		if errors.Is(err, ErrUnsafeFinality) || errors.Is(err, ErrChainUnavailable) {
+			cycle.Deferred++
+			return nil
+		}
+		return fmt.Errorf("reopen escrow reorg for %s: %w", call.Intent.CallID, err)
+	}
+	cycle.EscrowReorgs++
+	return nil
 }
 
 func (w *Worker) runCycle(ctx context.Context) error {

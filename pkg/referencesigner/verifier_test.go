@@ -230,7 +230,21 @@ func TestLocalLimitsAndTimeFailClosed(t *testing.T) {
 		}, RefusalExpired},
 		{"ttl", func(a *envelope.Authorization) { a.ExpiresAt = a.IssuedAt + int64((11 * time.Minute).Seconds()) }, RefusalTTLTooLong},
 		{"chain", func(a *envelope.Authorization) { a.ChainID = 8453 }, RefusalChain},
-		{"rail", func(a *envelope.Authorization) { a.Rail = envelope.RailEscrow }, RefusalRail},
+		{"rail", func(a *envelope.Authorization) {
+			a.Rail = envelope.RailEscrow
+			taskDigest := "0x" + strings.Repeat("31", 32)
+			requestDigest := "0x" + strings.Repeat("42", 32)
+			buyer := "0x3333333333333333333333333333333333333333"
+			callID, err := envelope.DeriveEscrowCallID(a.ChainID, "0x4444444444444444444444444444444444444444", buyer, taskDigest, requestDigest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.Escrow = &envelope.EscrowTerms{
+				Contract: "0x4444444444444444444444444444444444444444", Buyer: buyer, Provider: a.Recipient,
+				CallID: callID, TaskDigest: taskDigest, RequestDigest: requestDigest,
+				AcknowledgeBy: uint64(now.Add(time.Hour).Unix()), DeliverBy: uint64(now.Add(2 * time.Hour).Unix()), ReleaseWindow: 3600,
+			}
+		}, RefusalRail},
 		{"asset", func(a *envelope.Authorization) { a.Asset = "0x2222222222222222222222222222222222222222" }, RefusalAsset},
 		{"recipient", func(a *envelope.Authorization) { a.Recipient = "0x2222222222222222222222222222222222222222" }, RefusalRecipient},
 		{"amount", func(a *envelope.Authorization) { a.AmountAtomic = "100001" }, RefusalAmount},

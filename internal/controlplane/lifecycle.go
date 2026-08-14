@@ -328,6 +328,15 @@ func (l *Lifecycle) issueLocked(ctx context.Context, record Record, now time.Tim
 	if approvalExpiry := time.Unix(record.ApprovalExpiresAt, 0); expiresAt.After(approvalExpiry) {
 		expiresAt = approvalExpiry
 	}
+	if record.Intent.Escrow != nil {
+		acknowledgeBy := time.Unix(int64(record.Intent.Escrow.AcknowledgeBy), 0).UTC()
+		if !now.Before(acknowledgeBy) {
+			return envelope.SignedAuthorization{}, errors.New("escrow acknowledgement deadline elapsed before authorization issuance")
+		}
+		if expiresAt.After(acknowledgeBy) {
+			expiresAt = acknowledgeBy
+		}
+	}
 	authorization := envelope.Authorization{
 		Version: envelope.Version, AuthorizationID: authorizationID,
 		OrganizationID: record.Intent.OrganizationID, CustomerID: record.Intent.CustomerID,
@@ -335,6 +344,10 @@ func (l *Lifecycle) issueLocked(ctx context.Context, record Record, now time.Tim
 		Rail: record.Intent.Rail, ChainID: record.Intent.ChainID, Recipient: record.Intent.Recipient,
 		Asset: record.Intent.Asset, AmountAtomic: record.Intent.AmountAtomic, Resource: record.Intent.Resource,
 		PolicyVersion: record.Decision.PolicyVersion, Nonce: nonce, IssuedAt: now.Unix(), ExpiresAt: expiresAt.Unix(),
+	}
+	if record.Intent.Escrow != nil {
+		escrow := *record.Intent.Escrow
+		authorization.Escrow = &escrow
 	}
 	signed, err := envelope.Sign(authorization, l.envelopeKeyID, l.envelopePrivateKey)
 	if err != nil {
@@ -585,10 +598,18 @@ func authorizationMatches(record Record, a envelope.Authorization) error {
 	if a.OrganizationID != i.OrganizationID || a.CustomerID != i.CustomerID || a.AgentID != i.AgentID ||
 		a.TaskID != i.TaskID || a.ActionID != i.ActionID || a.Rail != i.Rail || a.ChainID != i.ChainID ||
 		a.Recipient != i.Recipient || a.Asset != i.Asset || a.AmountAtomic != i.AmountAtomic || a.Resource != i.Resource ||
+		!equalEscrowTerms(a.Escrow, i.Escrow) ||
 		a.PolicyVersion != record.Decision.PolicyVersion || a.IssuedAt < record.SubmittedAt || a.ExpiresAt > record.ApprovalExpiresAt {
 		return errors.New("authorization does not match approved intent")
 	}
 	return nil
+}
+
+func equalEscrowTerms(left, right *envelope.EscrowTerms) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func decodePayload(event Event, target any) error {
