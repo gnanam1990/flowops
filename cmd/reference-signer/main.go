@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/internal/rpcadmission"
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 	"github.com/gnanam1990/flowops/pkg/envelope"
 	"github.com/gnanam1990/flowops/pkg/pilotlimits"
@@ -26,44 +27,45 @@ import (
 )
 
 const (
-	configVersion  = "flowops.reference-signer.v3"
+	configVersion  = "flowops.reference-signer.v4"
 	maxConfigBytes = 256 * 1024
 	maxInputBytes  = 256 * 1024
 )
 
 type fileConfig struct {
-	Version                   string                       `json:"version"`
-	OrganizationID            string                       `json:"organizationId"`
-	CustomerID                string                       `json:"customerId"`
-	TrustKeys                 []trustKeyConfig             `json:"trustKeys"`
-	ChainID                   uint64                       `json:"chainId"`
-	Rail                      envelope.Rail                `json:"rail"`
-	Asset                     string                       `json:"asset"`
-	EscrowContract            string                       `json:"escrowContract,omitempty"`
-	EscrowReleaseWindow       uint64                       `json:"escrowReleaseWindowSeconds,omitempty"`
-	AllowedRecipients         []string                     `json:"allowedRecipients"`
-	MaxAmountAtomic           string                       `json:"maxAmountAtomic"`
-	MaxOutstandingAtomic      string                       `json:"maxOutstandingAtomic"`
-	MaxTTLSeconds             int64                        `json:"maxTtlSeconds"`
-	MaxFutureSkewSeconds      int64                        `json:"maxFutureSkewSeconds"`
-	BaseRPCProviders          []reconciliation.RPCProvider `json:"baseRpcProviders"`
-	PrimaryBaseRPC            string                       `json:"primaryBaseRpc"`
-	ObserverQuorum            int                          `json:"observerQuorum"`
-	MaxHeadSkew               uint64                       `json:"maxHeadSkew"`
-	StallThresholdSeconds     int64                        `json:"stallThresholdSeconds"`
-	MaxFutureBlockSkewSeconds int64                        `json:"maxFutureBlockSkewSeconds"`
-	WalletRPCURL              string                       `json:"walletRpcUrl"`
-	Sender                    string                       `json:"sender"`
-	MaxGasLimit               uint64                       `json:"maxGasLimit"`
-	MaxFeePerGasWei           string                       `json:"maxFeePerGasWei"`
-	MaxPriorityFeePerGasWei   string                       `json:"maxPriorityFeePerGasWei"`
-	NonceJournalPath          string                       `json:"nonceJournalPath"`
-	AttemptJournalPath        string                       `json:"attemptJournalPath"`
-	FreezeFilePath            string                       `json:"freezeFilePath"`
-	ReceiptKeyID              string                       `json:"receiptKeyId"`
-	ReceiptPrivateKeyPath     string                       `json:"receiptPrivateKeyPath"`
-	ControlAPIURL             string                       `json:"controlApiUrl"`
-	RequestTimeoutSeconds     int64                        `json:"requestTimeoutSeconds"`
+	Version                   string                            `json:"version"`
+	OrganizationID            string                            `json:"organizationId"`
+	CustomerID                string                            `json:"customerId"`
+	TrustKeys                 []trustKeyConfig                  `json:"trustKeys"`
+	ChainID                   uint64                            `json:"chainId"`
+	Rail                      envelope.Rail                     `json:"rail"`
+	Asset                     string                            `json:"asset"`
+	EscrowContract            string                            `json:"escrowContract,omitempty"`
+	EscrowReleaseWindow       uint64                            `json:"escrowReleaseWindowSeconds,omitempty"`
+	AllowedRecipients         []string                          `json:"allowedRecipients"`
+	MaxAmountAtomic           string                            `json:"maxAmountAtomic"`
+	MaxOutstandingAtomic      string                            `json:"maxOutstandingAtomic"`
+	MaxTTLSeconds             int64                             `json:"maxTtlSeconds"`
+	MaxFutureSkewSeconds      int64                             `json:"maxFutureSkewSeconds"`
+	BaseRPCProviders          []reconciliation.RPCProvider      `json:"baseRpcProviders"`
+	BaseRPCAdmission          *rpcadmission.ProductionAdmission `json:"baseRpcAdmission,omitempty"`
+	PrimaryBaseRPC            string                            `json:"primaryBaseRpc"`
+	ObserverQuorum            int                               `json:"observerQuorum"`
+	MaxHeadSkew               uint64                            `json:"maxHeadSkew"`
+	StallThresholdSeconds     int64                             `json:"stallThresholdSeconds"`
+	MaxFutureBlockSkewSeconds int64                             `json:"maxFutureBlockSkewSeconds"`
+	WalletRPCURL              string                            `json:"walletRpcUrl"`
+	Sender                    string                            `json:"sender"`
+	MaxGasLimit               uint64                            `json:"maxGasLimit"`
+	MaxFeePerGasWei           string                            `json:"maxFeePerGasWei"`
+	MaxPriorityFeePerGasWei   string                            `json:"maxPriorityFeePerGasWei"`
+	NonceJournalPath          string                            `json:"nonceJournalPath"`
+	AttemptJournalPath        string                            `json:"attemptJournalPath"`
+	FreezeFilePath            string                            `json:"freezeFilePath"`
+	ReceiptKeyID              string                            `json:"receiptKeyId"`
+	ReceiptPrivateKeyPath     string                            `json:"receiptPrivateKeyPath"`
+	ControlAPIURL             string                            `json:"controlApiUrl"`
+	RequestTimeoutSeconds     int64                             `json:"requestTimeoutSeconds"`
 }
 
 type trustKeyConfig struct {
@@ -333,6 +335,18 @@ func loadConfig(path string) (fileConfig, error) {
 		if err := limits.RequireInitialBaseMainnetProfile(); err != nil {
 			return fileConfig{}, err
 		}
+		if config.BaseRPCAdmission == nil {
+			return fileConfig{}, errors.New("Base mainnet reference signer requires production RPC admission")
+		}
+		if err := rpcadmission.ValidateProduction(config.BaseRPCProviders, *config.BaseRPCAdmission); err != nil {
+			return fileConfig{}, fmt.Errorf("Base mainnet reference signer RPC admission: %w", err)
+		}
+	} else if config.ChainID == 84532 {
+		if config.BaseRPCAdmission != nil {
+			return fileConfig{}, errors.New("Base Sepolia reference signer must not contain production RPC admission")
+		}
+	} else {
+		return fileConfig{}, errors.New("reference signer supports Base mainnet or Base Sepolia only")
 	}
 	return config, nil
 }

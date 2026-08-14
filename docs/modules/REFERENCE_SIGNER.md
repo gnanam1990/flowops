@@ -61,16 +61,19 @@ evidence before recognizing settlement.
 go test -race ./cmd/reference-signer ./pkg/referencesigner ./pkg/referencewallet ./pkg/broadcastreceipt
 make smoke-reference-signer
 make smoke-pilot-limits
+make smoke-rpc-admission
 ```
 
 The smoke target executes the full command wiring against in-memory Base, Clef,
 and FlowOps transports. It validates a real signed EIP-1559 transaction but
 never contacts Base or moves funds.
 
-The required aggregate cap changed the strict file schema to
-`flowops.reference-signer.v3`. Versions `v1` and `v2` are rejected rather than
-guessed; operators must select exactly one `rail`, and escrow mode must pin the
-reviewed contract and immutable release window.
+The production RPC gate changed the strict file schema to
+`flowops.reference-signer.v4`. Versions `v1`, `v2`, and `v3` are rejected rather
+than guessed; operators must select exactly one `rail`, escrow mode must pin the
+reviewed contract and immutable release window, and Base mainnet must bind every
+secret provider endpoint to distinct paid operator and failure-domain metadata.
+Base Sepolia rejects that production metadata.
 
 ## Remaining integration gate
 

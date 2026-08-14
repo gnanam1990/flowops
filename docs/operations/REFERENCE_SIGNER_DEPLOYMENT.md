@@ -5,8 +5,9 @@ authorization public keys and the callback URL; it never receives the Clef
 keystore, wallet key, receipt private key, raw transaction, RPC credentials, or
 local journals.
 
-Current strict config version: `flowops.reference-signer.v3`. Existing `v1` and
-`v2` files must be copied and explicitly given one `rail`. Escrow mode also
+Current strict config version: `flowops.reference-signer.v4`. Existing `v1`,
+`v2`, and `v3` files must be migrated explicitly. Version 4 retains one
+explicit `rail` and adds mainnet RPC admission. Escrow mode also
 requires `escrowContract` and `escrowReleaseWindowSeconds`; the command fails
 closed instead of inferring a spend rail or deployment.
 
@@ -46,6 +47,14 @@ closed instead of inferring a spend rail or deployment.
 5. Put Clef and the signer in the same network namespace. A Kubernetes Pod with
    two containers is supported; separate Docker bridge containers are not,
    because the wallet endpoint is intentionally required to be loopback.
+
+For Base mainnet, add `baseRpcAdmission` beside `baseRpcProviders`. It must use
+schema version 1 and bind every provider name to a distinct reviewed operator
+and failure domain with `serviceTier: "paid"` and
+`productionEligible: true`. Known public Base endpoints are refused. Keep this
+field absent on Base Sepolia. The reference signer config is a mode-`0600`
+secret because it also contains credential-bearing provider URLs; the same
+admission metadata remains URL-free so it can be reviewed independently.
 
 The config, freeze file, receipt key, nonce journal, and attempt journal must be
 regular files inaccessible to group and other users. Symlinks fail closed. Make

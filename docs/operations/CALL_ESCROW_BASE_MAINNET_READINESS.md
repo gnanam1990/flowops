@@ -47,7 +47,11 @@ Complete all items in a separate promotion package:
 5. Complete one funded, capped reference-signer execution on Base Sepolia and
    reconcile it through the production-shaped worker.
 6. Select two operationally independent paid Base RPC providers. Store their
-   credential-bearing URLs only in the deployment secret manager.
+   credential-bearing URLs only in the deployment secret manager. Create the
+   separate URL-free schema-v1 admission record that binds each runtime name to
+   a distinct reviewed operator and failure domain, then run
+   `make smoke-rpc-admission`. The code gate being present is not evidence that
+   providers have been selected.
 7. Rehearse source verification, constructor decoding, runtime bytecode hashing,
    immutable getter reads, and dual-provider receipt confirmation.
 8. Complete the separately approved funded Sepolia proof for the implemented
@@ -60,6 +64,7 @@ Run the deterministic checks:
 
 ```bash
 make test-mainnet-readiness
+make smoke-rpc-admission
 make smoke-escrow-mainnet-readiness
 make check
 ```

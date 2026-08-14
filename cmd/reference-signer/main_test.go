@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/internal/rpcadmission"
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 	"github.com/gnanam1990/flowops/pkg/envelope"
 )
@@ -216,6 +217,69 @@ func TestLoadConfigRejectsLegacyV1AfterRequiredLimitMigration(t *testing.T) {
 	writePrivate(t, path, `{"version":"flowops.reference-signer.v2","organizationId":"org-1","customerId":"customer-1","receiptKeyId":"receipt-1","maxAmountAtomic":"1000000","maxOutstandingAtomic":"10000000"}`)
 	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "config version") {
 		t.Fatalf("legacy v2 config error = %v", err)
+	}
+	writePrivate(t, path, `{"version":"flowops.reference-signer.v3","organizationId":"org-1","customerId":"customer-1","receiptKeyId":"receipt-1","maxAmountAtomic":"1000000","maxOutstandingAtomic":"10000000","rail":"direct_usdc"}`)
+	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "config version") {
+		t.Fatalf("legacy v3 config error = %v", err)
+	}
+}
+
+func TestLoadConfigRequiresProductionRPCAdmissionOnBaseMainnet(t *testing.T) {
+	flowPublic, _, _ := ed25519.GenerateKey(nil)
+	walletKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	config := validConfig(dir, flowPublic, walletKey, filepath.Join(dir, "receipt.key"), filepath.Join(dir, "freeze.json"))
+	config.ChainID = 8453
+	config.MaxAmountAtomic = "1000000"
+	config.MaxOutstandingAtomic = "10000000"
+	config.BaseRPCProviders = []reconciliation.RPCProvider{{Name: "rpc_alpha", URL: "https://alpha.vendor.example/v1/secret"}, {Name: "rpc_beta", URL: "https://beta.vendor.example/v1/secret"}}
+	write := func(name string, value fileConfig) error {
+		raw, _ := json.Marshal(value)
+		path := filepath.Join(dir, name+".json")
+		writePrivate(t, path, string(raw))
+		_, loadErr := loadConfig(path)
+		return loadErr
+	}
+	if err := write("missing-admission", config); err == nil || !strings.Contains(err.Error(), "requires production RPC admission") {
+		t.Fatalf("missing admission error = %v", err)
+	}
+	config.BaseRPCAdmission = &rpcadmission.ProductionAdmission{SchemaVersion: 1, Providers: []rpcadmission.ProviderAdmission{
+		{Name: "rpc_alpha", Operator: "vendor_alpha", FailureDomain: "vendor_alpha_global", ServiceTier: "paid", ProductionEligible: true},
+		{Name: "rpc_beta", Operator: "vendor_beta", FailureDomain: "vendor_beta_global", ServiceTier: "paid", ProductionEligible: true},
+	}}
+	if err := write("valid-admission", config); err != nil {
+		t.Fatal(err)
+	}
+	canonical, _ := json.Marshal(config)
+	ambiguous := strings.Replace(string(canonical), `"operator":"vendor_alpha"`, `"Operator":"shadow","operator":"vendor_alpha"`, 1)
+	ambiguousPath := filepath.Join(dir, "ambiguous-admission.json")
+	writePrivate(t, ambiguousPath, ambiguous)
+	if _, err := loadConfig(ambiguousPath); err == nil {
+		t.Fatal("case-variant embedded admission field was accepted")
+	}
+	config.BaseRPCProviders[0].URL = "https://mainnet.base.org"
+	if err := write("public-endpoint", config); err == nil || !strings.Contains(err.Error(), "known public endpoint") {
+		t.Fatalf("public endpoint error = %v", err)
+	}
+}
+
+func TestLoadConfigRejectsProductionRPCAdmissionOnBaseSepolia(t *testing.T) {
+	flowPublic, _, _ := ed25519.GenerateKey(nil)
+	walletKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	config := validConfig(dir, flowPublic, walletKey, filepath.Join(dir, "receipt.key"), filepath.Join(dir, "freeze.json"))
+	config.BaseRPCAdmission = &rpcadmission.ProductionAdmission{SchemaVersion: 1}
+	raw, _ := json.Marshal(config)
+	path := filepath.Join(dir, "sepolia-with-admission.json")
+	writePrivate(t, path, string(raw))
+	if _, err := loadConfig(path); err == nil || !strings.Contains(err.Error(), "must not contain") {
+		t.Fatalf("Sepolia admission error = %v", err)
 	}
 }
 

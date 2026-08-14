@@ -114,7 +114,10 @@ func NewObserverSet(chainID uint64, providers []RPCProvider, client *http.Client
 		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" {
 			return nil, fmt.Errorf("RPC provider %s must use an HTTPS URL without credentials or fragment", provider.Name)
 		}
-		host := strings.ToLower(parsed.Hostname())
+		host := strings.TrimRight(strings.ToLower(parsed.Hostname()), ".")
+		if host == "" {
+			return nil, fmt.Errorf("RPC provider %s has an invalid hostname", provider.Name)
+		}
 		if _, exists := hosts[host]; exists {
 			return nil, errors.New("RPC provider hosts must be distinct to contribute independent observations")
 		}

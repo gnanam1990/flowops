@@ -79,6 +79,14 @@ hostname, and malformed URLs before making a network request. Credential-bearing
 RPC URLs are passed to `cast` through its environment rather than command
 arguments; the fork rehearsal uses the documented public Base endpoint.
 
+`make smoke-rpc-admission` passed without making a network request. It proved
+that the production-shaped split configuration accepts two distinct paid
+operator and failure-domain declarations while rejecting known public
+endpoints, shared operators, shared failure domains, free tiers, and ineligible
+services. Its output contained no provider hostname, path, or credential. This
+is evidence that the admission mechanism works, not that any real production
+provider has been selected or paid for.
+
 ## Unresolved promotion gates
 
 - no designated production deployer or documented key-recovery ceremony;
@@ -87,6 +95,8 @@ arguments; the fork rehearsal uses the documented public Base endpoint.
 - no durable escrow event registration and reorg correction integration;
 - no funded reference-signer Base Sepolia proof;
 - no selected independent paid production RPC providers;
+- production RPC admission is implemented and smoke-tested, but no provider
+  identity, paid plan, or failure-domain evidence has been approved;
 - no approved source-verification ceremony;
 - the proposed capped-pilot profile is implemented by the control plane and
   both signer rails, but escrow pilot admission remains open until a funded

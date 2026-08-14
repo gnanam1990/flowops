@@ -34,6 +34,7 @@
     },
     "legalReviewComplete": false,
     "durableEscrowReconciliation": false,
+    "productionRpcAdmissionImplemented": true,
     "independentPaidRpcProviders": false,
     "referenceSignerFundedSepoliaProof": false,
     "sourceVerificationPlanApproved": false,
