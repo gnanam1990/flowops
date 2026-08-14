@@ -1,7 +1,7 @@
 # Evidence Fetch module
 
-Status: implemented locally and delivered through a live Base Sepolia
-CallEscrow release; public paid route not yet enabled
+Status: implemented locally and exercised through live Base Sepolia CallEscrow
+release and failed-delivery refund paths; public paid route not yet enabled
 
 Package: `internal/evidencefetch`
 
@@ -72,12 +72,12 @@ The test suite covers direct IP and DNS-based SSRF, mixed public/private DNS ans
 
 - x402 V2 payment middleware and Builder Code attribution;
 - Bazaar discovery metadata;
-- escrow acknowledgement, release, expiry, and testnet-only forced failure;
+- durable escrow transition registration and continuous reconciliation;
 - durable evidence-record storage and Base settlement reconciliation;
 - allowlisted selector or schema extraction.
 
 These are explicit later-module dependencies, not behavior claimed by this module.
 
-The live delivery output, digest derivation, and four-transition escrow manifest
-are recorded in
-`docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_LIVE_2026-08-14.md`.
+The live delivery/release and failed-delivery/refund evidence are recorded in
+`docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_LIVE_2026-08-14.md` and
+`docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_REFUND_2026-08-14.md`.
