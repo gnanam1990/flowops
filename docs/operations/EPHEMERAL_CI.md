@@ -11,8 +11,10 @@ owner's billing/spending hold.
   deregisters after exactly one job.
 - Each runner executes inside a fresh local Linux virtual machine/container and
   its filesystem is destroyed after the job.
-- The disposable Linux image must provide CA certificates, Git, and a C
-  toolchain (`build-essential`) so Go race detection remains enabled.
+- The disposable Linux image must provide CA certificates, Git, `jq`, and a C
+  toolchain (`build-essential`). Go race detection needs the C toolchain, and
+  the checked-in Base Sepolia evidence validator and its negative mutations use
+  `jq`; a runner without either dependency is not a conforming FlowOps runner.
 - Go dependency caching is disabled for the disposable runner. A 2026-08-11 PR
   run installed Go successfully but then stalled in the Actions cache restore;
   an ephemeral one-job filesystem provides no local-cache reuse worth making
