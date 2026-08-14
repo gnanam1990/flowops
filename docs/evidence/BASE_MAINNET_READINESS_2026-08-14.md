@@ -74,6 +74,11 @@ Base mainnet fork and deployed the pinned constructor only inside the
 ephemeral fork. Any address printed by that test is synthetic fork state, not a
 Base mainnet deployment address and must never enter the deployment registry.
 
+The smoke rejects identical URLs, two URLs resolving to the same normalized
+hostname, and malformed URLs before making a network request. Credential-bearing
+RPC URLs are passed to `cast` through its environment rather than command
+arguments; the fork rehearsal uses the documented public Base endpoint.
+
 ## Unresolved promotion gates
 
 - no designated production deployer or documented key-recovery ceremony;

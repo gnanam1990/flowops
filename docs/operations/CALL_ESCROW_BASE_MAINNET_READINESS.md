@@ -78,6 +78,13 @@ contract address printed by the fork test is synthetic and must not be copied
 into the deployment registry. Public endpoints passing this drill does not
 make them production observers.
 
+The primary and secondary URLs must have different normalized hostnames; the
+smoke refuses duplicate-host configurations before contacting either endpoint.
+The script passes URLs to `cast` through its environment so credential-bearing
+values do not appear in command arguments or normal output. Distinct hostnames
+are only a minimum check—operators must still establish organizational and
+infrastructure independence before promotion.
+
 ## Stage 3: promotion PR
 
 Only after Stage 1 is evidenced may a separate PR:

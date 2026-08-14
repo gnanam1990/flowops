@@ -10,19 +10,34 @@ expected_asset="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 expected_code_hash="$(jq -r '.canonicalUsdc.runtimeCodeHash' "${repo_root}/deployments/base-mainnet-readiness.json")"
 max_head_skew="${FLOWOPS_MAINNET_MAX_HEAD_SKEW:-12}"
 
+rpc_host() {
+  local rpc_url="$1"
+
+  RPC_URL="${rpc_url}" jq -er -n '
+    env.RPC_URL
+    | capture("^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]+@)?(?<host>\\[[^]]+\\]|[^:/?#]+)")
+    | .host
+    | ascii_downcase
+  '
+}
+
+primary_host="$(rpc_host "${BASE_MAINNET_RPC_URL_PRIMARY}")"
+secondary_host="$(rpc_host "${BASE_MAINNET_RPC_URL_SECONDARY}")"
+test "${primary_host}" != "${secondary_host}"
+
 observe() {
   local rpc_url="$1"
   local chain_id code code_hash decimals symbol head
 
-  chain_id="$(cast chain-id --rpc-url "${rpc_url}")"
+  chain_id="$(ETH_RPC_URL="${rpc_url}" cast chain-id)"
   test "${chain_id}" = "${expected_chain_id}"
 
-  code="$(cast code "${expected_asset}" --rpc-url "${rpc_url}")"
+  code="$(ETH_RPC_URL="${rpc_url}" cast code "${expected_asset}")"
   test "${code}" != "0x"
   code_hash="$(printf '%s' "${code}" | cast keccak)"
-  decimals="$(cast call "${expected_asset}" 'decimals()(uint8)' --rpc-url "${rpc_url}")"
-  symbol="$(cast call "${expected_asset}" 'symbol()(string)' --rpc-url "${rpc_url}" | tr -d '"')"
-  head="$(cast block-number --rpc-url "${rpc_url}")"
+  decimals="$(ETH_RPC_URL="${rpc_url}" cast call "${expected_asset}" 'decimals()(uint8)')"
+  symbol="$(ETH_RPC_URL="${rpc_url}" cast call "${expected_asset}" 'symbol()(string)' | tr -d '"')"
+  head="$(ETH_RPC_URL="${rpc_url}" cast block-number)"
 
   test "${decimals}" = "6"
   test "${symbol}" = "USDC"
@@ -44,8 +59,8 @@ else
 fi
 test "${head_skew}" -le "${max_head_skew}"
 
-primary_anchor_hash="$(cast block "${anchor_head}" --json --rpc-url "${BASE_MAINNET_RPC_URL_PRIMARY}" | jq -r '.hash')"
-secondary_anchor_hash="$(cast block "${anchor_head}" --json --rpc-url "${BASE_MAINNET_RPC_URL_SECONDARY}" | jq -r '.hash')"
+primary_anchor_hash="$(ETH_RPC_URL="${BASE_MAINNET_RPC_URL_PRIMARY}" cast block "${anchor_head}" --json | jq -r '.hash')"
+secondary_anchor_hash="$(ETH_RPC_URL="${BASE_MAINNET_RPC_URL_SECONDARY}" cast block "${anchor_head}" --json | jq -r '.hash')"
 test -n "${primary_anchor_hash}"
 test "${primary_anchor_hash}" != "null"
 test "${primary_anchor_hash}" = "${secondary_anchor_hash}"

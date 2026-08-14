@@ -67,7 +67,7 @@ smoke-escrow-deployment:
 
 smoke-escrow-mainnet-readiness:
 	deploy/call-escrow/smoke-base-mainnet-readiness.sh
-	forge test --match-path contracts/test/DeployCallEscrowBaseMainnet.t.sol --match-test test_promotedHarnessDeploysPinnedConstructorWithoutAdminRole --fork-url "$$BASE_MAINNET_RPC_URL_PRIMARY" -vv
+	forge test --match-path contracts/test/DeployCallEscrowBaseMainnet.t.sol --match-test test_promotedHarnessDeploysPinnedConstructorWithoutAdminRole --fork-url https://mainnet.base.org -vv
 
 smoke-escrow-reconciliation:
 	go test -race -run '^(TestObserverSetDecodesCompleteEscrowReleaseLifecycle|TestObserverSetDecodesBothEscrowRefundPaths|TestEscrowReceiptRejectsSubstitutionDuplicateAndWrongLogOrder)$$' ./internal/reconciliation
