@@ -82,10 +82,9 @@ The current local suite includes 21 unit/fuzz tests and three stateful invariant
 
 ## Remaining gates
 
-- Implement the customer-side escrow executor that independently validates the
-  signed exact terms and generated calldata. Durable registration and reorg
-  correction are complete, but the current reference signer still rejects the
-  escrow rail.
+- Complete the separately approved funded Sepolia proof for the implemented
+  customer-side escrow executor. Local tests independently validate the signed
+  exact terms, allowance, live deployment tuple, and generated calldata.
 - Configure and verify the exact reviewed deployment contract, asset, and
   immutable release window; partial or mismatched tuples fail closed.
 - Complete independent security and legal review before any Base mainnet deployment or non-trivial value.
@@ -93,8 +92,8 @@ The current local suite includes 21 unit/fuzz tests and three stateful invariant
 The Base mainnet preparation package pins the chain, native USDC asset, and
 release window while leaving the deployer and external-review digest empty and
 broadcast disabled. Its blocked record pins the proposed profile at 1 USDC per
-call and 10 USDC conservative exposure per customer signer, while explicitly
-recording that the current direct-USDC signer does not enforce escrow calls.
+call and 10 USDC conservative exposure per customer signer. Escrow admission
+remains false until the new signer path passes funded Sepolia reconciliation.
 Its mutation tests, read-only two-RPC smoke,
 and promotion ceremony are documented in
 `docs/operations/CALL_ESCROW_BASE_MAINNET_READINESS.md`. Passing those

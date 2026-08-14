@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	configVersion  = "flowops.reference-signer.v2"
+	configVersion  = "flowops.reference-signer.v3"
 	maxConfigBytes = 256 * 1024
 	maxInputBytes  = 256 * 1024
 )
@@ -37,7 +37,10 @@ type fileConfig struct {
 	CustomerID                string                       `json:"customerId"`
 	TrustKeys                 []trustKeyConfig             `json:"trustKeys"`
 	ChainID                   uint64                       `json:"chainId"`
+	Rail                      envelope.Rail                `json:"rail"`
 	Asset                     string                       `json:"asset"`
+	EscrowContract            string                       `json:"escrowContract,omitempty"`
+	EscrowReleaseWindow       uint64                       `json:"escrowReleaseWindowSeconds,omitempty"`
 	AllowedRecipients         []string                     `json:"allowedRecipients"`
 	MaxAmountAtomic           string                       `json:"maxAmountAtomic"`
 	MaxOutstandingAtomic      string                       `json:"maxOutstandingAtomic"`
@@ -96,7 +99,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer, 
 		if err := validateExternalFiles(config, client); err != nil {
 			return err
 		}
-		return writeJSON(output, map[string]any{"valid": true, "version": config.Version, "chainId": config.ChainID, "sender": config.Sender})
+		return writeJSON(output, map[string]any{"valid": true, "version": config.Version, "chainId": config.ChainID, "rail": config.Rail, "sender": config.Sender})
 	}
 	runtime, err := buildRuntime(config, client)
 	if err != nil {
@@ -174,7 +177,7 @@ func buildRuntime(config fileConfig, client *http.Client) (*runtime, error) {
 	}
 	verifier, err := referencesigner.New(referencesigner.Config{
 		OrganizationID: config.OrganizationID, CustomerID: config.CustomerID, TrustKeys: trustKeys,
-		AllowedChainIDs: []uint64{config.ChainID}, AllowedRails: []envelope.Rail{envelope.RailDirect},
+		AllowedChainIDs: []uint64{config.ChainID}, AllowedRails: []envelope.Rail{config.Rail},
 		AllowedAssets: []string{config.Asset}, AllowedRecipients: config.AllowedRecipients,
 		MaxAmountAtomic: config.MaxAmountAtomic, MaxTTL: time.Duration(config.MaxTTLSeconds) * time.Second,
 		MaxFutureSkew: time.Duration(config.MaxFutureSkewSeconds) * time.Second,
@@ -233,7 +236,7 @@ func validateExternalFiles(config fileConfig, client *http.Client) error {
 	return nil
 }
 
-func buildDependencies(config fileConfig, client *http.Client) (map[string]ed25519.PublicKey, ed25519.PrivateKey, *referencesigner.FileFreezeGate, *reconciliation.ObserverSet, *referencewallet.ClefAdapter, *referencesigner.HTTPRegistrationSink, error) {
+func buildDependencies(config fileConfig, client *http.Client) (map[string]ed25519.PublicKey, ed25519.PrivateKey, *referencesigner.FileFreezeGate, *reconciliation.ObserverSet, referencesigner.WalletAdapter, referencesigner.RegistrationSink, error) {
 	trustKeys, err := decodeTrustKeys(config.TrustKeys)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -260,16 +263,31 @@ func buildDependencies(config fileConfig, client *http.Client) (map[string]ed255
 		return nil, nil, nil, nil, nil, nil, errors.New("primary Base RPC must name a configured observer")
 	}
 	timeout := time.Duration(config.RequestTimeoutSeconds) * time.Second
-	wallet, err := referencewallet.NewClefAdapter(referencewallet.ClefConfig{
-		ChainID: config.ChainID, Sender: config.Sender, Asset: config.Asset, BaseRPCURL: primaryURL,
-		WalletRPCURL: config.WalletRPCURL, MaxGasLimit: config.MaxGasLimit,
-		MaxFeePerGasWei: config.MaxFeePerGasWei, MaxPriorityFeePerGasWei: config.MaxPriorityFeePerGasWei,
-		RequestTimeout: timeout, HTTPClient: client,
-	})
+	var wallet referencesigner.WalletAdapter
+	var registration referencesigner.RegistrationSink
+	if config.Rail == envelope.RailDirect {
+		wallet, err = referencewallet.NewClefAdapter(referencewallet.ClefConfig{
+			ChainID: config.ChainID, Sender: config.Sender, Asset: config.Asset, BaseRPCURL: primaryURL,
+			WalletRPCURL: config.WalletRPCURL, MaxGasLimit: config.MaxGasLimit,
+			MaxFeePerGasWei: config.MaxFeePerGasWei, MaxPriorityFeePerGasWei: config.MaxPriorityFeePerGasWei,
+			RequestTimeout: timeout, HTTPClient: client,
+		})
+	} else {
+		wallet, err = referencewallet.NewEscrowClefAdapter(referencewallet.EscrowClefConfig{
+			ChainID: config.ChainID, Sender: config.Sender, Asset: config.Asset, Contract: config.EscrowContract,
+			ReleaseWindow: config.EscrowReleaseWindow, BaseRPCURL: primaryURL, WalletRPCURL: config.WalletRPCURL,
+			MaxGasLimit: config.MaxGasLimit, MaxFeePerGasWei: config.MaxFeePerGasWei,
+			MaxPriorityFeePerGasWei: config.MaxPriorityFeePerGasWei, RequestTimeout: timeout, HTTPClient: client,
+		})
+	}
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	registration, err := referencesigner.NewHTTPRegistrationSink(config.ControlAPIURL, client)
+	if config.Rail == envelope.RailDirect {
+		registration, err = referencesigner.NewHTTPRegistrationSink(config.ControlAPIURL, client)
+	} else {
+		registration, err = referencesigner.NewHTTPEscrowRegistrationSink(config.ControlAPIURL, client)
+	}
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -291,6 +309,15 @@ func loadConfig(path string) (fileConfig, error) {
 	}
 	if config.Version != configVersion || !envelope.ValidIdentifier(config.OrganizationID) || !envelope.ValidIdentifier(config.CustomerID) || !envelope.ValidIdentifier(config.ReceiptKeyID) {
 		return fileConfig{}, errors.New("reference signer identity or config version is invalid")
+	}
+	if config.Rail != envelope.RailDirect && config.Rail != envelope.RailEscrow {
+		return fileConfig{}, errors.New("reference signer rail must be direct_usdc or escrow")
+	}
+	if config.Rail == envelope.RailDirect && (config.EscrowContract != "" || config.EscrowReleaseWindow != 0) {
+		return fileConfig{}, errors.New("direct_usdc config must not contain escrow deployment fields")
+	}
+	if config.Rail == envelope.RailEscrow && (config.EscrowContract == "" || config.EscrowReleaseWindow == 0) {
+		return fileConfig{}, errors.New("escrow config requires the reviewed contract and release window")
 	}
 	if config.MaxTTLSeconds <= 0 || config.MaxTTLSeconds > 3600 || config.MaxFutureSkewSeconds < 0 || config.MaxFutureSkewSeconds > 300 || config.StallThresholdSeconds <= 0 || config.StallThresholdSeconds > 3600 || config.MaxFutureBlockSkewSeconds < 0 || config.MaxFutureBlockSkewSeconds > 300 || config.RequestTimeoutSeconds <= 0 || config.RequestTimeoutSeconds > 60 {
 		return fileConfig{}, errors.New("reference signer duration is outside its safe range")

@@ -1,6 +1,7 @@
 package referencewallet
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -22,19 +24,25 @@ import (
 const (
 	testAsset     = "0x1111111111111111111111111111111111111111"
 	testRecipient = "0x2222222222222222222222222222222222222222"
+	testEscrow    = "0x4444444444444444444444444444444444444444"
 )
 
 type adapterHarness struct {
-	t       *testing.T
-	key     *ecdsa.PrivateKey
-	base    *httptest.Server
-	wallet  *httptest.Server
-	mu      sync.Mutex
-	methods []string
-	sentRaw string
-	mutate  func(*types.DynamicFeeTx)
-	rpcFail map[string]bool
-	chainID string
+	t             *testing.T
+	key           *ecdsa.PrivateKey
+	base          *httptest.Server
+	wallet        *httptest.Server
+	mu            sync.Mutex
+	methods       []string
+	sentRaw       string
+	mutate        func(*types.DynamicFeeTx)
+	rpcFail       map[string]bool
+	chainID       string
+	escrow        bool
+	allowance     *big.Int
+	escrowAsset   string
+	releaseWindow uint64
+	code          string
 }
 
 func newAdapterHarness(t *testing.T) *adapterHarness {
@@ -43,12 +51,27 @@ func newAdapterHarness(t *testing.T) *adapterHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &adapterHarness{t: t, key: key, rpcFail: make(map[string]bool), chainID: "0x14a34"}
+	h := &adapterHarness{t: t, key: key, rpcFail: make(map[string]bool), chainID: "0x14a34", allowance: big.NewInt(100_000), escrowAsset: testAsset, releaseWindow: 3600, code: "0x6000"}
 	h.base = httptest.NewServer(http.HandlerFunc(h.handleBase))
 	h.wallet = httptest.NewServer(http.HandlerFunc(h.handleWallet))
 	t.Cleanup(h.base.Close)
 	t.Cleanup(h.wallet.Close)
 	return h
+}
+
+func (h *adapterHarness) escrowAdapter(t *testing.T) *EscrowClefAdapter {
+	t.Helper()
+	h.escrow = true
+	adapter, err := NewEscrowClefAdapter(EscrowClefConfig{
+		ChainID: 84532, Sender: strings.ToLower(crypto.PubkeyToAddress(h.key.PublicKey).Hex()), Asset: testAsset,
+		Contract: testEscrow, ReleaseWindow: 3600, BaseRPCURL: h.base.URL, WalletRPCURL: h.wallet.URL,
+		MaxGasLimit: 500_000, MaxFeePerGasWei: "10000000000", MaxPriorityFeePerGasWei: "2000000000",
+		RequestTimeout: 2 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return adapter
 }
 
 func (h *adapterHarness) adapter(t *testing.T) *ClefAdapter {
@@ -79,7 +102,9 @@ func (h *adapterHarness) handleBase(w http.ResponseWriter, r *http.Request) {
 	case "eth_chainId":
 		result = h.chainID
 	case "eth_call":
-		result = "0x" + strings.Repeat("0", 63) + "1"
+		result = h.callResult(request)
+	case "eth_getCode":
+		result = h.code
 	case "eth_getTransactionCount":
 		result = "0x7"
 	case "eth_maxPriorityFeePerGas":
@@ -103,6 +128,27 @@ func (h *adapterHarness) handleBase(w http.ResponseWriter, r *http.Request) {
 		result = "0x0"
 	}
 	writeRPC(w, map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
+}
+
+func (h *adapterHarness) callResult(request rawRPCRequest) string {
+	if !h.escrow {
+		return "0x" + strings.Repeat("0", 63) + "1"
+	}
+	var args transactionArgs
+	if len(request.Params) == 0 || json.Unmarshal(request.Params[0], &args) != nil {
+		h.t.Fatal("invalid eth_call arguments")
+	}
+	switch strings.TrimPrefix(args.Data, "0x") {
+	case common.Bytes2Hex(selector("asset()")):
+		return "0x" + strings.Repeat("0", 24) + strings.TrimPrefix(h.escrowAsset, "0x")
+	case common.Bytes2Hex(selector("optimisticReleaseWindow()")):
+		return "0x" + common.Bytes2Hex(common.LeftPadBytes(new(big.Int).SetUint64(h.releaseWindow).Bytes(), 32))
+	default:
+		if strings.HasPrefix(strings.TrimPrefix(args.Data, "0x"), common.Bytes2Hex(selector("allowance(address,address)"))) {
+			return "0x" + common.Bytes2Hex(common.LeftPadBytes(h.allowance.Bytes(), 32))
+		}
+		return "0x"
+	}
 }
 
 func (h *adapterHarness) handleWallet(w http.ResponseWriter, r *http.Request) {
@@ -264,12 +310,114 @@ func TestClefAdapterURLAndCapValidation(t *testing.T) {
 	}
 }
 
+func TestEscrowClefAdapterPreparesValidatesAndBroadcastsExactFund(t *testing.T) {
+	h := newAdapterHarness(t)
+	adapter := h.escrowAdapter(t)
+	prepared, err := adapter.Prepare(context.Background(), escrowAuthorization(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Sender != strings.ToLower(crypto.PubkeyToAddress(h.key.PublicKey).Hex()) {
+		t.Fatalf("prepared sender = %s", prepared.Sender)
+	}
+	var tx types.Transaction
+	if err := tx.UnmarshalBinary(prepared.RawTransaction); err != nil {
+		t.Fatal(err)
+	}
+	if tx.To() == nil || strings.ToLower(tx.To().Hex()) != testEscrow || !strings.HasPrefix(common.Bytes2Hex(tx.Data()), common.Bytes2Hex(selector("fund(bytes32,address,uint256,bytes32,bytes32,uint64,uint64)"))) {
+		t.Fatalf("fund transaction = to %v data %x", tx.To(), tx.Data())
+	}
+	if err := adapter.Broadcast(context.Background(), prepared); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"eth_chainId", "eth_getCode", "eth_call", "eth_call", "eth_call", "eth_call", "eth_getTransactionCount", "eth_maxPriorityFeePerGas", "eth_getBlockByNumber", "eth_estimateGas", "eth_sendRawTransaction"}
+	if strings.Join(h.methods, ",") != strings.Join(want, ",") {
+		t.Fatalf("methods = %v", h.methods)
+	}
+}
+
+func TestEscrowClefAdapterFailsClosedBeforeWallet(t *testing.T) {
+	tests := map[string]func(*adapterHarness, *referencesigner.Authorized){
+		"wrong live asset":       func(h *adapterHarness, _ *referencesigner.Authorized) { h.escrowAsset = testRecipient },
+		"wrong release window":   func(h *adapterHarness, _ *referencesigner.Authorized) { h.releaseWindow = 7200 },
+		"missing code":           func(h *adapterHarness, _ *referencesigner.Authorized) { h.code = "0x" },
+		"insufficient allowance": func(h *adapterHarness, _ *referencesigner.Authorized) { h.allowance = big.NewInt(99) },
+		"excess allowance":       func(h *adapterHarness, _ *referencesigner.Authorized) { h.allowance = big.NewInt(100_001) },
+		"wrong configured contract": func(_ *adapterHarness, a *referencesigner.Authorized) {
+			a.Authorization.Escrow.Contract = testRecipient
+		},
+		"wrong buyer": func(_ *adapterHarness, a *referencesigner.Authorized) {
+			a.Authorization.Escrow.Buyer = "0x3333333333333333333333333333333333333333"
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			h := newAdapterHarness(t)
+			auth := escrowAuthorization(h)
+			mutate(h, &auth)
+			_, err := h.escrowAdapter(t).Prepare(context.Background(), auth)
+			if err == nil {
+				t.Fatal("expected escrow preparation to fail")
+			}
+			if h.sentRaw != "" {
+				t.Fatal("failed escrow preparation reached broadcast")
+			}
+		})
+	}
+}
+
+func TestEscrowClefAdapterRejectsWalletMutation(t *testing.T) {
+	h := newAdapterHarness(t)
+	h.mutate = func(tx *types.DynamicFeeTx) { tx.Data[len(tx.Data)-1]++ }
+	_, err := h.escrowAdapter(t).Prepare(context.Background(), escrowAuthorization(h))
+	if err == nil || !strings.Contains(err.Error(), "changed the CallEscrow fund") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFundDataMatchesSolidityABI(t *testing.T) {
+	h := newAdapterHarness(t)
+	authorized := escrowAuthorization(h)
+	terms := authorized.Authorization.Escrow
+	amount := big.NewInt(100_000)
+	contractABI, err := abi.JSON(strings.NewReader(`[{"type":"function","name":"fund","stateMutability":"nonpayable","inputs":[{"name":"callId","type":"bytes32"},{"name":"provider","type":"address"},{"name":"amount","type":"uint256"},{"name":"taskDigest","type":"bytes32"},{"name":"requestDigest","type":"bytes32"},{"name":"acknowledgeBy","type":"uint64"},{"name":"deliverBy","type":"uint64"}],"outputs":[]}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := contractABI.Pack("fund", common.HexToHash(terms.CallID), common.HexToAddress(terms.Provider), amount,
+		common.HexToHash(terms.TaskDigest), common.HexToHash(terms.RequestDigest), terms.AcknowledgeBy, terms.DeliverBy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fundData(terms, amount); !bytes.Equal(got, want) {
+		t.Fatalf("fund calldata mismatch\ngot  %x\nwant %x", got, want)
+	}
+}
+
 func directAuthorization() referencesigner.Authorized {
 	return referencesigner.Authorized{Authorization: envelope.Authorization{
 		Version: envelope.Version, AuthorizationID: "auth-1", OrganizationID: "org-1", CustomerID: "customer-1",
 		AgentID: "agent-1", TaskID: "task-1", ActionID: "action-1", Rail: envelope.RailDirect,
 		ChainID: 84532, Recipient: testRecipient, Asset: testAsset, AmountAtomic: "1250000", Resource: "invoice-1",
 		PolicyVersion: "policy-1", Nonce: "0x" + strings.Repeat("a", 64), IssuedAt: 1, ExpiresAt: 2,
+	}}
+}
+
+func escrowAuthorization(h *adapterHarness) referencesigner.Authorized {
+	buyer := strings.ToLower(crypto.PubkeyToAddress(h.key.PublicKey).Hex())
+	taskDigest := "0x" + strings.Repeat("a", 64)
+	requestDigest := "0x" + strings.Repeat("b", 64)
+	callID, err := envelope.DeriveEscrowCallID(84532, testEscrow, buyer, taskDigest, requestDigest)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return referencesigner.Authorized{Authorization: envelope.Authorization{
+		Version: envelope.Version, AuthorizationID: "auth-escrow-1", OrganizationID: "org-1", CustomerID: "customer-1",
+		AgentID: "agent-1", TaskID: "task-1", ActionID: "action-1", Rail: envelope.RailEscrow,
+		ChainID: 84532, Recipient: testRecipient, Asset: testAsset, AmountAtomic: "100000", Resource: "evidence-fetch",
+		PolicyVersion: "policy-1", Nonce: "0x" + strings.Repeat("c", 64), IssuedAt: 1, ExpiresAt: 2,
+		Escrow: &envelope.EscrowTerms{Contract: testEscrow, Buyer: buyer, Provider: testRecipient, CallID: callID,
+			TaskDigest: taskDigest, RequestDigest: requestDigest, AcknowledgeBy: 3, DeliverBy: 4, ReleaseWindow: 3600},
 	}}
 }
 

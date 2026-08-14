@@ -66,14 +66,15 @@ contract, asset, and immutable release window are runtime admission settings.
 | `GET` | `/v1/commands/{commandID}` | organization member; agents see only their commands | Authoritative command outcome |
 | `GET` | `/v1/dashboard/snapshot` | human organization member | Live tenant-scoped agents, approvals, and chain state |
 | `POST` | `/v1/signer/broadcasts` | customer signer receipt signature | Authorization-bound expected execution awaiting Base reconciliation |
+| `POST` | `/v1/signer/escrow-broadcasts` | customer signer receipt signature | Attested exact escrow FUND awaiting Base reconciliation |
 | `POST` | `/v1/escrow/intents/{authorizationID}` | own-agent `escrow:register` scope or authorized human | Authorization-derived durable escrow intent before broadcast |
-| `POST` | `/v1/escrow/calls/{callID}/transitions` | Owner/Admin with active step-up | Durable candidate for one already-broadcast escrow transition |
+| `POST` | `/v1/escrow/calls/{callID}/transitions` | Owner/Admin with active step-up | Durable non-FUND candidate for one already-broadcast escrow transition |
 | `GET` | `/v1/escrow/calls/{callID}` | organization read permission; agents only their own call | Tenant-scoped canonical escrow timeline |
 
-Signer broadcast intake currently accepts only `direct_usdc` authorizations.
-x402 facilitator responses are not routed through the direct USDC receipt
-worker. Escrow uses its separate strict event decoder and transition worker;
-its registry never broadcasts.
+Signer broadcast intake has rail-specific endpoints for `direct_usdc` and
+escrow FUND. x402 facilitator responses are not routed through either customer
+signer worker. Escrow uses its separate strict event decoder and transition
+worker; its registry never broadcasts.
 
 ## Persistence
 

@@ -88,9 +88,9 @@ arguments; the fork rehearsal uses the documented public Base endpoint.
 - no funded reference-signer Base Sepolia proof;
 - no selected independent paid production RPC providers;
 - no approved source-verification ceremony;
-- the proposed capped-pilot profile is enforced by the control plane and
-  direct-USDC signer only; escrow signer enforcement and pilot admission remain
-  open, and funding remains disabled;
+- the proposed capped-pilot profile is implemented by the control plane and
+  both signer rails, but escrow pilot admission remains open until a funded
+  reference-signer Sepolia proof; funding remains disabled;
 - no explicit mainnet broadcast approval.
 
 Until all gates are independently evidenced in a separate promotion PR, the

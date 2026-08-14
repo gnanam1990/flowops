@@ -251,6 +251,58 @@ type BroadcastAttestation struct {
 	PublicKeyB64  string                         `json:"publicKeyB64"`
 }
 
+// EscrowBroadcastAttestation is the durable customer proof for the one
+// money-increasing CallEscrow transition. Provider and permissionless follow-up
+// transitions do not use customer spend authority.
+type EscrowBroadcastAttestation struct {
+	SignedReceipt broadcastreceipt.SignedReceipt `json:"signedReceipt"`
+	Authorization envelope.Authorization         `json:"authorization"`
+	PublicKeyB64  string                         `json:"publicKeyB64"`
+}
+
+func (a EscrowBroadcastAttestation) validate(expected EscrowExpectedReceipt) error {
+	publicKey, err := base64.StdEncoding.DecodeString(a.PublicKeyB64)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize || a.PublicKeyB64 != base64.StdEncoding.EncodeToString(publicKey) {
+		return errors.New("escrow broadcast attestation public key is invalid")
+	}
+	if err := broadcastreceipt.Verify(a.SignedReceipt, ed25519.PublicKey(publicKey)); err != nil {
+		return fmt.Errorf("escrow broadcast attestation signature: %w", err)
+	}
+	receipt := a.SignedReceipt.Receipt
+	authorizationDigest, err := a.Authorization.Digest()
+	if err != nil {
+		return fmt.Errorf("escrow broadcast authorization: %w", err)
+	}
+	if receipt.AuthorizationID != a.Authorization.AuthorizationID || receipt.AuthorizationDigest != "0x"+hex.EncodeToString(authorizationDigest[:]) ||
+		receipt.OrganizationID != a.Authorization.OrganizationID || receipt.CustomerID != a.Authorization.CustomerID {
+		return errors.New("escrow broadcast receipt does not match its authorization")
+	}
+	if a.Authorization.Rail != envelope.RailEscrow || a.Authorization.Escrow == nil || expected.Action != EscrowFund {
+		return errors.New("escrow broadcast attestation requires an escrow funding authorization")
+	}
+	broadcastAt := time.Unix(receipt.BroadcastAt, 0)
+	if broadcastAt.Before(time.Unix(a.Authorization.IssuedAt, 0)) || !broadcastAt.Before(time.Unix(a.Authorization.ExpiresAt, 0)) {
+		return errors.New("escrow broadcast receipt time is outside its authorization window")
+	}
+	t := a.Authorization.Escrow
+	if receipt.TransactionHash != expected.TransactionHash || receipt.Sender != expected.Buyer ||
+		a.Authorization.ChainID != expected.ChainID || a.Authorization.Asset != expected.Asset || a.Authorization.Recipient != expected.Provider || a.Authorization.AmountAtomic != expected.AmountAtomic ||
+		t.Contract != expected.Contract || t.Buyer != expected.Buyer || t.Provider != expected.Provider || t.CallID != expected.CallID ||
+		t.TaskDigest != expected.TaskDigest || t.RequestDigest != expected.RequestDigest || t.AcknowledgeBy != expected.AcknowledgeBy || t.DeliverBy != expected.DeliverBy || t.ReleaseWindow != expected.ReleaseWindow {
+		return errors.New("escrow broadcast attestation does not match expected funding")
+	}
+	return nil
+}
+
+func (a EscrowBroadcastAttestation) validateIntent(intent EscrowIntent) error {
+	authorization := a.Authorization
+	if authorization.OrganizationID != intent.OrganizationID || authorization.CustomerID != intent.CustomerID || authorization.AgentID != intent.AgentID ||
+		authorization.TaskID != intent.TaskID || authorization.AuthorizationID != intent.AuthorizationID {
+		return errors.New("escrow broadcast attestation does not match durable intent identity")
+	}
+	return nil
+}
+
 func (a BroadcastAttestation) validate(expected ExpectedExecution) error {
 	publicKey, err := base64.StdEncoding.DecodeString(a.PublicKeyB64)
 	if err != nil || len(publicKey) != ed25519.PublicKeySize || a.PublicKeyB64 != base64.StdEncoding.EncodeToString(publicKey) {

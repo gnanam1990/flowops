@@ -20,11 +20,20 @@ const maxRegistrationResponseBytes = 256 * 1024
 type HTTPRegistrationSink struct {
 	endpoint string
 	client   *http.Client
+	escrow   bool
 }
 
 // NewHTTPRegistrationSink creates the customer-side callback transport. It
 // refuses redirects so a signed receipt cannot be replayed to another origin.
 func NewHTTPRegistrationSink(controlAPIURL string, client *http.Client) (*HTTPRegistrationSink, error) {
+	return newHTTPRegistrationSink(controlAPIURL, client, false)
+}
+
+func NewHTTPEscrowRegistrationSink(controlAPIURL string, client *http.Client) (*HTTPRegistrationSink, error) {
+	return newHTTPRegistrationSink(controlAPIURL, client, true)
+}
+
+func newHTTPRegistrationSink(controlAPIURL string, client *http.Client, escrow bool) (*HTTPRegistrationSink, error) {
 	parsed, err := url.Parse(strings.TrimSpace(controlAPIURL))
 	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, errors.New("FlowOps control API URL is invalid")
@@ -43,7 +52,11 @@ func NewHTTPRegistrationSink(controlAPIURL string, client *http.Client) (*HTTPRe
 	}
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &HTTPRegistrationSink{endpoint: strings.TrimSuffix(parsed.String(), "/") + "/v1/signer/broadcasts", client: &copyClient}, nil
+	path := "/v1/signer/broadcasts"
+	if escrow {
+		path = "/v1/signer/escrow-broadcasts"
+	}
+	return &HTTPRegistrationSink{endpoint: strings.TrimSuffix(parsed.String(), "/") + path, client: &copyClient, escrow: escrow}, nil
 }
 
 func (s *HTTPRegistrationSink) Register(ctx context.Context, receipt broadcastreceipt.SignedReceipt) error {
@@ -71,6 +84,41 @@ func (s *HTTPRegistrationSink) Register(ctx context.Context, receipt broadcastre
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("FlowOps receipt registration returned HTTP %d", response.StatusCode)
+	}
+	if s.escrow {
+		var acknowledgement struct {
+			Call struct {
+				Pending *struct {
+					Expected struct {
+						TransactionHash string `json:"transactionHash"`
+					} `json:"expected"`
+					BroadcastAttestation *struct {
+						SignedReceipt broadcastreceipt.SignedReceipt `json:"signedReceipt"`
+					} `json:"broadcastAttestation"`
+				} `json:"pending"`
+				Transitions []struct {
+					Expected struct {
+						TransactionHash string `json:"transactionHash"`
+					} `json:"expected"`
+					BroadcastAttestation *struct {
+						SignedReceipt broadcastreceipt.SignedReceipt `json:"signedReceipt"`
+					} `json:"broadcastAttestation"`
+				} `json:"transitions"`
+			} `json:"call"`
+		}
+		if err := json.Unmarshal(raw, &acknowledgement); err != nil {
+			return errors.New("FlowOps escrow registration acknowledgement is not bound to the submitted receipt")
+		}
+		if acknowledgement.Call.Pending != nil && acknowledgement.Call.Pending.Expected.TransactionHash == receipt.Receipt.TransactionHash &&
+			acknowledgement.Call.Pending.BroadcastAttestation != nil && acknowledgement.Call.Pending.BroadcastAttestation.SignedReceipt == receipt {
+			return nil
+		}
+		for _, transition := range acknowledgement.Call.Transitions {
+			if transition.Expected.TransactionHash == receipt.Receipt.TransactionHash && transition.BroadcastAttestation != nil && transition.BroadcastAttestation.SignedReceipt == receipt {
+				return nil
+			}
+		}
+		return errors.New("FlowOps escrow registration acknowledgement is not bound to the submitted receipt")
 	}
 	var acknowledgement struct {
 		Execution struct {

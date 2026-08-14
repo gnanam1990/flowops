@@ -1,6 +1,6 @@
 # ADR-0019: Independent Capped-Pilot Limits
 
-Status: Accepted; control plane and direct-USDC signer implemented, escrow open
+Status: Accepted; control plane, direct-USDC signer, and escrow fund signer implemented
 Date: 2026-08-14
 
 ## Context
@@ -23,7 +23,7 @@ an intent. It counts all pending, approved, and issued reservations for the
 same organization and customer. A pilot refusal is durably recorded with a
 specific denial reason and cannot be converted into an authorization.
 
-The direct-USDC customer signer applies the same gate before authorization verification,
+The direct-USDC and escrow-fund customer signer apply the same gate before authorization verification,
 wallet preparation, signing, or broadcast. It reconstructs exposure from its
 process-locked, hash-chained attempt journal on every restart. Until an
 independently verified settlement-release protocol is implemented, every
@@ -31,8 +31,9 @@ durable prepared attempt remains reserved for the lifetime of that pilot
 journal. This is stricter than outstanding-balance accounting and cannot
 understate exposure after an ambiguous transaction.
 
-Base Sepolia may use separately approved test limits. A Base mainnet direct-USDC
-reference signer refuses configuration that differs from the committed initial profile.
+Base Sepolia may use separately approved test limits. A Base mainnet reference
+signer on either supported rail refuses configuration that differs from the
+committed initial profile.
 The production control-plane loader carries the same check for the future
 mainnet observer promotion path.
 
@@ -48,10 +49,10 @@ mainnet observer promotion path.
   accepted workaround.
 - Funding remains separately disabled. Implemented limits do not authorize a
   mainnet deployment or transfer.
-- `CallEscrow` is not covered yet: the current executor rejects the `escrow`
-  rail. The CallEscrow readiness gate stays false until an exact-approval and
-  fund-call signer path enforces the same profile and passes funded Sepolia
-  reconciliation.
+- `CallEscrow` funding now uses the same conservative signer accounting. The
+  adapter requires sufficient USDC allowance, but signs only exact `fund(...)`
+  calldata; it never grants approval. The readiness flag stays false until the
+  path passes a separately approved funded Base Sepolia reconciliation proof.
 - The 10 USDC value is per customer signer, not a platform-global ceiling.
   Mainnet admission remains blocked until a single-customer pilot or a reviewed
   aggregate allocation mechanism is enforced.

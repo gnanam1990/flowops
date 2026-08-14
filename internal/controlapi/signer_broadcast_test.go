@@ -23,6 +23,15 @@ type stubBroadcastRegistrar struct {
 	err       error
 }
 
+type stubEscrowBroadcastRegistrar struct {
+	call reconciliation.EscrowCall
+	err  error
+}
+
+func (s stubEscrowBroadcastRegistrar) Register(context.Context, broadcastreceipt.SignedReceipt) (reconciliation.EscrowCall, error) {
+	return s.call, s.err
+}
+
 func (s stubBroadcastRegistrar) Register(context.Context, broadcastreceipt.SignedReceipt) (reconciliation.Execution, error) {
 	return s.execution, s.err
 }
@@ -32,6 +41,20 @@ type captureBroadcastReconciler struct {
 	broadcastAt time.Time
 	calls       int
 	err         error
+}
+
+type captureEscrowBroadcastReconciler struct {
+	intent      reconciliation.EscrowIntent
+	candidate   reconciliation.EscrowTransitionCandidate
+	attestation reconciliation.EscrowBroadcastAttestation
+	calls       int
+}
+
+func (r *captureEscrowBroadcastReconciler) RegisterAttestedEscrowBroadcast(_ context.Context, intent reconciliation.EscrowIntent, candidate reconciliation.EscrowTransitionCandidate, attestation reconciliation.EscrowBroadcastAttestation) (reconciliation.EscrowCall, error) {
+	r.calls++
+	r.intent, r.candidate, r.attestation = intent, candidate, attestation
+	pending := reconciliation.EscrowTransition{Expected: reconciliation.EscrowExpectedReceipt{TransactionHash: candidate.TransactionHash}, BroadcastAttestation: &attestation}
+	return reconciliation.EscrowCall{Intent: intent, State: reconciliation.EscrowPositionRegistered, Pending: &pending}, nil
 }
 
 func (r *captureBroadcastReconciler) RegisterAttestedBroadcast(_ context.Context, expected reconciliation.ExpectedExecution, attestation reconciliation.BroadcastAttestation) (reconciliation.Execution, error) {
@@ -107,6 +130,47 @@ func TestSignerBroadcastRejectsNonDirectRails(t *testing.T) {
 	}
 	if reconciler.calls != 0 {
 		t.Fatalf("x402 authorization reached direct reconciler %d times", reconciler.calls)
+	}
+}
+
+func TestSignerEscrowBroadcastDerivesAttestedFundAndAcceptsDelayedCallback(t *testing.T) {
+	now := time.Date(2026, 8, 14, 17, 0, 0, 0, time.UTC)
+	lifecycle, journal, signedAuthorization := issuedEscrowLifecycle(t, now)
+	defer journal.Close()
+	publicKey, privateKey := broadcastKeypair(t)
+	keys, err := NewStaticBroadcastKeys([]BroadcastKey{{OrganizationID: "org_a", CustomerID: "customer_a", KeyID: "customer_signer_1", PublicKey: publicKey}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler := &captureEscrowBroadcastReconciler{}
+	// Callback time is after authorization expiry; the signed broadcast time is
+	// inside the original window and remains the relevant authority evidence.
+	registrar, err := NewSignerEscrowBroadcastRegistrar(lifecycle, keys, reconciler, func() time.Time { return now.Add(6 * time.Minute) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, _ := signedAuthorization.Authorization.Digest()
+	receipt := broadcastreceipt.Receipt{
+		Version: broadcastreceipt.Version, OrganizationID: "org_a", CustomerID: "customer_a",
+		AuthorizationID: signedAuthorization.Authorization.AuthorizationID, AuthorizationDigest: "0x" + hex.EncodeToString(digest[:]),
+		TransactionHash: "0x" + strings.Repeat("9", 64), Sender: signedAuthorization.Authorization.Escrow.Buyer,
+		Outcome: broadcastreceipt.OutcomeAmbiguous, BroadcastAt: now.Unix(),
+	}
+	call, err := registrar.Register(context.Background(), signBroadcast(t, receipt, privateKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	terms := signedAuthorization.Authorization.Escrow
+	if reconciler.calls != 1 || reconciler.candidate.Action != reconciliation.EscrowFund || reconciler.candidate.TransactionHash != receipt.TransactionHash ||
+		reconciler.intent.CallID != terms.CallID || reconciler.intent.Contract != terms.Contract || reconciler.intent.Buyer != terms.Buyer ||
+		reconciler.attestation.SignedReceipt.Receipt != receipt || call.Pending == nil {
+		t.Fatalf("escrow registration call=%+v reconciler=%+v", call, reconciler)
+	}
+
+	wrongSender := receipt
+	wrongSender.Sender = terms.Provider
+	if _, err := registrar.Register(context.Background(), signBroadcast(t, wrongSender, privateKey)); !errors.Is(err, ErrBroadcastRail) {
+		t.Fatalf("wrong escrow sender error = %v", err)
 	}
 }
 
@@ -227,5 +291,33 @@ func TestSignerBroadcastHTTPBoundaryIsSignatureAuthenticatedAndFailClosed(t *tes
 	serverWithError.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/signer/broadcasts", bytes.NewReader(body)))
 	if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "INVALID_SIGNER_RECEIPT") {
 		t.Fatalf("invalid signature status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestSignerEscrowBroadcastHTTPBoundaryIsSeparateAndFailClosed(t *testing.T) {
+	now := time.Date(2026, 8, 14, 19, 0, 0, 0, time.UTC)
+	store := newMemoryStore(func() time.Time { return now })
+	chain := newHealthyChain(now)
+	lifecycle, journal := testLifecycle(t, store, chain, now)
+	defer journal.Close()
+	call := reconciliation.EscrowCall{Intent: reconciliation.EscrowIntent{CallID: "0x" + strings.Repeat("a", 64)}, State: reconciliation.EscrowPositionRegistered}
+	server, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain, SignerEscrowBroadcasts: stubEscrowBroadcastRegistrar{call: call}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(broadcastreceipt.SignedReceipt{})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/signer/escrow-broadcasts", bytes.NewReader(body)))
+	if recorder.Code != http.StatusCreated || !strings.Contains(recorder.Body.String(), `"call"`) {
+		t.Fatalf("escrow endpoint status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	unavailable, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder = httptest.NewRecorder()
+	unavailable.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/signer/escrow-broadcasts", bytes.NewReader(body)))
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "SIGNER_ESCROW_BROADCASTS_UNAVAILABLE") {
+		t.Fatalf("unconfigured escrow endpoint status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

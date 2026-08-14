@@ -61,6 +61,45 @@ func TestHTTPRegistrationSinkPostsExactReceipt(t *testing.T) {
 	}
 }
 
+func TestHTTPEscrowRegistrationSinkRequiresDurableAttestationEcho(t *testing.T) {
+	want := testSignedReceipt(t)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/signer/escrow-broadcasts" {
+			t.Errorf("path = %s", request.URL.Path)
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"call": map[string]any{"pending": map[string]any{
+			"expected":             map[string]any{"transactionHash": want.Receipt.TransactionHash},
+			"broadcastAttestation": map[string]any{"signedReceipt": want},
+		}}})
+	}))
+	defer server.Close()
+	sink, err := NewHTTPEscrowRegistrationSink(server.URL, &http.Client{Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Register(context.Background(), want); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHTTPEscrowRegistrationSinkAcceptsResolvedAttestationReplay(t *testing.T) {
+	want := testSignedReceipt(t)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(writer).Encode(map[string]any{"call": map[string]any{"transitions": []any{map[string]any{
+			"expected":             map[string]any{"transactionHash": want.Receipt.TransactionHash},
+			"broadcastAttestation": map[string]any{"signedReceipt": want},
+		}}}})
+	}))
+	defer server.Close()
+	sink, err := NewHTTPEscrowRegistrationSink(server.URL, &http.Client{Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Register(context.Background(), want); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHTTPRegistrationSinkFailsClosed(t *testing.T) {
 	receipt := testSignedReceipt(t)
 	for name, handler := range map[string]http.HandlerFunc{

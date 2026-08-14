@@ -30,7 +30,7 @@ const (
 
 var (
 	ErrAttemptConflict     = errors.New("authorization already names a different signer attempt")
-	ErrUnsupportedRail     = errors.New("one-way executor supports direct_usdc only")
+	ErrUnsupportedRail     = errors.New("one-way executor supports direct_usdc or escrow funding only")
 	ErrPreparedTransaction = errors.New("wallet returned an invalid prepared transaction")
 	ErrRegistrationPending = errors.New("broadcast receipt registration is pending")
 	ErrBroadcastAmbiguous  = errors.New("transaction broadcast outcome is ambiguous")

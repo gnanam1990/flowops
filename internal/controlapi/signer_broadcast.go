@@ -34,6 +34,14 @@ type BroadcastReconciler interface {
 	RegisterAttestedBroadcast(context.Context, reconciliation.ExpectedExecution, reconciliation.BroadcastAttestation) (reconciliation.Execution, error)
 }
 
+type EscrowBroadcastRegistrar interface {
+	Register(context.Context, broadcastreceipt.SignedReceipt) (reconciliation.EscrowCall, error)
+}
+
+type EscrowBroadcastReconciler interface {
+	RegisterAttestedEscrowBroadcast(context.Context, reconciliation.EscrowIntent, reconciliation.EscrowTransitionCandidate, reconciliation.EscrowBroadcastAttestation) (reconciliation.EscrowCall, error)
+}
+
 // BroadcastKey identifies one customer-controlled receipt attestation key.
 // FlowOps stores only this public key; the matching private key remains in the
 // customer's signer runtime.
@@ -85,6 +93,23 @@ type SignerBroadcastRegistrar struct {
 	clock      func() time.Time
 }
 
+type SignerEscrowBroadcastRegistrar struct {
+	lifecycle  *controlplane.Lifecycle
+	keys       *StaticBroadcastKeys
+	reconciler EscrowBroadcastReconciler
+	clock      func() time.Time
+}
+
+func NewSignerEscrowBroadcastRegistrar(lifecycle *controlplane.Lifecycle, keys *StaticBroadcastKeys, reconciler EscrowBroadcastReconciler, clock func() time.Time) (*SignerEscrowBroadcastRegistrar, error) {
+	if lifecycle == nil || keys == nil || reconciler == nil {
+		return nil, errors.New("lifecycle, broadcast keys, and escrow reconciler are required")
+	}
+	if clock == nil {
+		clock = time.Now
+	}
+	return &SignerEscrowBroadcastRegistrar{lifecycle: lifecycle, keys: keys, reconciler: reconciler, clock: clock}, nil
+}
+
 func NewSignerBroadcastRegistrar(lifecycle *controlplane.Lifecycle, keys *StaticBroadcastKeys, reconciler BroadcastReconciler, clock func() time.Time) (*SignerBroadcastRegistrar, error) {
 	if lifecycle == nil || keys == nil || reconciler == nil {
 		return nil, errors.New("lifecycle, broadcast keys, and reconciler are required")
@@ -96,33 +121,13 @@ func NewSignerBroadcastRegistrar(lifecycle *controlplane.Lifecycle, keys *Static
 }
 
 func (r *SignerBroadcastRegistrar) Register(ctx context.Context, signed broadcastreceipt.SignedReceipt) (reconciliation.Execution, error) {
-	receipt := signed.Receipt
-	publicKey, ok := r.keys.Resolve(receipt.OrganizationID, receipt.CustomerID, signed.KeyID)
-	if !ok {
-		return reconciliation.Execution{}, ErrBroadcastKeyUnknown
-	}
-	if err := broadcastreceipt.Verify(signed, publicKey); err != nil {
-		return reconciliation.Execution{}, fmt.Errorf("%w: %v", ErrBroadcastSignature, err)
-	}
-	record, ok := r.lifecycle.GetByAuthorization(receipt.AuthorizationID)
-	if !ok || record.Authorization == nil {
-		return reconciliation.Execution{}, ErrBroadcastBinding
-	}
-	authorization := *record.Authorization
-	digest, err := authorization.Digest()
+	record, authorization, publicKey, err := validateBroadcastBinding(r.lifecycle, r.keys, r.clock, signed)
 	if err != nil {
-		return reconciliation.Execution{}, fmt.Errorf("digest issued authorization: %w", err)
+		return reconciliation.Execution{}, err
 	}
-	canonicalDigest := "0x" + hex.EncodeToString(digest[:])
-	if receipt.OrganizationID != authorization.OrganizationID || receipt.CustomerID != authorization.CustomerID || receipt.AuthorizationDigest != canonicalDigest {
-		return reconciliation.Execution{}, ErrBroadcastBinding
-	}
+	receipt := signed.Receipt
 	if authorization.Rail != envelope.RailDirect {
 		return reconciliation.Execution{}, ErrBroadcastRail
-	}
-	broadcastAt := time.Unix(receipt.BroadcastAt, 0).UTC()
-	if broadcastAt.Before(time.Unix(authorization.IssuedAt, 0)) || !broadcastAt.Before(time.Unix(authorization.ExpiresAt, 0)) || broadcastAt.After(r.clock().UTC().Add(maxBroadcastFutureSkew)) {
-		return reconciliation.Execution{}, ErrBroadcastTime
 	}
 	expected := reconciliation.ExpectedExecution{
 		ExecutionID:     executionID(authorization.AuthorizationID),
@@ -139,6 +144,52 @@ func (r *SignerBroadcastRegistrar) Register(ctx context.Context, signed broadcas
 	}
 	attestation := reconciliation.BroadcastAttestation{SignedReceipt: signed, Authorization: authorization, PublicKeyB64: base64.StdEncoding.EncodeToString(publicKey)}
 	return r.reconciler.RegisterAttestedBroadcast(ctx, expected, attestation)
+}
+
+func (r *SignerEscrowBroadcastRegistrar) Register(ctx context.Context, signed broadcastreceipt.SignedReceipt) (reconciliation.EscrowCall, error) {
+	record, authorization, publicKey, err := validateBroadcastBinding(r.lifecycle, r.keys, r.clock, signed)
+	if err != nil {
+		return reconciliation.EscrowCall{}, err
+	}
+	terms := authorization.Escrow
+	if authorization.Rail != envelope.RailEscrow || terms == nil || signed.Receipt.Sender != terms.Buyer {
+		return reconciliation.EscrowCall{}, ErrBroadcastRail
+	}
+	intent := reconciliation.EscrowIntent{
+		OrganizationID: authorization.OrganizationID, CustomerID: authorization.CustomerID, AgentID: authorization.AgentID,
+		TaskID: authorization.TaskID, AuthorizationID: authorization.AuthorizationID, IntentDigest: record.IntentDigest,
+		ChainID: authorization.ChainID, Contract: terms.Contract, Asset: authorization.Asset, CallID: terms.CallID,
+		Buyer: terms.Buyer, Provider: terms.Provider, AmountAtomic: authorization.AmountAtomic, TaskDigest: terms.TaskDigest,
+		RequestDigest: terms.RequestDigest, AcknowledgeBy: terms.AcknowledgeBy, DeliverBy: terms.DeliverBy, ReleaseWindow: terms.ReleaseWindow,
+	}
+	attestation := reconciliation.EscrowBroadcastAttestation{SignedReceipt: signed, Authorization: authorization, PublicKeyB64: base64.StdEncoding.EncodeToString(publicKey)}
+	candidate := reconciliation.EscrowTransitionCandidate{Action: reconciliation.EscrowFund, TransactionHash: signed.Receipt.TransactionHash}
+	return r.reconciler.RegisterAttestedEscrowBroadcast(ctx, intent, candidate, attestation)
+}
+
+func validateBroadcastBinding(lifecycle *controlplane.Lifecycle, keys *StaticBroadcastKeys, clock func() time.Time, signed broadcastreceipt.SignedReceipt) (controlplane.Record, envelope.Authorization, ed25519.PublicKey, error) {
+	receipt := signed.Receipt
+	publicKey, ok := keys.Resolve(receipt.OrganizationID, receipt.CustomerID, signed.KeyID)
+	if !ok {
+		return controlplane.Record{}, envelope.Authorization{}, nil, ErrBroadcastKeyUnknown
+	}
+	if err := broadcastreceipt.Verify(signed, publicKey); err != nil {
+		return controlplane.Record{}, envelope.Authorization{}, nil, fmt.Errorf("%w: %v", ErrBroadcastSignature, err)
+	}
+	record, ok := lifecycle.GetByAuthorization(receipt.AuthorizationID)
+	if !ok || record.Authorization == nil {
+		return controlplane.Record{}, envelope.Authorization{}, nil, ErrBroadcastBinding
+	}
+	authorization := *record.Authorization
+	digest, err := authorization.Digest()
+	if err != nil || receipt.OrganizationID != authorization.OrganizationID || receipt.CustomerID != authorization.CustomerID || receipt.AuthorizationDigest != "0x"+hex.EncodeToString(digest[:]) {
+		return controlplane.Record{}, envelope.Authorization{}, nil, ErrBroadcastBinding
+	}
+	broadcastAt := time.Unix(receipt.BroadcastAt, 0).UTC()
+	if broadcastAt.Before(time.Unix(authorization.IssuedAt, 0)) || !broadcastAt.Before(time.Unix(authorization.ExpiresAt, 0)) || broadcastAt.After(clock().UTC().Add(maxBroadcastFutureSkew)) {
+		return controlplane.Record{}, envelope.Authorization{}, nil, ErrBroadcastTime
+	}
+	return record, authorization, publicKey, nil
 }
 
 func executionID(authorizationID string) string {

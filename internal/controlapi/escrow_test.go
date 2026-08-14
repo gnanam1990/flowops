@@ -148,14 +148,14 @@ func TestEscrowAPIRequiresTenantAuthorizationAndTransactionHashIdempotency(t *te
 	if status != http.StatusConflict || registry.transitionCalls != 0 {
 		t.Fatalf("mismatched idempotency status=%d calls=%d", status, registry.transitionCalls)
 	}
-	status, _ = doRequest(t, httpServer.Client(), http.MethodPost, transitionPath, ownerTokenA, candidate.TransactionHash, candidate)
-	if status != http.StatusCreated || registry.transitionCalls != 1 {
-		t.Fatalf("transition status=%d calls=%d", status, registry.transitionCalls)
+	status, body := doRequest(t, httpServer.Client(), http.MethodPost, transitionPath, ownerTokenA, candidate.TransactionHash, candidate)
+	if status != http.StatusConflict || registry.transitionCalls != 0 || !strings.Contains(fmt.Sprint(body), "ATTESTED_FUND_REQUIRED") {
+		t.Fatalf("manual FUND status=%d calls=%d body=%v", status, registry.transitionCalls, body)
 	}
 	invalid := reconciliation.EscrowTransitionCandidate{Action: "MINT", TransactionHash: "0x" + strings.Repeat("b", 64)}
 	registry.transitionErr = fmt.Errorf("%w: unsupported action", reconciliation.ErrEscrowTransition)
 	status, _ = doRequest(t, httpServer.Client(), http.MethodPost, transitionPath, ownerTokenA, invalid.TransactionHash, invalid)
-	if status != http.StatusBadRequest || registry.transitionCalls != 2 {
+	if status != http.StatusBadRequest || registry.transitionCalls != 1 {
 		t.Fatalf("invalid transition status=%d calls=%d", status, registry.transitionCalls)
 	}
 	status, _ = doRequest(t, httpServer.Client(), http.MethodGet, httpServer.URL+"/v1/escrow/calls/"+authorization.Authorization.Escrow.CallID, ownerTokenA, "", nil)

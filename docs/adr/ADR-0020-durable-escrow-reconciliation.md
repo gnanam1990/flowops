@@ -55,14 +55,12 @@ deadlines that determine the actual calldata.
 - Existing non-escrow authorization canonical bytes remain unchanged because
   the new signed field is omitted when absent. Older consumers fail closed on
   escrow authorizations they do not understand.
-- Transition hashes are a temporary step-up-protected Owner/Admin intake until
-  an independently enforcing customer escrow executor can attest broadcasts.
-  A typo or lost transaction remains pending and must not trigger a blind
-  replacement.
-- This ADR does not authorize mainnet, create a customer escrow signer, or
-  prove that a transaction was broadcast within an authorization window. The
-  reference signer still rejects escrow; an independently enforcing escrow
-  executor and funded Sepolia proof remain required before pilot admission.
+- Funding hashes normally arrive through the customer signer's signed receipt
+  endpoint and retain the exact authorization, receipt, and verification key.
+  The step-up-protected Owner/Admin transition intake remains for non-spend
+  provider/permissionless transitions and manual evidence recovery.
+- This ADR does not authorize mainnet. A funded reference-signer Sepolia proof
+  remains required before escrow pilot admission.
 
 ## Verification
 

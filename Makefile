@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence mainnet-readiness-check test-mainnet-readiness dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-pilot-limits smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence mainnet-readiness-check test-mainnet-readiness dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-pilot-limits smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -59,8 +59,11 @@ smoke-signer-executor:
 smoke-reference-signer:
 	go test -race -run '^(TestReferenceSignerNoFundsEndToEnd|TestClefAdapterPreparesValidatesAndBroadcastsExactTransaction|TestClefAdapterRejectsWalletMutationBeforeBroadcast|TestQuorumChainGateRequiresFreshCanonicalAgreement)$$' ./cmd/reference-signer ./pkg/referencewallet ./pkg/referencesigner
 
+smoke-escrow-signer:
+	go test -race -run '^(TestReferenceSignerEscrowNoFundsEndToEnd|TestEscrowClefAdapterPreparesValidatesAndBroadcastsExactFund|TestEscrowClefAdapterFailsClosedBeforeWallet|TestEscrowClefAdapterRejectsWalletMutation|TestFundDataMatchesSolidityABI|TestSignerEscrowBroadcastDerivesAttestedFundAndAcceptsDelayedCallback|TestSignerEscrowBroadcastHTTPBoundaryIsSeparateAndFailClosed|TestAttestedEscrowBroadcastPersistsExactCustomerProofDuringChainPause|TestAttestedEscrowBroadcastReplayAfterResolutionReturnsOriginalProof|TestHTTPEscrowRegistrationSinkRequiresDurableAttestationEcho|TestHTTPEscrowRegistrationSinkAcceptsResolvedAttestationReplay|TestExecutorPilotOutstandingLimitIsDurableAndPreWallet)$$' ./cmd/reference-signer ./pkg/referencewallet ./pkg/referencesigner ./internal/controlapi ./internal/reconciliation
+
 smoke-pilot-limits:
-	go test -race -run '^(TestLimitsCheckExactBoundaries|TestInitialBaseMainnetProfileIsExact|TestBaseMainnetReadinessRecordMatchesProfile|TestPilotLimitsOverridePermissivePolicyAndSurviveRestart|TestExecutorPilotOutstandingLimitIsDurableAndPreWallet|TestLoadConfigRejectsUnsafePilotLimits|TestLoadConfigPinsInitialBaseMainnetPilotLimits|TestLoadConfigRejectsLegacyV1AfterRequiredLimitMigration)$$' ./pkg/pilotlimits ./internal/controlplane ./pkg/referencesigner ./cmd/control-plane-api ./cmd/reference-signer
+	go test -race -run '^(TestLimitsCheckExactBoundaries|TestInitialBaseMainnetProfileIsExact|TestBaseMainnetReadinessRecordMatchesProfile|TestPilotLimitsOverridePermissivePolicyAndSurviveRestart|TestExecutorPilotOutstandingLimitIsDurableAndPreWallet|TestLoadConfigRejectsUnsafePilotLimits|TestLoadConfigPinsInitialBaseMainnetPilotLimits|TestLoadConfigRejectsLegacyV1AfterRequiredLimitMigration|TestLoadConfigRequiresOneExplicitRailAndEscrowTuple)$$' ./pkg/pilotlimits ./internal/controlplane ./pkg/referencesigner ./cmd/control-plane-api ./cmd/reference-signer
 
 smoke-escrow:
 	forge test --match-path contracts/test/CallEscrow.t.sol --match-test 'test_(acceptDeliveryOnlyBuyerAndPaysOnlyProvider|refundAcknowledgedButUndeliveredOnlyAfterDeliveryDeadline|reentrancyCannotFinalizeAnotherExpiredPosition)' -vv

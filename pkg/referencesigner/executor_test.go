@@ -549,6 +549,7 @@ func TestExecutorPilotOutstandingLimitIsDurableAndPreWallet(t *testing.T) {
 	second.Authorization.AuthorizationID = "auth_executor_2"
 	second.Authorization.Nonce = "0x" + strings.Repeat("b", 64)
 	second.Authorization.AmountAtomic = "501"
+	second.Authorization.Rail = envelope.RailEscrow
 	if _, err := f.executor.Execute(context.Background(), second); !errors.Is(err, pilotlimits.ErrOutstandingExceeded) {
 		t.Fatalf("outstanding limit error = %v", err)
 	}

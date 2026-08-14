@@ -5,9 +5,10 @@ authorization public keys and the callback URL; it never receives the Clef
 keystore, wallet key, receipt private key, raw transaction, RPC credentials, or
 local journals.
 
-Current strict config version: `flowops.reference-signer.v2`. Existing `v1`
-files must be copied, given a reviewed `maxOutstandingAtomic`, and explicitly
-versioned to `v2`; the command fails closed instead of migrating economic limits.
+Current strict config version: `flowops.reference-signer.v3`. Existing `v1` and
+`v2` files must be copied and explicitly given one `rail`. Escrow mode also
+requires `escrowContract` and `escrowReleaseWindowSeconds`; the command fails
+closed instead of inferring a spend rail or deployment.
 
 ## Prepare customer-owned files
 
@@ -16,6 +17,9 @@ versioned to `v2`; the command fails closed instead of migrating economic limits
    For the initial Base mainnet profile, `maxAmountAtomic` must be `1000000`
    and `maxOutstandingAtomic` must be `10000000`. The signer conservatively
    retains every prepared attempt against that aggregate limit after restart.
+   For escrow mode, use `config.escrow.example.json` and grant only the capped
+   USDC allowance to the reviewed CallEscrow contract. The signer checks
+   allowance but never creates or increases it.
 2. Create a mode-`0600` freeze file:
 
    ```json
@@ -76,7 +80,7 @@ another command.
 
 ## Promotion gate
 
-Run `make smoke-reference-signer`, complete an independent security review,
+Run `make smoke-reference-signer` and `make smoke-escrow-signer`, complete an independent security review,
 then perform one explicitly approved and capped Base Sepolia transfer. Record
 the authorization ID, sender, transaction hash, callback registration, and
 canonical reconciliation evidence. Do not put funds in a mainnet signer from

@@ -41,6 +41,7 @@ type ServerConfig struct {
 	SiteSessions             *SiteSessionCodec
 	OperatorControlKey       []byte
 	SignerBroadcasts         BroadcastRegistrar
+	SignerEscrowBroadcasts   EscrowBroadcastRegistrar
 	Escrow                   *EscrowRegistrar
 }
 
@@ -54,6 +55,7 @@ type Server struct {
 	siteSessions             *SiteSessionCodec
 	operatorControlKey       []byte
 	signerBroadcasts         BroadcastRegistrar
+	signerEscrowBroadcasts   EscrowBroadcastRegistrar
 	escrow                   *EscrowRegistrar
 	handler                  http.Handler
 }
@@ -79,9 +81,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s := &Server{
 		store: cfg.Store, lifecycle: cfg.Lifecycle, chain: cfg.Chain, clock: clock, idSource: idSource,
 		commandCompletionTimeout: completionTimeout, siteSessions: cfg.SiteSessions,
-		operatorControlKey: append([]byte(nil), cfg.OperatorControlKey...),
-		signerBroadcasts:   cfg.SignerBroadcasts,
-		escrow:             cfg.Escrow,
+		operatorControlKey:     append([]byte(nil), cfg.OperatorControlKey...),
+		signerBroadcasts:       cfg.SignerBroadcasts,
+		signerEscrowBroadcasts: cfg.SignerEscrowBroadcasts,
+		escrow:                 cfg.Escrow,
 	}
 	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
 		return nil, errors.New("operator control key must contain exactly 32 bytes")
@@ -97,6 +100,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET /v1/commands/{commandID}", s.authenticate(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("GET /v1/dashboard/snapshot", s.authenticate(http.HandlerFunc(s.handleDashboardSnapshot)))
 	mux.HandleFunc("POST /v1/signer/broadcasts", s.handleSignerBroadcast)
+	mux.HandleFunc("POST /v1/signer/escrow-broadcasts", s.handleSignerEscrowBroadcast)
 	if s.escrow != nil {
 		mux.Handle("POST /v1/escrow/intents/{authorizationID}", s.authenticate(http.HandlerFunc(s.handleEscrowIntent)))
 		mux.Handle("POST /v1/escrow/calls/{callID}/transitions", s.authenticate(http.HandlerFunc(s.handleEscrowTransition)))
@@ -249,6 +253,30 @@ func (s *Server) handleSignerBroadcast(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"execution": execution})
 }
 
+func (s *Server) handleSignerEscrowBroadcast(w http.ResponseWriter, r *http.Request) {
+	if s.signerEscrowBroadcasts == nil {
+		writeError(w, http.StatusServiceUnavailable, "SIGNER_ESCROW_BROADCASTS_UNAVAILABLE", errors.New("customer signer escrow registration is unavailable"), true, "")
+		return
+	}
+	var signed broadcastreceipt.SignedReceipt
+	if err := decodeJSON(w, r, &signed); err != nil {
+		return
+	}
+	call, err := s.signerEscrowBroadcasts.Register(r.Context(), signed)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrBroadcastKeyUnknown), errors.Is(err, ErrBroadcastSignature):
+			writeError(w, http.StatusUnauthorized, "INVALID_SIGNER_RECEIPT", errors.New("signer receipt authentication failed"), false, "")
+		case errors.Is(err, ErrBroadcastBinding), errors.Is(err, ErrBroadcastTime), errors.Is(err, ErrBroadcastRail), errors.Is(err, reconciliation.ErrConflict), errors.Is(err, reconciliation.ErrEscrowDeployment), errors.Is(err, reconciliation.ErrEscrowTransition):
+			writeError(w, http.StatusConflict, "BROADCAST_BINDING_REJECTED", err, false, "")
+		default:
+			writeError(w, http.StatusServiceUnavailable, "BROADCAST_REGISTRATION_UNRESOLVED", err, true, "")
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"call": call})
+}
+
 func (s *Server) handleEscrowIntent(w http.ResponseWriter, r *http.Request) {
 	principal := principalFrom(r.Context())
 	if !s.authorize(w, principal, PermissionIssue, "escrow:register") {
@@ -296,6 +324,10 @@ func (s *Server) handleEscrowTransition(w http.ResponseWriter, r *http.Request) 
 	}
 	var candidate reconciliation.EscrowTransitionCandidate
 	if err := decodeJSON(w, r, &candidate); err != nil {
+		return
+	}
+	if candidate.Action == reconciliation.EscrowFund {
+		writeError(w, http.StatusConflict, "ATTESTED_FUND_REQUIRED", errors.New("escrow FUND must arrive through the customer signer receipt endpoint"), false, "")
 		return
 	}
 	if idempotencyKey != candidate.TransactionHash {

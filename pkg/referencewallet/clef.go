@@ -107,25 +107,34 @@ func (a *ClefAdapter) Prepare(ctx context.Context, authorized referencesigner.Au
 		return referencesigner.PreparedTransaction{}, errors.New("authorization amount is invalid")
 	}
 	data := transferData(recipient, amount)
+	if err := a.ensureChain(ctx); err != nil {
+		return referencesigner.PreparedTransaction{}, err
+	}
+	return a.prepareExact(ctx, a.asset, data, "transfer(address,uint256)", "direct-USDC")
+}
 
+func (a *ClefAdapter) ensureChain(ctx context.Context) error {
 	var chainHex string
 	if err := a.base.call(ctx, "eth_chainId", []any{}, &chainHex); err != nil {
-		return referencesigner.PreparedTransaction{}, err
+		return err
 	}
 	chainID, err := parseQuantity(chainHex)
 	if err != nil || chainID.Cmp(a.chainID) != 0 {
-		return referencesigner.PreparedTransaction{}, errors.New("Base RPC returned the wrong chain ID")
+		return errors.New("Base RPC returned the wrong chain ID")
 	}
+	return nil
+}
 
+func (a *ClefAdapter) prepareExact(ctx context.Context, target common.Address, data []byte, description, label string) (referencesigner.PreparedTransaction, error) {
 	from := strings.ToLower(a.sender.Hex())
-	to := strings.ToLower(a.asset.Hex())
+	to := strings.ToLower(target.Hex())
 	call := transactionArgs{From: from, To: to, Value: "0x0", Data: "0x" + fmt.Sprintf("%x", data)}
 	var simulation string
 	if err := a.base.call(ctx, "eth_call", []any{call, "latest"}, &simulation); err != nil {
-		return referencesigner.PreparedTransaction{}, errors.New("direct-USDC simulation failed")
+		return referencesigner.PreparedTransaction{}, fmt.Errorf("%s simulation failed", label)
 	}
 	if simulation != "0x" && simulation != "0x1" && simulation != "0x"+strings.Repeat("0", 63)+"1" {
-		return referencesigner.PreparedTransaction{}, errors.New("direct-USDC simulation returned an unexpected result")
+		return referencesigner.PreparedTransaction{}, fmt.Errorf("%s simulation returned an unexpected result", label)
 	}
 
 	var nonceHex, priorityHex string
@@ -163,7 +172,7 @@ func (a *ClefAdapter) Prepare(ctx context.Context, authorized referencesigner.Au
 	estimateArgs.MaxPriorityFeePerGas = quantity(priority)
 	var gasHex string
 	if err := a.base.call(ctx, "eth_estimateGas", []any{estimateArgs}, &gasHex); err != nil {
-		return referencesigner.PreparedTransaction{}, errors.New("direct-USDC gas estimation failed")
+		return referencesigner.PreparedTransaction{}, fmt.Errorf("%s gas estimation failed", label)
 	}
 	gasEstimate, err := parseQuantity(gasHex)
 	if err != nil || !gasEstimate.IsUint64() || gasEstimate.Sign() <= 0 {
@@ -171,7 +180,7 @@ func (a *ClefAdapter) Prepare(ctx context.Context, authorized referencesigner.Au
 	}
 	gasLimit, ok := bufferedGas(gasEstimate.Uint64(), defaultGasBuffer, a.maxGasLimit)
 	if !ok {
-		return referencesigner.PreparedTransaction{}, errors.New("direct-USDC gas estimate exceeds the customer cap")
+		return referencesigner.PreparedTransaction{}, fmt.Errorf("%s gas estimate exceeds the customer cap", label)
 	}
 
 	signRequest := transactionArgs{
@@ -183,10 +192,10 @@ func (a *ClefAdapter) Prepare(ctx context.Context, authorized referencesigner.Au
 	var signed struct {
 		Raw string `json:"raw"`
 	}
-	if err := a.wallet.call(ctx, "account_signTransaction", []any{signRequest, "transfer(address,uint256)"}, &signed); err != nil {
+	if err := a.wallet.call(ctx, "account_signTransaction", []any{signRequest, description}, &signed); err != nil {
 		return referencesigner.PreparedTransaction{}, errors.New("customer wallet refused transaction signing")
 	}
-	return a.validateSigned(signed.Raw, recipient, amount, nonce.Uint64(), gasLimit, feeCap, priority)
+	return a.validateSignedExact(signed.Raw, target, data, nonce.Uint64(), gasLimit, feeCap, priority, label)
 }
 
 func (a *ClefAdapter) Broadcast(ctx context.Context, prepared referencesigner.PreparedTransaction) error {
@@ -203,7 +212,7 @@ func (a *ClefAdapter) Broadcast(ctx context.Context, prepared referencesigner.Pr
 	return nil
 }
 
-func (a *ClefAdapter) validateSigned(rawHex string, recipient common.Address, amount *big.Int, nonce, gas uint64, feeCap, priority *big.Int) (referencesigner.PreparedTransaction, error) {
+func (a *ClefAdapter) validateSignedExact(rawHex string, target common.Address, data []byte, nonce, gas uint64, feeCap, priority *big.Int, label string) (referencesigner.PreparedTransaction, error) {
 	raw, err := decodeCanonicalHex(rawHex)
 	if err != nil {
 		return referencesigner.PreparedTransaction{}, errors.New("customer wallet returned invalid signed bytes")
@@ -215,8 +224,8 @@ func (a *ClefAdapter) validateSigned(rawHex string, recipient common.Address, am
 	if tx.Type() != types.DynamicFeeTxType || tx.ChainId().Cmp(a.chainID) != 0 || tx.Nonce() != nonce || tx.Gas() != gas || tx.Value().Sign() != 0 || tx.GasFeeCap().Cmp(feeCap) != 0 || tx.GasTipCap().Cmp(priority) != 0 || len(tx.AccessList()) != 0 {
 		return referencesigner.PreparedTransaction{}, errors.New("customer wallet changed transaction authority or fee fields")
 	}
-	if tx.To() == nil || *tx.To() != a.asset || string(tx.Data()) != string(transferData(recipient, amount)) {
-		return referencesigner.PreparedTransaction{}, errors.New("customer wallet changed the direct-USDC transfer")
+	if tx.To() == nil || *tx.To() != target || string(tx.Data()) != string(data) {
+		return referencesigner.PreparedTransaction{}, fmt.Errorf("customer wallet changed the %s transaction", label)
 	}
 	sender, err := types.Sender(types.LatestSignerForChainID(a.chainID), &tx)
 	if err != nil || sender != a.sender {
