@@ -48,6 +48,8 @@ jobs:
         run: make test-mainnet-deployer-verification
       - name: Validate external security-review package remains fail-closed
         run: make test-security-review-package
+      - name: Validate final Base mainnet audit remains fail-closed
+        run: make test-mainnet-final-audit
       - name: Install dashboard dependencies
         run: npm ci --prefix apps/dashboard
       - name: Audit dashboard runtime dependencies

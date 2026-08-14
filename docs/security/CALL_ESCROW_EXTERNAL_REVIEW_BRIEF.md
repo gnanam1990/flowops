@@ -15,8 +15,9 @@ contract is explicitly unaudited and mainnet deployment remains prohibited.
   dependency commit;
 - Solidity `0.8.26`, optimizer 200, Cancun EVM, non-via-IR compilation;
 - the pinned Base mainnet constructor and deployment script;
-- the hardware-only one-shot broadcast wrapper, read-only post-deployment
-  verification, and separately approved source submission; and
+- the aggregate final-readiness audit, hardware-only one-shot broadcast
+  wrapper, read-only post-deployment verification, and separately approved
+  source submission; and
 - unit, fuzz, invariant, negative-mutation, and source-rehearsal evidence.
 
 Customer signer/wallets, policy services, durable reconciliation, production
@@ -47,6 +48,8 @@ reported as integration risks, but must not be described as reviewed modules.
 10. Does the mainnet ceremony prevent source substitution, wrong deployer,
     wrong nonce, gas-cap bypass, record substitution, blind retry, secret
     leakage, and premature source submission?
+11. Does the aggregate audit bind every canonical record and remain impossible
+    to bypass through a record-path override from the hardware wrapper?
 
 ## Required deliverables
 

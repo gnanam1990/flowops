@@ -49,6 +49,7 @@ jq -e '
     "lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
   ]
   and .scope.deploymentCeremony == [
+    "deploy/call-escrow/audit-base-mainnet-readiness.sh",
     "deploy/call-escrow/deploy-base-mainnet-hardware.sh",
     "deploy/call-escrow/verify-base-mainnet-deployment-readonly.sh",
     "deploy/call-escrow/submit-base-mainnet-source-verification.sh"
@@ -61,6 +62,7 @@ jq -e '
   and (.sourceBindings.abiSha256 | test("^[0-9a-f]{64}$"))
   and (.sourceBindings.storageLayoutSha256 | test("^[0-9a-f]{64}$"))
   and (.sourceBindings.methodIdentifiersSha256 | test("^[0-9a-f]{64}$"))
+  and (.ceremonyBindings.finalReadinessAuditSha256 | test("^[0-9a-f]{64}$"))
   and (.ceremonyBindings.hardwareBroadcastWrapperSha256 | test("^[0-9a-f]{64}$"))
   and (.ceremonyBindings.readOnlyDeploymentVerifierSha256 | test("^[0-9a-f]{64}$"))
   and (.ceremonyBindings.sourceSubmissionWrapperSha256 | test("^[0-9a-f]{64}$"))
@@ -79,6 +81,7 @@ jq -e '
   and .reviewDocuments.reviewBrief == "docs/security/CALL_ESCROW_EXTERNAL_REVIEW_BRIEF.md"
   and (.requiredTestCommands | index("forge test --match-path contracts/test/CallEscrow.t.sol") != null)
   and (.requiredTestCommands | index("forge test --match-path contracts/test/CallEscrow.invariant.t.sol") != null)
+  and (.requiredTestCommands | index("make test-mainnet-final-audit") != null)
   and .knownLimitations == [
     "KL-01-DIGESTS-PROVE-BYTES-NOT-QUALITY",
     "KL-02-OWNERLESS-NO-PAUSE-RESCUE-OR-UPGRADE",
@@ -129,6 +132,8 @@ bind_file 'contracts/src/CallEscrow.sol' '.sourceBindings.contractSha256'
 bind_file 'contracts/script/DeployCallEscrowBaseMainnet.s.sol' '.sourceBindings.deploymentScriptSha256'
 bind_file 'foundry.toml' '.sourceBindings.foundryConfigSha256'
 
+test "$(sha256_file deploy/call-escrow/audit-base-mainnet-readiness.sh)" = \
+  "$(jq -r '.ceremonyBindings.finalReadinessAuditSha256' "${manifest}")"
 test "$(sha256_file deploy/call-escrow/deploy-base-mainnet-hardware.sh)" = \
   "$(jq -r '.ceremonyBindings.hardwareBroadcastWrapperSha256' "${manifest}")"
 test "$(sha256_file deploy/call-escrow/verify-base-mainnet-deployment-readonly.sh)" = \

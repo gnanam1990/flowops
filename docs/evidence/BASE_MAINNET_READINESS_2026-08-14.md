@@ -109,6 +109,14 @@ invariant suite passed. This evidence proves that a reproducible review package
 exists and remains fail-closed; it is not evidence that an external review has
 occurred.
 
+`make test-mainnet-final-audit` passed. The aggregate read-only audit validates
+the readiness, promotion, source-rehearsal, and review-package records and
+their cross-bindings, then reports seven completed implementation capabilities
+separately from twelve unresolved promotion gates. Its current decision is
+`BLOCKED`; deployment and funding are both unauthorized. The hardware wrapper
+clears every test record override and requires this joined audit to become
+ready before simulation or a hardware prompt.
+
 The hardware ceremony record remains deliberately unassigned. Negative tests
 prove that inventing a deployer, selecting a software keystore, inventing an
 external review, approving source prematurely, or approving broadcast

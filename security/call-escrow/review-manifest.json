@@ -18,6 +18,7 @@
       "lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
     ],
     "deploymentCeremony": [
+      "deploy/call-escrow/audit-base-mainnet-readiness.sh",
       "deploy/call-escrow/deploy-base-mainnet-hardware.sh",
       "deploy/call-escrow/verify-base-mainnet-deployment-readonly.sh",
       "deploy/call-escrow/submit-base-mainnet-source-verification.sh"
@@ -39,7 +40,8 @@
     "methodIdentifiersSha256": "e0827409e0f845ca79e4b0e814c8f41599aab6b3f94ce885546f369b88e37098"
   },
   "ceremonyBindings": {
-    "hardwareBroadcastWrapperSha256": "d87fe21682e8913875d202a8642fa6566633de40e324e7562947e7653ee0d4c2",
+    "finalReadinessAuditSha256": "f051c3403a2055663a4db6c9fc60f6faad8c975af450a10ade324ebc782d90ee",
+    "hardwareBroadcastWrapperSha256": "e8a05bb76dc13dd215e04af72714ab95837072126a67e56b9551888f979fee06",
     "readOnlyDeploymentVerifierSha256": "ae692254f325841da9c841dce7e880fec13a0684c25943679a0140df825cc16d",
     "sourceSubmissionWrapperSha256": "c3a05d2f0cce92ddcc7328ef8a6a977ab157bb579d35b58777b830512db3a016"
   },
@@ -69,7 +71,8 @@
     "forge lint contracts/script/DeployCallEscrowBaseMainnet.s.sol --severity high med --deny warnings",
     "forge test --match-path contracts/test/CallEscrow.t.sol",
     "forge test --match-path contracts/test/CallEscrow.invariant.t.sol",
-    "make test-mainnet-deployer-verification"
+    "make test-mainnet-deployer-verification",
+    "make test-mainnet-final-audit"
   ],
   "knownLimitations": [
     "KL-01-DIGESTS-PROVE-BYTES-NOT-QUALITY",
