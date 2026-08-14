@@ -31,6 +31,18 @@ per-customer pilot profile. Full enforcement remains false because the escrow
 signer path has not yet completed its funded, canonically reconciled Sepolia
 proof.
 
+Two additional records make the future ceremony reviewable without filling in
+facts that do not exist yet:
+
+- `deployments/base-mainnet-source-rehearsal.json` binds the exact source,
+  Foundry configuration, dependency commits, compiler settings, constructor
+  encoding, creation bytecode, and canonical standard JSON compiler input. It
+  is a local rehearsal and is not explorer verification.
+- `deployments/base-mainnet-promotion.json` is intentionally
+  `blocked-unassigned`. Its hardware-wallet identity, ownership attestation,
+  external-review digest, source-verification approval, and gas-capped
+  broadcast approval are all empty.
+
 ## Stage 1: evidence and production dependencies
 
 Complete all items in a separate promotion package:
@@ -53,7 +65,9 @@ Complete all items in a separate promotion package:
    `make smoke-rpc-admission`. The code gate being present is not evidence that
    providers have been selected.
 7. Rehearse source verification, constructor decoding, runtime bytecode hashing,
-   immutable getter reads, and dual-provider receipt confirmation.
+   immutable getter reads, and dual-provider receipt confirmation. Measure and
+   approve a positive deployment-confirmation depth; do not copy an unmeasured
+   threshold from another chain.
 8. Complete the separately approved funded Sepolia proof for the implemented
    exact-allowance-check and exact-fund-calldata customer signer. Local and
    no-funds tests are not evidence of a canonical funded outcome.
@@ -64,6 +78,7 @@ Run the deterministic checks:
 
 ```bash
 make test-mainnet-readiness
+make test-mainnet-deployer-verification
 make smoke-rpc-admission
 make smoke-escrow-mainnet-readiness
 make check
@@ -109,6 +124,22 @@ The PR must pass focused Solidity tests, mutation tests, `make check`, CI,
 independent review, and a no-broadcast rehearsal. Merging it still does not
 authorize broadcast.
 
+The only supported future broadcast entrypoint is
+`deploy/call-escrow/deploy-base-mainnet-hardware.sh`. It accepts `ledger` or
+`trezor`, never a raw private key or software keystore. It requires the exact
+reviewed clean commit, a fresh time-bounded approval digest, four explicit gas
+ceilings, the approved readiness and promotion records, production RPC
+admission, the deterministic source rehearsal, and the read-only mainnet
+preflight. Today the committed records and Solidity constants make the wrapper
+refuse before simulation or broadcast.
+
+The approval pins the deployer's expected nonce. Both providers must report
+that nonce for `latest` and `pending` before and after simulation. Immediately
+before the hardware prompt, the wrapper atomically writes a one-shot attempt
+seal under the checkout's Git metadata. The seal is never auto-deleted. A user
+rejection, timeout, or unknown result therefore requires chain investigation
+and a new approval digest instead of a blind rerun.
+
 ## Stage 4: zero-fund deployment ceremony
 
 A zero-fund deployment is a real mainnet transaction. Immediately before it:
@@ -125,6 +156,14 @@ A zero-fund deployment is a real mainnet transaction. Immediately before it:
    canonical receipts; never rerun blindly.
 7. Verify source, receipt, constructor arguments, runtime bytecode, immutable
    getters, and lack of funds through both production observers.
+
+After the receipt is canonical, first run
+`deploy/call-escrow/verify-base-mainnet-deployment-readonly.sh`. It compares the
+transaction sender and exact creation input, receipt, live runtime hash, asset,
+and release window through both admitted production providers. Source
+submission remains a separate operation and requires
+`FLOWOPS_SUBMIT_SOURCE_VERIFICATION=true` plus the explorer credential before
+`deploy/call-escrow/submit-base-mainnet-source-verification.sh` will run.
 
 Commit the resulting deployment evidence in a separate PR. Until that PR is
 merged, every UI and service must continue to report mainnet unavailable.

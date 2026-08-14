@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "status": "rehearsed-not-approved",
+  "contract": "contracts/src/CallEscrow.sol:CallEscrow",
+  "sourcePath": "contracts/src/CallEscrow.sol",
+  "sourceSha256": "8ba347e7047856a73d133b51401ea5ad0f14f3122da3b0525d9b3e6e39f41e08",
+  "foundryConfigSha256": "e843a712bc7043b7ac16ef357ee29c300ba663a0d971d6f229c1c11b84bd88b0",
+  "dependencies": {
+    "forgeStdCommit": "77041d2ce690e692d6e03cc812b57d1ddaa4d505",
+    "openzeppelinContractsCommit": "c64a1edb67b6e3f4a15cca8909c9482ad33a02b0"
+  },
+  "compiler": "0.8.26+commit.8a97fa7a",
+  "optimizerEnabled": true,
+  "optimizerRuns": 200,
+  "evmVersion": "cancun",
+  "constructor": {
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "optimisticReleaseWindowSeconds": 3600,
+    "encodedArguments": "0x000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda029130000000000000000000000000000000000000000000000000000000000000e10"
+  },
+  "creationBytecodeHash": "0x347d3b087c737a3249b43d7bc8c93a4ca4776a28c32d521314fc75d771031900",
+  "creationInputHash": "0xdb92ea3282cf56afc1d7752f4bea175c638eb4bed59fb4fbdd5c0ec28c93838d",
+  "deployedBytecodeTemplateHash": "0xd6def0f2990bc2064522118822e489118a5302f3f31b980b108f1c1acc446318",
+  "standardJsonSha256": "7a8ff827792992234a85e4417aae948723eb4b6b7533f9d141458e8c2a9f7633",
+  "standardJsonSource": "portable canonical Foundry build-info input",
+  "verificationTarget": "BaseScan",
+  "sourceVerificationApproved": false,
+  "notes": "Deterministic local rehearsal only. The deployed-bytecode template still contains immutable placeholders; post-deployment verification must compare the exact creation input and live runtime independently. No source was submitted to an explorer."
+}

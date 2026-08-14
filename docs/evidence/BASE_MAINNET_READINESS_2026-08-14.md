@@ -87,17 +87,38 @@ services. Its output contained no provider hostname, path, or credential. This
 is evidence that the admission mechanism works, not that any real production
 provider has been selected or paid for.
 
+`make test-mainnet-deployer-verification` also passed. The deterministic source
+rehearsal pins the exact `CallEscrow` source and Foundry configuration hashes,
+dependency gitlinks, Solidity `0.8.26` compiler metadata, optimizer runs, Cancun
+EVM target, canonical Base USDC constructor encoding, creation-input hash, and
+canonical standard JSON compiler input. The test mutates each load-bearing
+field and requires rejection. It does not contact Base or submit source to an
+explorer.
+
+The hardware ceremony record remains deliberately unassigned. Negative tests
+prove that inventing a deployer, selecting a software keystore, inventing an
+external review, approving source prematurely, or approving broadcast
+prematurely is rejected. The future wrapper has no raw-private-key,
+software-keystore, command-line RPC-secret, or explorer-credential path; it
+accepts only Ledger or Trezor after a reviewed clean commit and fresh bounded
+approval. The post-deployment verifier is read-only, and the source-submission
+wrapper refuses both missing and explicitly false approval.
+
 ## Unresolved promotion gates
 
-- no designated production deployer or documented key-recovery ceremony;
+- the hardware-wallet ceremony is implemented and fail-closed, but no
+  production deployer, ownership attestation, or approved recovery runbook
+  exists;
 - no independent security review or bound report digest;
 - no completed legal review;
 - no durable escrow event registration and reorg correction integration;
 - no funded reference-signer Base Sepolia proof;
 - no selected independent paid production RPC providers;
+- no measured and approved deployment-confirmation depth;
 - production RPC admission is implemented and smoke-tested, but no provider
   identity, paid plan, or failure-domain evidence has been approved;
-- no approved source-verification ceremony;
+- deterministic source verification is rehearsed, but no live deployment or
+  approved explorer submission exists;
 - the proposed capped-pilot profile is implemented by the control plane and
   both signer rails, but escrow pilot admission remains open until a funded
   reference-signer Sepolia proof; funding remains disabled;

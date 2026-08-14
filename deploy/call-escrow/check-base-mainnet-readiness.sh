@@ -21,6 +21,7 @@ jq -e '
   and .callEscrow.deploymentTransaction == null
   and .callEscrow.deploymentBlock == null
   and .callEscrow.reviewedSourceCommit == null
+  and .callEscrow.minimumDeploymentConfirmations == null
   and .callEscrow.optimisticReleaseWindowSeconds == 3600
   and .callEscrow.compiler == "0.8.26"
   and .callEscrow.optimizerRuns == 200
@@ -36,6 +37,8 @@ jq -e '
   and .gates.productionRpcAdmissionImplemented == true
   and .gates.independentPaidRpcProviders == false
   and .gates.referenceSignerFundedSepoliaProof == false
+  and .gates.hardwareWalletCeremonyImplemented == true
+  and .gates.sourceVerificationPlanImplemented == true
   and .gates.sourceVerificationPlanApproved == false
   and .gates.explicitBroadcastApproval == false
   and .pilot.fundingEnabled == false
