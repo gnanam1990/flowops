@@ -64,8 +64,24 @@ func TestLoadObserverRuntimeConfigValidatesTimingThresholdsAndChain(t *testing.T
 	t.Run("Base mainnet remains gated", func(t *testing.T) {
 		setObserverRuntime(t)
 		t.Setenv("FLOWOPS_BASE_CHAIN_ID", "8453")
+		t.Setenv("FLOWOPS_BASE_RPC_PROVIDERS_JSON", `[{"name":"rpc_alpha","url":"https://alpha.vendor.example/v1/secret"},{"name":"rpc_beta","url":"https://beta.vendor.example/v1/secret"}]`)
+		t.Setenv("FLOWOPS_BASE_RPC_ADMISSION_JSON", `{"schemaVersion":1,"providers":[{"name":"rpc_alpha","operator":"vendor_alpha","failureDomain":"vendor_alpha_global","serviceTier":"paid","productionEligible":true},{"name":"rpc_beta","operator":"vendor_beta","failureDomain":"vendor_beta_global","serviceTier":"paid","productionEligible":true}]}`)
 		if _, err := loadObserverRuntimeConfig(); err == nil || !strings.Contains(err.Error(), "mainnet gate") {
 			t.Fatalf("mainnet observer config error = %v", err)
+		}
+	})
+	t.Run("Base mainnet requires production RPC admission before the promotion gate", func(t *testing.T) {
+		setObserverRuntime(t)
+		t.Setenv("FLOWOPS_BASE_CHAIN_ID", "8453")
+		if _, err := loadObserverRuntimeConfig(); err == nil || !strings.Contains(err.Error(), "ADMISSION_JSON is required") {
+			t.Fatalf("missing admission error = %v", err)
+		}
+	})
+	t.Run("Base Sepolia refuses production admission metadata", func(t *testing.T) {
+		setObserverRuntime(t)
+		t.Setenv("FLOWOPS_BASE_RPC_ADMISSION_JSON", `{"schemaVersion":1,"providers":[]}`)
+		if _, err := loadObserverRuntimeConfig(); err == nil || !strings.Contains(err.Error(), "must be unset") {
+			t.Fatalf("Sepolia admission error = %v", err)
 		}
 	})
 	t.Run("partial escrow deployment is rejected", func(t *testing.T) {

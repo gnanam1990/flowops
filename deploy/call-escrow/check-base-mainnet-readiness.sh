@@ -33,6 +33,7 @@ jq -e '
   and .gates.externalSecurityReview.reportDigest == null
   and .gates.legalReviewComplete == false
   and .gates.durableEscrowReconciliation == false
+  and .gates.productionRpcAdmissionImplemented == true
   and .gates.independentPaidRpcProviders == false
   and .gates.referenceSignerFundedSepoliaProof == false
   and .gates.sourceVerificationPlanApproved == false

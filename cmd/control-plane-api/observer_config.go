@@ -1,21 +1,19 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/internal/rpcadmission"
 	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
-const maxObserverProvidersJSONBytes = 16 * 1024
+const maxObserverProvidersJSONBytes = rpcadmission.MaxJSONBytes
 
 type observerRuntimeConfig struct {
 	providers              []reconciliation.RPCProvider
@@ -24,11 +22,6 @@ type observerRuntimeConfig struct {
 	timeout                time.Duration
 	reconciliationInterval time.Duration
 	reconciliationTimeout  time.Duration
-}
-
-type observerProviderInput struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
 }
 
 func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
@@ -40,8 +33,22 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	if err != nil {
 		return observerRuntimeConfig{}, err
 	}
-	if chainID != 84532 {
+	admissionRaw := strings.TrimSpace(os.Getenv("FLOWOPS_BASE_RPC_ADMISSION_JSON"))
+	if chainID == 8453 {
+		admission, err := rpcadmission.DecodeProductionAdmission(admissionRaw)
+		if err != nil {
+			return observerRuntimeConfig{}, err
+		}
+		if err := rpcadmission.ValidateProduction(providers, admission); err != nil {
+			return observerRuntimeConfig{}, fmt.Errorf("Base mainnet RPC admission: %w", err)
+		}
 		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_CHAIN_ID must remain 84532 until the separate Base mainnet gate is approved")
+	}
+	if chainID != 84532 {
+		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_CHAIN_ID supports Base Sepolia or Base mainnet only")
+	}
+	if admissionRaw != "" {
+		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_RPC_ADMISSION_JSON must be unset for Base Sepolia")
 	}
 	escrowContract, escrowAsset, escrowReleaseWindow, err := parseEscrowDeployment()
 	if err != nil {
@@ -150,111 +157,11 @@ func parseEscrowDeployment() (string, string, uint64, error) {
 }
 
 func parseObserverProviders(raw string) ([]reconciliation.RPCProvider, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, errors.New("FLOWOPS_BASE_RPC_PROVIDERS_JSON is required")
-	}
-	if len(raw) > maxObserverProvidersJSONBytes {
-		return nil, errors.New("FLOWOPS_BASE_RPC_PROVIDERS_JSON exceeds 16 KiB")
-	}
-	if err := rejectDuplicateJSONFields([]byte(raw)); err != nil {
-		return nil, errors.New("FLOWOPS_BASE_RPC_PROVIDERS_JSON must not contain duplicate object fields")
-	}
-	if err := rejectNonCanonicalProviderFields([]byte(raw)); err != nil {
-		return nil, errors.New("FLOWOPS_BASE_RPC_PROVIDERS_JSON provider fields must be exactly name and url")
-	}
-	decoder := json.NewDecoder(bytes.NewBufferString(raw))
-	decoder.DisallowUnknownFields()
-	var inputs []observerProviderInput
-	if err := decoder.Decode(&inputs); err != nil {
-		return nil, errors.New("FLOWOPS_BASE_RPC_PROVIDERS_JSON must be a strict provider array")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, errors.New("FLOWOPS_BASE_RPC_PROVIDERS_JSON must contain one JSON value")
-	}
-	providers := make([]reconciliation.RPCProvider, len(inputs))
-	for index, input := range inputs {
-		providers[index] = reconciliation.RPCProvider{Name: strings.TrimSpace(input.Name), URL: strings.TrimSpace(input.URL)}
-	}
-	if _, err := reconciliation.NewObserverSet(84532, providers, nil, nil); err != nil {
-		return nil, fmt.Errorf("FLOWOPS_BASE_RPC_PROVIDERS_JSON: %w", err)
-	}
-	return providers, nil
-}
-
-func rejectNonCanonicalProviderFields(raw []byte) error {
-	var providers []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &providers); err != nil {
-		return err
-	}
-	for _, provider := range providers {
-		for field := range provider {
-			if field != "name" && field != "url" {
-				return errors.New("non-canonical provider field")
-			}
-		}
-	}
-	return nil
+	return rpcadmission.DecodeProviders(raw)
 }
 
 func rejectDuplicateJSONFields(raw []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	var walk func() error
-	walk = func() error {
-		token, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		delimiter, ok := token.(json.Delim)
-		if !ok {
-			return nil
-		}
-		switch delimiter {
-		case '{':
-			seen := make(map[string]struct{})
-			for decoder.More() {
-				keyToken, err := decoder.Token()
-				if err != nil {
-					return err
-				}
-				key, ok := keyToken.(string)
-				if !ok {
-					return errors.New("object key is not a string")
-				}
-				if _, exists := seen[key]; exists {
-					return errors.New("duplicate object field")
-				}
-				seen[key] = struct{}{}
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			closing, err := decoder.Token()
-			if err != nil || closing != json.Delim('}') {
-				return errors.New("invalid object closing token")
-			}
-		case '[':
-			for decoder.More() {
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			closing, err := decoder.Token()
-			if err != nil || closing != json.Delim(']') {
-				return errors.New("invalid array closing token")
-			}
-		default:
-			return errors.New("unexpected JSON delimiter")
-		}
-		return nil
-	}
-	if err := walk(); err != nil {
-		return err
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return errors.New("multiple JSON values")
-	}
-	return nil
+	return rpcadmission.RejectDuplicateJSONFields(raw)
 }
 
 func parseIntEnv(name, raw string, defaultValue int) (int, error) {

@@ -258,6 +258,9 @@ func TestObserverSetRequiresDistinctHTTPSProviderHosts(t *testing.T) {
 	if _, err := NewObserverSet(84532, []RPCProvider{{Name: "one", URL: "https://same.example/a"}, {Name: "two", URL: "https://same.example/b"}}, client, nil); err == nil {
 		t.Fatal("same-host providers were treated as independent")
 	}
+	if _, err := NewObserverSet(84532, []RPCProvider{{Name: "one", URL: "https://same.example/a"}, {Name: "two", URL: "https://SAME.EXAMPLE./b"}}, client, nil); err == nil {
+		t.Fatal("DNS-equivalent trailing-dot providers were treated as independent")
+	}
 }
 
 func TestHexQuantityParsingIsCanonical(t *testing.T) {

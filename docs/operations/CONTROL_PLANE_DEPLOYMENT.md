@@ -38,7 +38,8 @@ The API service requires:
 | `FLOWOPS_APPLY_MIGRATIONS` | `false` for the least-privilege API runtime after an operator applies migrations |
 | `PORT` | Injected or fixed positive service port |
 | `RAILWAY_VOLUME_MOUNT_PATH` | Injected persistent mount; the entrypoint derives the journal path |
-| `FLOWOPS_BASE_RPC_PROVIDERS_JSON` | Secret strict JSON array of 2–5 unique names and HTTPS hosts |
+| `FLOWOPS_BASE_RPC_PROVIDERS_JSON` | Secret strict JSON array of 2–5 unique names and credential-bearing HTTPS URLs |
+| `FLOWOPS_BASE_RPC_ADMISSION_JSON` | Base mainnet only: schema-v1 non-secret bindings for every provider's distinct operator, failure domain, paid tier, and production eligibility; must be unset on Sepolia |
 | `FLOWOPS_BASE_CHAIN_ID` | `84532` for the capped Sepolia pilot; `8453` requires a separate mainnet gate |
 | `FLOWOPS_ESCROW_CONTRACT` | Reviewed canonical lowercase CallEscrow deployment; omit the whole escrow tuple to disable escrow admission |
 | `FLOWOPS_ESCROW_ASSET` | Exact canonical lowercase asset held by the configured CallEscrow deployment |
@@ -86,6 +87,10 @@ or observer runtime.
 
 1. Store the observer JSON and operator key in the deployment secret manager.
    Never put a credential-bearing RPC URL in a command, log, issue, or commit.
+   For mainnet, separately review the URL-free admission JSON. Run
+   `make smoke-rpc-admission` during packaging. Passing proves the configuration
+   shape, not the provider contract or infrastructure claim; retain evidence
+   for both paid plans and their distinct operational failure domains.
 2. Deploy one replica. `/health` must report the configured required observer
    count and a recent observation time. `HTTP 200` alone is not a pass.
 3. Wait for `RECOVERING`, the expected responding count, a progressing trusted
