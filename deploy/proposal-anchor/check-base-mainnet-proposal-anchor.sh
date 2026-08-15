@@ -16,14 +16,14 @@ jq -e '
   and .proposalDigest == null
   and .sourceCommit == null
   and .designatedDeployer == null
-  and .candidateDeployer.address == "0xE8405844a45C209895afE2e49be6aA2C6C6202a6"
+  and .candidateDeployer.address == "0xEEC526F6555dD43536F712D5c978CbC13CB4517f"
   and .candidateDeployer.signerClass == "software-eoa-proposal-only"
   and .candidateDeployer.productionUseProhibited == true
   and .candidateDeployer.observedCode == "0x"
   and .candidateDeployer.observedLatestNonce == 0
   and .candidateDeployer.observedPendingNonce == 0
-  and .candidateDeployer.observedBalanceWei == "307657574152182"
-  and .candidateDeployer.expectedCreateAddressAtObservedNonce == "0x524A95082dAD59fd8bf18FA27F89E3f55202eEcf"
+  and .candidateDeployer.observedBalanceWei == "0"
+  and .candidateDeployer.expectedCreateAddressAtObservedNonce == "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250"
   and (.candidateDeployer.observedAt | fromdateiso8601 > 0)
   and (.candidateDeployer.observers | sort == ["base-rpc.publicnode.com", "mainnet.base.org"])
   and .deploymentApprovalDigest == null

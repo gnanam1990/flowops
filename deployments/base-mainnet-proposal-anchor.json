@@ -9,15 +9,15 @@
   "sourceCommit": null,
   "designatedDeployer": null,
   "candidateDeployer": {
-    "address": "0xE8405844a45C209895afE2e49be6aA2C6C6202a6",
+    "address": "0xEEC526F6555dD43536F712D5c978CbC13CB4517f",
     "signerClass": "software-eoa-proposal-only",
     "productionUseProhibited": true,
     "observedCode": "0x",
     "observedLatestNonce": 0,
     "observedPendingNonce": 0,
-    "observedBalanceWei": "307657574152182",
-    "expectedCreateAddressAtObservedNonce": "0x524A95082dAD59fd8bf18FA27F89E3f55202eEcf",
-    "observedAt": "2026-08-15T13:23:29Z",
+    "observedBalanceWei": "0",
+    "expectedCreateAddressAtObservedNonce": "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250",
+    "observedAt": "2026-08-15T13:36:28Z",
     "observers": [
       "mainnet.base.org",
       "base-rpc.publicnode.com"

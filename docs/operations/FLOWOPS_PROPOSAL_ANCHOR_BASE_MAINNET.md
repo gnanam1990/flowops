@@ -55,11 +55,11 @@ the expected address and nonce through independent observers; never retry
 blindly. This signer posture does not satisfy any production deployment gate.
 
 The accepted candidate is
-`0xE8405844a45C209895afE2e49be6aA2C6C6202a6`. At the recorded read-only
+`0xEEC526F6555dD43536F712D5c978CbC13CB4517f`. At the recorded read-only
 preflight, both admitted public observers reported Base chain ID `8453`, empty
-runtime code, latest nonce `0`, pending nonce `0`, and balance
-`307657574152182` wei. The expected CREATE address at nonce `0` is
-`0x524A95082dAD59fd8bf18FA27F89E3f55202eEcf`. Every value must be refreshed
+runtime code, latest nonce `0`, pending nonce `0`, and balance `0` wei. The
+expected CREATE address at nonce `0` is
+`0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`. Every value must be refreshed
 immediately before final approval and broadcast; this record is not permission
 to send.
 
