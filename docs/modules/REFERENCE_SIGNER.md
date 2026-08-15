@@ -3,7 +3,8 @@
 Status: verifier, durable nonce store, one-way executor, signed receipt,
 strict rail-specific callback transport, Clef direct-USDC and CallEscrow FUND adapters, and runnable command
 implemented; independent durable signer pilot exposure limits are
-enforced; funded Base Sepolia escrow execution remains separately approved and open
+enforced; one capped Base Sepolia escrow FUND-to-REFUND execution is funded and
+canonically reconciled
 
 Packages: `pkg/referencesigner`, `pkg/referencewallet`
 Command: `cmd/reference-signer`
@@ -75,12 +76,14 @@ reviewed contract and immutable release window, and Base mainnet must bind every
 secret provider endpoint to distinct paid operator and failure-domain metadata.
 Base Sepolia rejects that production metadata.
 
-## Remaining integration gate
+## Funded integration evidence
 
-Independently review both adapters and the runnable command, then execute a separately
-approved, capped Base Sepolia escrow test with a designated customer wallet and
-configured receipt public key. This module does not authorize that funded test
-by itself, and mainnet remains blocked.
+The separately approved capped Base Sepolia escrow run is recorded in
+`docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.md`. It binds the
+designated test wallet, configured receipt key, signed authorization, exact
+FUND calldata, canonical FUND and REFUND receipts, ledger entries, finality,
+and terminal zero escrow balance and allowance.
 
-The command rejects `x402`. Escrow readiness remains false until the funded
-reference-signer Sepolia path is canonically reconciled.
+The command rejects `x402`. This single escrow proof does not complete
+direct-USDC funded pilot evidence, production dependency admission, external
+review, or any Base mainnet authorization.

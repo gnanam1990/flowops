@@ -36,10 +36,12 @@
       "reportDigest": null
     },
     "legalReviewComplete": false,
-    "durableEscrowReconciliation": false,
+    "durableEscrowReconciliation": true,
     "productionRpcAdmissionImplemented": true,
     "independentPaidRpcProviders": false,
-    "referenceSignerFundedSepoliaProof": false,
+    "referenceSignerFundedSepoliaProof": true,
+    "referenceSignerFundedSepoliaEvidence": "docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.json",
+    "referenceSignerFundedSepoliaEvidenceSha256": "f3464eaf8e8c874187ab3ec712063e8bfadc916f543dc113cca65f5148792218",
     "hardwareWalletCeremonyImplemented": true,
     "sourceVerificationPlanImplemented": true,
     "sourceVerificationPlanApproved": false,
@@ -55,7 +57,7 @@
     "signerAccountingPosture": "conservative-lifetime-reservation",
     "controlPlaneEnforced": true,
     "directUsdcSignerEnforced": true,
-    "escrowSignerEnforced": false,
+    "escrowSignerEnforced": true,
     "exactApprovalOnly": true
   },
   "verification": {

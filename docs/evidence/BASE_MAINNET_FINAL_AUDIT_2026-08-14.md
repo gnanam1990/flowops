@@ -8,10 +8,14 @@ Funding authorized: no
 
 Network: Base mainnet (`8453`)
 
+Updated: 2026-08-15 after the funded Base Sepolia signer proof
+
 ## What engineering has completed
 
 - durable CallEscrow transition reconciliation and reorg correction;
 - customer-controlled exact `fund(...)` signer path;
+- a funded, capped Base Sepolia reference-signer FUND-to-REFUND lifecycle with
+  canonical reconciliation and ledger/finality evidence;
 - 1 USDC per-action and 10 USDC conservative per-signer pilot limits;
 - production-shaped RPC admission rules;
 - Ledger/Trezor-only deployment ceremony and post-deployment verification;
@@ -27,15 +31,13 @@ These are implementation artifacts. They are not production approvals.
 3. A new production hardware-wallet deployer identity.
 4. Key-ownership evidence and an approved recovery runbook.
 5. Two selected, paid, operationally independent Base RPC providers.
-6. A funded Base Sepolia execution through the customer reference signer and
-   canonical reconciler.
-7. Production admission evidence for the durable reconciliation path.
-8. A measured and approved positive deployment-confirmation depth.
-9. Approval of the rehearsed source-verification process.
-10. Funded proof that both signer rails and pilot limits enforce the complete
+6. Production admission evidence for the durable reconciliation path.
+7. A measured and approved positive deployment-confirmation depth.
+8. Approval of the rehearsed source-verification process.
+9. Funded proof that both signer rails and pilot limits enforce the complete
     production-shaped path.
-11. A fresh, time-bounded, nonce-bound, gas-capped human broadcast approval.
-12. A reviewed promotion PR that replaces the zero deployer, zero review
+10. A fresh, time-bounded, nonce-bound, gas-capped human broadcast approval.
+11. A reviewed promotion PR that replaces the zero deployer, zero review
     digest, and disabled broadcast constants.
 
 ## Machine result

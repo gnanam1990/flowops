@@ -10,8 +10,8 @@ hardware-wallet promotion, source rehearsal, and the external-review package.
 Each record was accurate, but an operator still had to join their meaning by
 hand. Implementation evidence could also be confused with promotion evidence:
 the escrow reconciler, signer, pilot limits, RPC admission, hardware ceremony,
-and review package exist, while the funded and independently approved proofs
-required for mainnet do not.
+and review package exist, while independently approved production evidence is
+still required for mainnet.
 
 ## Decision
 
@@ -19,8 +19,10 @@ Add one read-only aggregate audit that authenticates all four canonical records,
 checks their cross-record bindings, verifies the in-code broadcast guards and
 the contract's unaudited notice, and emits a secret-free JSON decision. The
 current decision is `BLOCKED`, with deployment and funding both unauthorized.
-Seven completed implementation capabilities and twelve unresolved promotion
-gates are reported separately.
+After the funded reference-signer proof completed on 2026-08-15, eight completed
+implementation capabilities and eleven unresolved promotion gates are reported
+separately. The removed blocker is only the capped funded Sepolia signer proof;
+full production-shaped pilot evidence remains blocked.
 
 The audit's test-only record overrides are cleared by the only supported
 hardware-wallet broadcast wrapper. That wrapper now calls the audit in

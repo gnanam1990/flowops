@@ -84,6 +84,7 @@ report="$(jq -n \
     implementationEvidence: [
       "durable-escrow-reconciliation-implemented",
       "customer-escrow-fund-signer-implemented",
+      "funded-sepolia-reference-signer-reconciled",
       "capped-pilot-limits-implemented",
       "production-rpc-admission-implemented",
       "hardware-wallet-ceremony-implemented",
@@ -96,7 +97,6 @@ report="$(jq -n \
       {id: "production-hardware-deployer", owner: "operator", evidence: "deployments/base-mainnet-promotion.json"},
       {id: "key-ownership-and-recovery", owner: "operator", evidence: "deployments/base-mainnet-promotion.json"},
       {id: "independent-paid-rpc-quorum", owner: "operator", evidence: "deployments/base-mainnet-readiness.json"},
-      {id: "funded-sepolia-signer-proof", owner: "operator", evidence: "deployments/base-mainnet-readiness.json"},
       {id: "production-reconciliation-admission", owner: "engineering-and-operator", evidence: "deployments/base-mainnet-readiness.json"},
       {id: "measured-confirmation-depth", owner: "engineering-and-operator", evidence: "deployments/base-mainnet-readiness.json"},
       {id: "source-verification-approval", owner: "reviewer", evidence: "deployments/base-mainnet-source-rehearsal.json"},
