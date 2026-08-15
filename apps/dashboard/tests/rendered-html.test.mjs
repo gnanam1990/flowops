@@ -138,6 +138,10 @@ test("renders the FlowOps economic control room", async () => {
   assert.match(html, /<title>FlowOps — Economic control for autonomous agents<\/title>/i);
   assert.match(
     html,
+    /<meta name="base:app_id" content="6a8039cbe4a8a41598e7a325"\s*\/?>/i,
+  );
+  assert.match(
+    html,
     /<meta property="og:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i,
   );
   assert.match(
