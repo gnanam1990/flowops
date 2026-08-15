@@ -4,6 +4,13 @@ FlowOps is a Base-only control and evidence plane for autonomous agent payments.
 
 Status: pre-alpha, Phase 1 implementation. No mainnet funds.
 
+## Reviewer links
+
+- Interactive walkthrough: [flowopsagent.xyz/demo](https://flowopsagent.xyz/demo)
+- Base reviewer brief: [flowopsagent.xyz/base](https://flowopsagent.xyz/base)
+- Shareable reviewer document:
+  [FLOWOPS_BASE_REVIEWER_BRIEF_V1.md](docs/proposals/FLOWOPS_BASE_REVIEWER_BRIEF_V1.md)
+
 The only pre-audit Base mainnet artifact is the separately gated, evidence-only
 `FlowOpsProposalAnchor`, deployed at
 [`0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`](https://base.blockscout.com/address/0x149d03ec527ad8667d47e7b6a2d316dd54033250?tab=contract).
