@@ -8,6 +8,21 @@
   "proposalDigest": null,
   "sourceCommit": null,
   "designatedDeployer": null,
+  "candidateDeployer": {
+    "address": "0xEEC526F6555dD43536F712D5c978CbC13CB4517f",
+    "signerClass": "software-eoa-proposal-only",
+    "productionUseProhibited": true,
+    "observedCode": "0x",
+    "observedLatestNonce": 0,
+    "observedPendingNonce": 0,
+    "observedBalanceWei": "0",
+    "expectedCreateAddressAtObservedNonce": "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250",
+    "observedAt": "2026-08-15T13:36:28Z",
+    "observers": [
+      "mainnet.base.org",
+      "base-rpc.publicnode.com"
+    ]
+  },
   "deploymentApprovalDigest": null,
   "contractAddress": null,
   "transactionHash": null,

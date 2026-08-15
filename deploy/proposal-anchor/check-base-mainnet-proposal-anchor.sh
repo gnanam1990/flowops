@@ -16,6 +16,16 @@ jq -e '
   and .proposalDigest == null
   and .sourceCommit == null
   and .designatedDeployer == null
+  and .candidateDeployer.address == "0xEEC526F6555dD43536F712D5c978CbC13CB4517f"
+  and .candidateDeployer.signerClass == "software-eoa-proposal-only"
+  and .candidateDeployer.productionUseProhibited == true
+  and .candidateDeployer.observedCode == "0x"
+  and .candidateDeployer.observedLatestNonce == 0
+  and .candidateDeployer.observedPendingNonce == 0
+  and .candidateDeployer.observedBalanceWei == "0"
+  and .candidateDeployer.expectedCreateAddressAtObservedNonce == "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250"
+  and (.candidateDeployer.observedAt | fromdateiso8601 > 0)
+  and (.candidateDeployer.observers | sort == ["base-rpc.publicnode.com", "mainnet.base.org"])
   and .deploymentApprovalDigest == null
   and .contractAddress == null
   and .transactionHash == null

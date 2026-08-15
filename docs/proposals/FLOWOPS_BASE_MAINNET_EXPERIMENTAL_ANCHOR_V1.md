@@ -62,7 +62,12 @@ production release.
 
 Deployment is a real Base mainnet state change and gas spend. A separate
 promotion commit must bind the exact proposal digest, source commit, designated
-hardware-backed deployer, and a fresh human approval digest before enabling the
-structurally blocked script. Simulation, code review, CI, and explicit final
-human approval are required before a single broadcast. No token approval,
-deposit, vault creation, or funding transaction is part of that ceremony.
+proposal-only deployer, and a fresh human approval digest before enabling the
+structurally blocked script. Because the anchor grants no authority after
+deployment, this one-time signer may be a dedicated software EOA with only a
+minimal gas balance, exact nonce and predicted-address checks, and a permanent
+prohibition on production reuse. Production contracts still require the
+hardware-backed deployment posture in ADR-0018. Simulation, code review, CI,
+and explicit final human approval are required before a single broadcast. No
+token approval, deposit, vault creation, or funding transaction is part of that
+ceremony.
