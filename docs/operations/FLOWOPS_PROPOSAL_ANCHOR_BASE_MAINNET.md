@@ -1,6 +1,6 @@
 # FlowOps Proposal Anchor Base Mainnet Runbook
 
-Status: blocked; no deployment exists
+Status: promotion package approved; final broadcast remains blocked; no deployment exists
 
 This runbook covers only the evidence-only `FlowOpsProposalAnchor`. It does not
 authorize `CallEscrow`, a factory, a vault, USDC approval, token funding, or any
@@ -8,18 +8,22 @@ production payment path.
 
 ## Current structural stop
 
-`contracts/script/DeployFlowOpsProposalAnchorBaseMainnet.s.sol` currently pins:
+`contracts/script/DeployFlowOpsProposalAnchorBaseMainnet.s.sol` now pins:
 
 - Base mainnet chain ID `8453`;
-- `DESIGNATED_DEPLOYER = address(0)`;
-- `PROPOSAL_DIGEST = bytes32(0)`;
-- `SOURCE_COMMIT = bytes20(0)`;
+- deployer `0xEEC526F6555dD43536F712D5c978CbC13CB4517f`;
+- proposal digest `0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362`;
+- source commit `bd9292d0f916b1e3d828443b41e31a8e635b2b3e`;
+- nonce `0` and predicted address
+  `0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`;
+- initcode/runtime hashes and a maximum gas spend of `5000000000000` wei;
 - `DEPLOYMENT_APPROVAL_DIGEST = bytes32(0)`; and
 - `MAINNET_BROADCAST_ENABLED = false`.
 
-The final five fields force every committed broadcast attempt to revert. Do not
-bypass the package with `forge create`, a raw transaction, a copied script, a
-software keystore, or an environment-only override.
+The final two fields force every committed broadcast attempt to revert. The
+recorded promotion approval authorizes only this prepared package and explicitly
+does not authorize broadcast. Do not bypass the package with `forge create`, a
+raw transaction, a copied script, or an environment-only override.
 
 ## Promotion prerequisites
 
@@ -57,7 +61,8 @@ blindly. This signer posture does not satisfy any production deployment gate.
 The accepted candidate is
 `0xEEC526F6555dD43536F712D5c978CbC13CB4517f`. At the recorded read-only
 preflight, both admitted public observers reported Base chain ID `8453`, empty
-runtime code, latest nonce `0`, pending nonce `0`, and balance `0` wei. The
+runtime code, latest nonce `0`, pending nonce `0`, and balance
+`159318862860265` wei. The
 expected CREATE address at nonce `0` is
 `0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`. Every value must be refreshed
 immediately before final approval and broadcast; this record is not permission
