@@ -1,7 +1,7 @@
 # Base Sepolia x402 Builder Code Calldata Experiment
 
 Status: **UNRESOLVED — prepared, no payment sent**  
-Recorded: 2026-08-11
+Recorded: 2026-08-15
 
 ## Question
 
@@ -90,13 +90,27 @@ The settlement transaction must be read directly from Base Sepolia and its compl
 
 ## Current blocker record
 
-The workspace has no configured `EVM_PRIVATE_KEY`, `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`, `BASE_SEPOLIA_RPC_URL`, `FACILITATOR_URL`, `FLOWOPS_BUILDER_CODE`, or `FLOWOPS_REFERENCE_SIGNER_ADDRESS`. No secret values were inspected. More importantly, no FlowOps identity or reference signer has been designated, and no payment confirmation has been given for a concrete wallet/payee/amount.
+The two designated test wallets are configured in local Foundry keystores and
+have already completed independent Base Sepolia escrow release/refund evidence.
+The payer currently has enough test USDC and ETH for this 0.001 test-USDC
+experiment. No secret value was inspected or added to the repository.
+
+The remaining blockers are precise:
+
+1. designate the actual app Builder Code `a` and FlowOps client service code `s`;
+2. prepare and review the resulting short-lived authorization;
+3. obtain explicit confirmation for that exact 0.001 test-USDC payment;
+4. settle and append the two-RPC canonical proof.
+
+`cmd/x402-builder-experiment` implements those steps without accepting a private
+key and is pinned to the designated test wallets, amount, token, network, and
+hosted facilitator.
 
 Therefore the correct current result is:
 
 ```text
 classification: UNRESOLVED
-reason: identity, funded signer, concrete codes, and confirmed test payment are absent
+reason: concrete Builder Codes and confirmed exact test payment are absent
 protocol capability: verified in docs and pinned reference tests
 selected facilitator advertisement: builder-code supported
 selected facilitator transaction-level conformance: not yet tested

@@ -1,6 +1,6 @@
 # ADR-0007: Builder Code Issuance, Roles, and Evidence
 
-Status: Partially resolved; identity-specific issuance and settlement evidence pending  
+Status: Partially resolved; safe experiment harness implemented, identity-specific issuance and settlement evidence pending
 Date: 2026-08-11
 
 ## Confirmed mechanism
@@ -37,7 +37,7 @@ Codes are not reused across these roles merely for prettier metrics. Reuse requi
 
 ## Current selected-path result
 
-The public Base Sepolia facilitator advertises `builder-code`, and the pinned reference implementation passes. A FlowOps-coded settlement has not been sent. Classification remains `UNRESOLVED`; see `../CALLDATA_EXPERIMENT.md`.
+The public Base Sepolia facilitator advertises `builder-code`, and the pinned reference implementation passes. `cmd/x402-builder-experiment` now prepares a digest-bound EIP-3009 authorization without accepting a private key, requires an exact settlement confirmation, verifies before settling, and proves the resulting transfer/calldata through two independent RPCs. A FlowOps-coded settlement has not yet been sent. Classification remains `UNRESOLVED`; see `../evidence/CALLDATA_EXPERIMENT.md`.
 
 ## Completion gate
 

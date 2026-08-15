@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -60,6 +60,10 @@ smoke-dashboard:
 	npm test --prefix apps/dashboard
 
 smoke-x402-readonly:
+	go run ./cmd/x402-conformance
+
+smoke-x402-builder-experiment:
+	go test -race -run '^(TestPrepareAndVerifySignature|TestValidationRejectsEveryLoadBearingMutation|TestWrongPayerSignatureIsRejected|TestExecuteRequiresConfirmationBeforeFacilitatorCall|TestExecuteVerifiesThenSettlesExactPayload|TestExecuteDoesNotSettleFailedVerification|TestInspectRequiresQuorumExactTransferAndBuilderSuffix)$$' ./internal/x402experiment
 	go run ./cmd/x402-conformance
 
 smoke-evidence-fetch:
