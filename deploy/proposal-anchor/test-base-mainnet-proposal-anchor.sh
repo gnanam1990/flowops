@@ -20,6 +20,7 @@ expect_rejected() {
 
 "${validator}" >/dev/null
 expect_rejected blocked-status-restored '.status = "blocked-no-deployment"'
+expect_rejected promotion-status-restored '.status = "promotion-package-approved-no-deployment"'
 expect_rejected deployed-status '.status = "experimental-deployed"'
 expect_rejected proposal-digest-drift '.proposalDigest = ("0x" + ("1" * 64))'
 expect_rejected source-commit-drift '.sourceCommit = ("1" * 40)'
@@ -42,6 +43,11 @@ expect_rejected candidate-address-drift '.candidateDeployer.expectedCreateAddres
 expect_rejected candidate-observer-collapsed '.candidateDeployer.observers = ["mainnet.base.org", "mainnet.base.org"]'
 expect_rejected package-approval-removed 'del(.promotionPackageApproval)'
 expect_rejected package-approval-scope-broadened '.promotionPackageApproval.scope = "broadcast"'
+expect_rejected deployment-approval-removed 'del(.deploymentApproval)'
+expect_rejected deployment-approval-digest-drift '.deploymentApproval.canonicalStatementDigest = ("0x" + ("1" * 64))'
+expect_rejected deployment-user-response-drift '.deploymentApproval.userResponse = "broadcast now"'
+expect_rejected deployment-approval-scope-broadened '.deploymentApproval.scope = "broadcast"'
+expect_rejected deployment-record-digest-drift '.deploymentApprovalDigest = ("0x" + ("1" * 64))'
 expect_rejected expected-nonce-drift '.ceremony.expectedDeployerNonce = 1'
 expect_rejected expected-contract-drift '.ceremony.expectedContractAddress = "0x1111111111111111111111111111111111111111"'
 expect_rejected initcode-hash-drift '.ceremony.initCodeHash = ("0x" + ("1" * 64))'

@@ -26,10 +26,11 @@ The initial mainnet deployment script was structurally blocked by five
 independent fields: zero deployer, zero proposal digest, zero source commit,
 zero deployment-approval digest, and disabled broadcast. The approved promotion
 package pins the first three fields plus nonce, predicted address, bytecode
-hashes, and gas ceilings while deliberately retaining the zero deployment-
-approval digest and disabled broadcast. A later activation commit must bind
-those final two fields and pass focused, repository-wide, CI, and review gates.
-Merging that commit will still not substitute for fresh broadcast approval.
+hashes, and gas ceilings. The activation-approval package additionally binds a
+canonical approval statement while preserving the user's actual response and
+keeps broadcast disabled. A later broadcast activation commit must change that
+final boolean and pass focused, repository-wide, CI, and review gates. Merging
+that commit will still not substitute for fresh broadcast approval.
 
 The public UI fails closed when no verified address is configured. A configured
 address is displayed only as experimental and unaudited, with production,

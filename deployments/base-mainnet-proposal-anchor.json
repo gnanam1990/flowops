@@ -3,7 +3,7 @@
   "kind": "flowops-proposal-anchor",
   "network": "base-mainnet",
   "chainId": 8453,
-  "status": "promotion-package-approved-no-deployment",
+  "status": "deployment-approved-broadcast-disabled-no-deployment",
   "proposalDocument": "docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md",
   "proposalDigest": "0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362",
   "sourceCommit": "bd9292d0f916b1e3d828443b41e31a8e635b2b3e",
@@ -40,7 +40,16 @@
     "maxFeePerGasWei": "20000000",
     "maxGasSpendWei": "5000000000000"
   },
-  "deploymentApprovalDigest": null,
+  "deploymentApproval": {
+    "canonicalStatement": "APPROVE FLOWOPS BASE MAINNET PROPOSAL ANCHOR ACTIVATION: chainId=8453; deployer=0xEEC526F6555dD43536F712D5c978CbC13CB4517f; proposalDigest=0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362; sourceCommit=bd9292d0f916b1e3d828443b41e31a8e635b2b3e; expectedNonce=0; expectedContract=0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250; maxGasLimit=250000; maxFeePerGasWei=20000000; maxGasSpendWei=5000000000000; noTokenApprovalOrFunding=true; broadcast=false",
+    "digestAlgorithm": "sha256-utf8-no-newline",
+    "canonicalStatementDigest": "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17",
+    "userResponse": "do remaining all",
+    "userResponseDigest": "0xf55b7fae90bcceffa559f7d763162b024f5399898d374566623916ee52d2a851",
+    "approvedAt": "2026-08-15T14:09:10Z",
+    "scope": "activation-package-only-no-broadcast"
+  },
+  "deploymentApprovalDigest": "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17",
   "contractAddress": null,
   "transactionHash": null,
   "blockNumber": null,
