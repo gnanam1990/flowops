@@ -178,7 +178,7 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
             <span className="breadcrumb">Control room / {title}</span>
           </div>
           <dl className="context-strip">
-            <div><dt>Total observed</dt><dd>{snapshot.money.total} <span>USDC</span></dd></div>
+			<div><dt>Recognized expense</dt><dd>{snapshot.money.total} <span>{snapshot.money.asset}</span></dd></div>
             <div><dt>Base trusted block</dt><dd>#{snapshot.chain.lastTrustedBlock}</dd></div>
             <div><dt>Observer quorum</dt><dd className="quorum"><i />{snapshot.chain.observers}</dd></div>
           </dl>
@@ -225,8 +225,9 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
           ) : null}
           {section === "security" ? (
             <Security
-              risks={snapshot.risks}
-              chain={snapshot.chain}
+			  risks={snapshot.risks}
+			  chain={snapshot.chain}
+			  reconciliation={snapshot.reconciliation}
               authorizationsPaused={snapshot.organization.authorizationsPaused}
               onPause={() => setPauseOpen(true)}
             />
@@ -326,9 +327,9 @@ function Overview({
 
       <section className="money-grid balance-ledger" aria-label="Organization balance">
         <div className="balance-card primary-balance">
-          <span>Observed treasury / USDC</span>
+		  <span>{snapshot.mode === "live" ? "Recognized economic expense" : "Observed treasury / USDC"}</span>
           <strong>{snapshot.money.total}</strong>
-          <small><i /> {snapshot.mode === "live" ? "Ledger aggregates are not exposed by this snapshot" : "Read-only aggregate across customer-controlled signers"}</small>
+		  <small><i /> {snapshot.mode === "live" ? `Journal-derived · ${snapshot.money.asset} · not a wallet balance` : "Read-only aggregate across customer-controlled signers"}</small>
           <div className="balance-signal" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /></div>
         </div>
         <MoneyCard label="Available" value={snapshot.money.available} tone="good" />
@@ -382,7 +383,7 @@ function Overview({
           </div>
           <div className="budget-note">
             <span>{snapshot.mode === "live" ? "i" : "↗"}</span>
-            <p>{snapshot.mode === "live" ? <><strong>Ledger aggregates not exposed</strong><br />No financial values are inferred from agent records</> : <><strong>12% below forecast</strong><br />Based on the last 14 days</>}</p>
+			<p>{snapshot.mode === "live" ? <><strong>Operational subledger only</strong><br />Wallet balance and spendable funds are not inferred</> : <><strong>12% below forecast</strong><br />Based on the last 14 days</>}</p>
           </div>
         </section>
 
@@ -499,18 +500,29 @@ function ActivityView({ activity }: { activity: Activity[] }) {
   );
 }
 
-function Security({ risks, chain, authorizationsPaused, onPause }: { risks: Risk[]; chain: DashboardSnapshot["chain"]; authorizationsPaused: boolean; onPause: () => void }) {
+function Security({ risks, chain, reconciliation, authorizationsPaused, onPause }: { risks: Risk[]; chain: DashboardSnapshot["chain"]; reconciliation: DashboardSnapshot["reconciliation"]; authorizationsPaused: boolean; onPause: () => void }) {
   return (
     <section className="section-stack">
       <SectionHeading eyebrow="Fail closed" title="Security & recovery" description="Critical controls stay visible until the underlying risk is acknowledged or canonically resolved." action={<button className="danger-button" onClick={onPause} disabled={authorizationsPaused} type="button">{authorizationsPaused ? "Authorizations paused" : "Emergency pause"}</button>} />
-      <div className="security-grid">
+	  <div className="security-grid">
         <div className="panel security-state"><span className={authorizationsPaused ? "halted-dot" : "healthy-dot"} /><div><small>Authorization state</small><strong>{authorizationsPaused ? "PAUSED" : "Protected"}</strong><p>{authorizationsPaused ? "The persistent organization gate rejects new authorization issuance." : "Organization and signer boundaries are accepting policy-valid requests."}</p></div></div>
         <div className="panel security-state"><span className="healthy-dot" /><div><small>Base canonical state</small><strong>{chain.state}</strong><p>{chain.observers} at block #{chain.lastTrustedBlock}.</p></div></div>
-      </div>
+	  </div>
+	  <div className="panel recovery-progress">
+		<PanelHeader kicker="Canonical recovery" title="Reconciliation progress" meta={reconciliation.complete ? "Complete" : `${reconciliation.unresolvedOutcomes} unresolved`} />
+		<dl className="chain-facts">
+		  <div><dt>Candidate outcomes</dt><dd>{reconciliation.resolvedCandidates} / {reconciliation.totalCandidates} resolved</dd></div>
+		  <div><dt>Observed through</dt><dd>#{reconciliation.observedThroughBlock}</dd></div>
+		  <div><dt>Pending finality</dt><dd>{reconciliation.pendingFinality}</dd></div>
+		  <div><dt>Quarantined</dt><dd>{reconciliation.quarantinedOutcomes}</dd></div>
+		  <div><dt>Manual resume gate</dt><dd>{reconciliation.readyForManualResume ? "Ready" : "Blocked"}</dd></div>
+		  <div><dt>Excluded ledger entries</dt><dd>{reconciliation.unclassifiedLedgerTransactions}</dd></div>
+		</dl>
+	  </div>
       <div className="risk-list">
         {risks.map((risk) => <RiskRow key={risk.id} risk={risk} />)}
       </div>
-      <div className="panel recovery-card"><div><span>Recovery rule</span><h2>No silent retries.</h2><p>Unknown broadcasts stay quarantined. Settlement, release, and refund appear only after independent Base evidence agrees.</p></div><dl><div><dt>Authorization pause</dt><dd>&lt; 1 sec target</dd></div><div><dt>Observer quorum</dt><dd>2 minimum</dd></div><div><dt>Manual resume</dt><dd>Required</dd></div></dl></div>
+		<div className="panel recovery-card"><div><span>Recovery rule</span><h2>No silent retries.</h2><p>Unknown broadcasts stay unresolved or explicitly quarantined. Settlement, release, and refund appear only after independent Base evidence agrees.</p></div><dl><div><dt>Resolved candidates</dt><dd>{chain.state === "HEALTHY" ? "Canonical" : "Review state"}</dd></div><div><dt>Observer quorum</dt><dd>2 minimum</dd></div><div><dt>Manual resume</dt><dd>Required</dd></div></dl></div>
     </section>
   );
 }

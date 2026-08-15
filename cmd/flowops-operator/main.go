@@ -29,6 +29,18 @@ type resumeInput struct {
 	Operator string `json:"operator"`
 }
 
+type reconciliationInput struct {
+	OrganizationID string `json:"organizationId"`
+}
+
+type quarantineInput struct {
+	OrganizationID string `json:"organizationId"`
+	ExecutionID    string `json:"executionId"`
+	Operator       string `json:"operator"`
+	Disposition    string `json:"disposition"`
+	Reason         string `json:"reason"`
+}
+
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -38,7 +50,7 @@ func main() {
 
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) != 1 {
-		return errors.New("usage: flowops-operator chain-status|chain-halt|chain-resume")
+		return usageError()
 	}
 	baseURL, err := controlAPIURL(os.Getenv("FLOWOPS_CONTROL_API_URL"))
 	if err != nil {
@@ -68,15 +80,44 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 				return err
 			}
 			body, _ = json.Marshal(request)
+		case "reconciliation-status":
+			method = http.MethodGet
+			var request reconciliationInput
+			if err := decodeStrict(input, &request); err != nil {
+				return err
+			}
+			if strings.TrimSpace(request.OrganizationID) == "" {
+				return errors.New("organizationId is required")
+			}
+			path = "/v1/operator/reconciliation?organizationId=" + url.QueryEscape(request.OrganizationID)
+		case "execution-quarantine":
+			var request quarantineInput
+			if err := decodeStrict(input, &request); err != nil {
+				return err
+			}
+			if strings.TrimSpace(request.ExecutionID) == "" {
+				return errors.New("executionId is required")
+			}
+			path = "/v1/operator/executions/" + url.PathEscape(request.ExecutionID) + "/quarantine"
+			body, _ = json.Marshal(struct {
+				OrganizationID string `json:"organizationId"`
+				Operator       string `json:"operator"`
+				Disposition    string `json:"disposition"`
+				Reason         string `json:"reason"`
+			}{request.OrganizationID, request.Operator, request.Disposition, request.Reason})
 		default:
-			return errors.New("usage: flowops-operator chain-status|chain-halt|chain-resume")
+			return usageError()
 		}
 		return send(ctx, output, method, baseURL+path, key, body)
 	}
 	if args[0] != "chain-status" {
-		return errors.New("usage: flowops-operator chain-status|chain-halt|chain-resume")
+		return usageError()
 	}
 	return send(ctx, output, method, baseURL+path, "", nil)
+}
+
+func usageError() error {
+	return errors.New("usage: flowops-operator chain-status|chain-halt|chain-resume|reconciliation-status|execution-quarantine")
 }
 
 func send(ctx context.Context, output io.Writer, method, endpoint, token string, body []byte) error {
@@ -87,8 +128,10 @@ func send(ctx context.Context, output io.Writer, method, endpoint, token string,
 		return err
 	}
 	request.Header.Set("Accept", "application/json")
-	if method == http.MethodPost {
+	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if method == http.MethodPost {
 		request.Header.Set("Content-Type", "application/json")
 	}
 	client := &http.Client{

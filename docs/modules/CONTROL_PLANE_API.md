@@ -66,12 +66,16 @@ contract, asset, and immutable release window are runtime admission settings.
 | `POST` | `/v1/agents/{agentID}/pause` | Admin or Owner plus step-up | Durable pause and audit record |
 | `POST` | `/v1/organization/pause` | Admin or Owner plus step-up | Persistent organization authorization stop plus command and audit IDs |
 | `GET` | `/v1/commands/{commandID}` | organization member; agents see only their commands | Authoritative command outcome |
-| `GET` | `/v1/dashboard/snapshot` | human organization member | Live tenant-scoped agents, approvals, and chain state |
+| `GET` | `/v1/dashboard/snapshot` | human organization member | Live tenant-scoped agents, approvals, chain state, reconciliation exceptions, progress, and proved-asset aggregates |
 | `POST` | `/v1/signer/broadcasts` | customer signer receipt signature | Authorization-bound expected execution awaiting Base reconciliation |
 | `POST` | `/v1/signer/escrow-broadcasts` | customer signer receipt signature | Attested exact escrow FUND awaiting Base reconciliation |
 | `POST` | `/v1/escrow/intents/{authorizationID}` | own-agent `escrow:register` scope or authorized human | Authorization-derived durable escrow intent before broadcast |
 | `POST` | `/v1/escrow/calls/{callID}/transitions` | Owner/Admin with active step-up | Durable non-FUND candidate for one already-broadcast escrow transition |
 | `GET` | `/v1/escrow/calls/{callID}` | organization read permission; agents only their own call | Tenant-scoped canonical escrow timeline |
+| `POST` | `/v1/operator/chain/halt` | dedicated operator-control key | Durable manual Base halt |
+| `POST` | `/v1/operator/chain/resume` | dedicated operator-control key plus recovery readiness | Durable manual autonomous-execution release |
+| `GET` | `/v1/operator/reconciliation?organizationId=...` | dedicated operator-control key | Tenant-selected reconciliation read model for incident response |
+| `POST` | `/v1/operator/executions/{executionID}/quarantine` | dedicated operator-control key, exact organization, named operator, unproven disposition | Durable containment without asserting drop/replacement or moving funds |
 
 Signer broadcast intake has rail-specific endpoints for `direct_usdc` and
 escrow FUND. x402 facilitator responses are not routed through either customer
@@ -156,6 +160,10 @@ event replay, audited pause transactions, JSON command results, and
 concurrent-writer journal refusal. Sites tests additionally cover project/user/
 email substitution, session tampering and expiry, membership revocation,
 organization-bound snapshot reads, and absence of step-up authority.
+Reconciliation read-model tests additionally cover asset binding, excluded
+unclassified postings, exact tenant isolation, exception progress, dedicated
+operator authentication, and refusal to represent a dropped or replacement
+transaction as proved without canonical evidence.
 Signer receipt tests additionally cover every signed-field mutation, key and
 tenant scoping, exact authorization derivation, future/expired timestamps,
 halted-chain intake, idempotency conflict, and restart replay.

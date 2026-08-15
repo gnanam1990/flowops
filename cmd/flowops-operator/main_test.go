@@ -58,6 +58,49 @@ func TestOperatorClientRejectsRedirectsAndDoesNotReplayKey(t *testing.T) {
 	}
 }
 
+func TestOperatorClientReadsReconciliationAndQuarantinesWithoutClaimingOutcome(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32)))
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("Authorization") != "Bearer "+key {
+			t.Fatalf("missing operator key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			if r.Method != http.MethodGet || r.URL.Path != "/v1/operator/reconciliation" || r.URL.Query().Get("organizationId") != "org_acme" {
+				t.Fatalf("reconciliation request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"reconciliation":{"available":true}}`))
+		case 2:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/operator/executions/exec_1/quarantine" {
+				t.Fatalf("quarantine request = %s %s", r.Method, r.URL.Path)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["disposition"] != "REPLACED_UNPROVEN" || body["organizationId"] != "org_acme" || body["executionId"] != nil {
+				t.Fatalf("quarantine body = %+v err=%v", body, err)
+			}
+			_, _ = w.Write([]byte(`{"execution":{"state":"QUARANTINED"}}`))
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FLOWOPS_CONTROL_API_URL", server.URL)
+	t.Setenv("FLOWOPS_OPERATOR_CONTROL_KEY_B64", key)
+	if err := run(context.Background(), []string{"reconciliation-status"}, strings.NewReader(`{"organizationId":"org_acme"}`), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	input := `{"organizationId":"org_acme","executionId":"exec_1","operator":"operator_alice","disposition":"REPLACED_UNPROVEN","reason":"replacement nonce is not independently proved"}`
+	if err := run(context.Background(), []string{"execution-quarantine"}, strings.NewReader(input), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d", requests)
+	}
+}
+
 func TestOperatorClientValidatesURLKeyAndStrictInput(t *testing.T) {
 	for _, raw := range []string{"", "http://example.com", "https://user:pass@example.com", "https://example.com?token=x"} {
 		if _, err := controlAPIURL(raw); err == nil {

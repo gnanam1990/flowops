@@ -31,6 +31,15 @@ type ChainController interface {
 	Resume(context.Context, string) (reconciliation.ChainStatus, error)
 }
 
+type ReconciliationReader interface {
+	OrganizationView(string) reconciliation.OrganizationView
+}
+
+type ReconciliationOperator interface {
+	ReconciliationReader
+	QuarantineForOrganization(context.Context, string, string, string, string) (reconciliation.Execution, error)
+}
+
 type ServerConfig struct {
 	Store                    Store
 	Lifecycle                *controlplane.Lifecycle
@@ -43,6 +52,7 @@ type ServerConfig struct {
 	SignerBroadcasts         BroadcastRegistrar
 	SignerEscrowBroadcasts   EscrowBroadcastRegistrar
 	Escrow                   *EscrowRegistrar
+	Reconciliation           ReconciliationReader
 }
 
 type Server struct {
@@ -57,6 +67,7 @@ type Server struct {
 	signerBroadcasts         BroadcastRegistrar
 	signerEscrowBroadcasts   EscrowBroadcastRegistrar
 	escrow                   *EscrowRegistrar
+	reconciliation           ReconciliationReader
 	handler                  http.Handler
 }
 
@@ -85,6 +96,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		signerBroadcasts:       cfg.SignerBroadcasts,
 		signerEscrowBroadcasts: cfg.SignerEscrowBroadcasts,
 		escrow:                 cfg.Escrow,
+		reconciliation:         cfg.Reconciliation,
 	}
 	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
 		return nil, errors.New("operator control key must contain exactly 32 bytes")
@@ -111,6 +123,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if len(s.operatorControlKey) == 32 {
 		mux.Handle("POST /v1/operator/chain/halt", s.authenticateOperator(http.HandlerFunc(s.handleOperatorHalt)))
 		mux.Handle("POST /v1/operator/chain/resume", s.authenticateOperator(http.HandlerFunc(s.handleOperatorResume)))
+		mux.Handle("GET /v1/operator/reconciliation", s.authenticateOperator(http.HandlerFunc(s.handleOperatorReconciliation)))
+		mux.Handle("POST /v1/operator/executions/{executionID}/quarantine", s.authenticateOperator(http.HandlerFunc(s.handleOperatorQuarantine)))
 	}
 	s.handler = securityHeaders(mux)
 	return s, nil
@@ -383,6 +397,13 @@ type operatorResumeRequest struct {
 	Operator string `json:"operator"`
 }
 
+type operatorQuarantineRequest struct {
+	OrganizationID string `json:"organizationId"`
+	Operator       string `json:"operator"`
+	Disposition    string `json:"disposition"`
+	Reason         string `json:"reason"`
+}
+
 func (s *Server) handleOperatorHalt(w http.ResponseWriter, r *http.Request) {
 	var request operatorHaltRequest
 	if err := decodeJSON(w, r, &request); err != nil {
@@ -419,6 +440,69 @@ func (s *Server) handleOperatorResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"chain": status})
+}
+
+func (s *Server) handleOperatorReconciliation(w http.ResponseWriter, r *http.Request) {
+	organizationID := strings.TrimSpace(r.URL.Query().Get("organizationId"))
+	if !identifierPattern.MatchString(organizationID) || s.reconciliation == nil {
+		writeError(w, http.StatusBadRequest, "INVALID_RECONCILIATION_QUERY", errors.New("a valid organizationId and reconciliation reader are required"), false, "")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reconciliation": s.reconciliation.OrganizationView(organizationID)})
+}
+
+func (s *Server) handleOperatorQuarantine(w http.ResponseWriter, r *http.Request) {
+	controller, ok := s.reconciliation.(ReconciliationOperator)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "RECONCILIATION_CONTROL_UNAVAILABLE", errors.New("reconciliation operator control is unavailable"), true, "")
+		return
+	}
+	executionID := r.PathValue("executionID")
+	var request operatorQuarantineRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	request.OrganizationID = strings.TrimSpace(request.OrganizationID)
+	request.Operator = strings.TrimSpace(request.Operator)
+	request.Disposition = strings.TrimSpace(request.Disposition)
+	request.Reason = strings.TrimSpace(request.Reason)
+	if !identifierPattern.MatchString(executionID) || !identifierPattern.MatchString(request.OrganizationID) || !identifierPattern.MatchString(request.Operator) || len(request.Reason) == 0 || len(request.Reason) > 1024 {
+		writeError(w, http.StatusBadRequest, "INVALID_QUARANTINE", errors.New("quarantine identifiers or reason are invalid"), false, "")
+		return
+	}
+	switch request.Disposition {
+	case "DROPPED_UNPROVEN", "REPLACED_UNPROVEN", "MANUAL_INVESTIGATION":
+	default:
+		writeError(w, http.StatusBadRequest, "INVALID_QUARANTINE", errors.New("disposition must preserve an unproven external outcome"), false, "")
+		return
+	}
+	view := controller.OrganizationView(request.OrganizationID)
+	found := false
+	for _, exception := range view.Exceptions {
+		if exception.Kind == "DIRECT_EXECUTION" && exception.ID == executionID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+		return
+	}
+	execution, err := controller.QuarantineForOrganization(r.Context(), request.OrganizationID, executionID, request.Operator, request.Disposition+": "+request.Reason)
+	if err != nil {
+		if errors.Is(err, reconciliation.ErrUnknownExecution) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+		} else if errors.Is(err, reconciliation.ErrConflict) || strings.Contains(err.Error(), "only unresolved") {
+			writeError(w, http.StatusConflict, "STATE_CONFLICT", err, false, "")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "CONTROL_EVENT_NOT_COMMITTED", err, true, "")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"execution":      execution,
+		"reconciliation": controller.OrganizationView(request.OrganizationID),
+	})
 }
 
 func (s *Server) handleCreateIntent(w http.ResponseWriter, r *http.Request) {
@@ -685,13 +769,14 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 type DashboardSnapshot struct {
-	Live             bool                       `json:"live"`
-	GeneratedAt      time.Time                  `json:"generatedAt"`
-	OrganizationID   string                     `json:"organizationId"`
-	Chain            reconciliation.ChainStatus `json:"chain"`
-	PendingApprovals []controlplane.Record      `json:"pendingApprovals"`
-	Agents           []Agent                    `json:"agents"`
-	Organization     Organization               `json:"organization"`
+	Live             bool                            `json:"live"`
+	GeneratedAt      time.Time                       `json:"generatedAt"`
+	OrganizationID   string                          `json:"organizationId"`
+	Chain            reconciliation.ChainStatus      `json:"chain"`
+	PendingApprovals []controlplane.Record           `json:"pendingApprovals"`
+	Agents           []Agent                         `json:"agents"`
+	Organization     Organization                    `json:"organization"`
+	Reconciliation   reconciliation.OrganizationView `json:"reconciliation"`
 }
 
 func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -723,9 +808,14 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 			approvals = append(approvals, record)
 		}
 	}
+	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: s.chain.Status(), GeneratedAt: s.clock().UTC()}
+	if s.reconciliation != nil {
+		reconciliationView = s.reconciliation.OrganizationView(principal.OrganizationID)
+	}
 	writeJSON(w, http.StatusOK, DashboardSnapshot{
 		Live: true, GeneratedAt: s.clock().UTC(), OrganizationID: principal.OrganizationID,
 		Chain: s.chain.Status(), PendingApprovals: approvals, Agents: agents, Organization: organization,
+		Reconciliation: reconciliationView,
 	})
 }
 
