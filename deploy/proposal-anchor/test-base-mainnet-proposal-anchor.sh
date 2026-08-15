@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 validator="${repo_root}/deploy/proposal-anchor/check-base-mainnet-proposal-anchor.sh"
 canonical="${repo_root}/deployments/base-mainnet-proposal-anchor.json"
+evidence_document="${repo_root}/docs/evidence/BASE_MAINNET_PROPOSAL_ANCHOR_2026-08-15.md"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
@@ -14,6 +15,19 @@ expect_rejected() {
   jq "${mutation}" "${canonical}" >"${candidate}"
   if FLOWOPS_PROPOSAL_ANCHOR_RECORD="${candidate}" "${validator}" >/dev/null 2>&1; then
     printf 'proposal anchor validator accepted unsafe mutation: %s\n' "${name}" >&2
+    exit 1
+  fi
+}
+
+expect_evidence_document_rejected() {
+  local name="$1"
+  local source="$2"
+  local replacement="$3"
+  local candidate="${tmp_dir}/${name}.md"
+  cp "${evidence_document}" "${candidate}"
+  perl -0pi -e "s/\Q${source}\E/${replacement}/" "${candidate}"
+  if FLOWOPS_PROPOSAL_ANCHOR_EVIDENCE_DOCUMENT="${candidate}" "${validator}" >/dev/null 2>&1; then
+    printf 'proposal anchor validator accepted unsafe evidence-document mutation: %s\n' "${name}" >&2
     exit 1
   fi
 }
@@ -75,5 +89,8 @@ expect_rejected verification-compiler-drift '.deploymentEvidence.sourceVerificat
 expect_rejected post-observation-removed 'del(.postDeploymentObservation)'
 expect_rejected post-nonce-not-consumed '.postDeploymentObservation.deployerLatestNonce = 0'
 expect_rejected post-runtime-hash-drift '.postDeploymentObservation.runtimeCodeHash = ("0x" + ("1" * 64))'
+expect_evidence_document_rejected evidence-doc-contract-drift '0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250' '0x1111111111111111111111111111111111111111'
+expect_evidence_document_rejected evidence-doc-broadcast-claim-drift 'no additional proposal-anchor broadcast is authorized' 'another proposal-anchor broadcast is authorized'
+expect_evidence_document_rejected evidence-doc-immutable-proposal-drift 'must remain immutable' 'may be rewritten after deployment'
 
 printf 'proposal anchor evidence validator rejected all unsafe mutations; broadcast remains consumed\n'

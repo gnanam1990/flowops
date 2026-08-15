@@ -1,6 +1,6 @@
 # ADR-0029: Experimental Base Mainnet Proposal Anchor
 
-Status: accepted for implementation; deployment remains blocked
+Status: implemented; one experimental evidence-only deployment verified
 Date: 2026-08-15
 
 ## Context
@@ -25,12 +25,19 @@ path.
 The initial mainnet deployment script was structurally blocked by five
 independent fields: zero deployer, zero proposal digest, zero source commit,
 zero deployment-approval digest, and disabled broadcast. The approved promotion
-package pins the first three fields plus nonce, predicted address, bytecode
-hashes, and gas ceilings. The activation-approval package additionally binds a
+package pinned the first three fields plus nonce, predicted address, bytecode
+hashes, and gas ceilings. The activation-approval package additionally bound a
 canonical approval statement while preserving the user's actual response and
-keeps broadcast disabled. A later broadcast activation commit must change that
-final boolean and pass focused, repository-wide, CI, and review gates. Merging
-that commit will still not substitute for fresh broadcast approval.
+kept broadcast disabled. The final broadcast activation passed focused and full
+local repository checks before the separate human approval and the single
+broadcast. After canonical receipt and source-verification evidence were
+recorded, the committed package was returned to a disabled state.
+
+The resulting contract is
+`0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250` on Base mainnet, created in block
+`50008264` by transaction
+`0x7fe3986c45a1c4de2c9ca421222569ba8e41cc6b7fe9173340a3954c9306a76b`.
+It is fully source-verified and remains permanently evidence-only.
 
 The public UI fails closed when no verified address is configured. A configured
 address is displayed only as experimental and unaudited, with production,

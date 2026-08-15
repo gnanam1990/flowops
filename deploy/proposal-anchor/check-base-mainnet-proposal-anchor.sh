@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 record="${FLOWOPS_PROPOSAL_ANCHOR_RECORD:-${repo_root}/deployments/base-mainnet-proposal-anchor.json}"
+evidence_document="${FLOWOPS_PROPOSAL_ANCHOR_EVIDENCE_DOCUMENT:-${repo_root}/docs/evidence/BASE_MAINNET_PROPOSAL_ANCHOR_2026-08-15.md}"
 script="${repo_root}/contracts/script/DeployFlowOpsProposalAnchorBaseMainnet.s.sol"
 contract="${repo_root}/contracts/src/FlowOpsProposalAnchor.sol"
 
@@ -149,6 +150,20 @@ jq -e '.storage == []' <<<"${storage_layout}" >/dev/null
 
 proposal_digest="$(shasum -a 256 "${repo_root}/docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md" | awk '{print $1}')"
 test "0x${proposal_digest}" = "0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362"
+
+# The pre-deployment proposal is intentionally immutable because its digest is
+# anchored onchain. This companion evidence record supplies current chain facts
+# without rewriting that historic source.
+grep -Fq 'Status: deployed and independently verified; experimental evidence only' "${evidence_document}"
+grep -Fq '0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250' "${evidence_document}"
+grep -Fq '0x7fe3986c45a1c4de2c9ca421222569ba8e41cc6b7fe9173340a3954c9306a76b' "${evidence_document}"
+grep -Fq '0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362' "${evidence_document}"
+grep -Fq 'bd9292d0f916b1e3d828443b41e31a8e635b2b3e' "${evidence_document}"
+grep -Fq 'Fully verified on Base Blockscout' "${evidence_document}"
+grep -Fq 'must remain immutable' "${evidence_document}"
+grep -Fq 'does **not** prove product' "${evidence_document}"
+grep -Fq 'users must not send ETH or tokens' "${evidence_document}"
+grep -Fq 'no additional proposal-anchor broadcast is authorized' "${evidence_document}"
 
 approval_digest="$(printf '%s' 'APPROVE FLOWOPS PROPOSAL ANCHOR PROMOTION PACKAGE' | shasum -a 256 | awk '{print $1}')"
 test "0x${approval_digest}" = "0xbfc1cd20d1f05885029683100e8c0a5387948597db5de68ea13eb1043223a726"

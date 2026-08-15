@@ -4,10 +4,14 @@ FlowOps is a Base-only control and evidence plane for autonomous agent payments.
 
 Status: pre-alpha, Phase 1 implementation. No mainnet funds.
 
-The only eligible pre-audit Base mainnet artifact is the separately gated,
-evidence-only `FlowOpsProposalAnchor`. It is not deployed, cannot create vaults
-or accept a payment through any contract entry point, and can never become the
-production release. See `docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md`.
+The only pre-audit Base mainnet artifact is the separately gated, evidence-only
+`FlowOpsProposalAnchor`, deployed at
+[`0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`](https://base.blockscout.com/address/0x149d03ec527ad8667d47e7b6a2d316dd54033250?tab=contract).
+It cannot create vaults or accept a payment through any contract entry point,
+and can never become the production release. See
+`docs/evidence/BASE_MAINNET_PROPOSAL_ANCHOR_2026-08-15.md` for the verified
+deployment record and `docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md`
+for the immutable anchored proposal.
 
 ## Product boundary
 
@@ -32,7 +36,7 @@ docs/adr/               architecture decisions
 ## Build rules
 
 - Base Sepolia before Base mainnet.
-- Base mainnet deployment code must remain structurally blocked until its
+- Production Base mainnet deployment code must remain structurally blocked until its
   deployer, external review, production observers, and explicit broadcast
   approval are recorded in a separate reviewed promotion.
 - No private key is accepted by the FlowOps control plane.
