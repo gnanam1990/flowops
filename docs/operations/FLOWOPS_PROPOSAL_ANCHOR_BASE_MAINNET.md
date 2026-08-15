@@ -1,12 +1,12 @@
 # FlowOps Proposal Anchor Base Mainnet Runbook
 
-Status: deployment package approved; broadcast remains disabled; no deployment exists
+Status: one-time broadcast approved; no deployment receipt exists yet
 
 This runbook covers only the evidence-only `FlowOpsProposalAnchor`. It does not
 authorize `CallEscrow`, a factory, a vault, USDC approval, token funding, or any
 production payment path.
 
-## Current structural stop
+## Authorized package
 
 `contracts/script/DeployFlowOpsProposalAnchorBaseMainnet.s.sol` now pins:
 
@@ -18,18 +18,18 @@ production payment path.
   `0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`;
 - initcode/runtime hashes and a maximum gas spend of `5000000000000` wei;
 - deployment-approval digest
-  `0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17`; and
-- `MAINNET_BROADCAST_ENABLED = false`.
+  `0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377`; and
+- `MAINNET_BROADCAST_ENABLED = true`.
 
-The final boolean forces every committed broadcast attempt to revert. The
-record preserves both the canonical activation statement and the user's actual
-response, and both explicitly stop short of broadcast authorization. Do not
-bypass the package with `forge create`, a raw transaction, a copied script, or
-an environment-only override.
+The record preserves the promotion approval, activation approval, and exact
+one-time broadcast statement. This authorizes only the pinned proposal anchor;
+it does not authorize any other transaction. Do not bypass the package with
+`forge create`, a raw transaction, a copied script, or an environment-only
+override.
 
-## Promotion prerequisites
+## Completed promotion evidence
 
-Before a separate promotion commit may fill the blocked fields:
+The package was activated only after recording the following evidence:
 
 1. Freeze and SHA-256 hash
    `docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md`.
@@ -51,11 +51,12 @@ Before a separate promotion commit may fill the blocked fields:
 6. Prepare explorer source-verification input for the exact compiler and
    optimizer settings.
 7. Obtain fresh human approval naming the chain, deployer, source commit,
-   proposal digest, expected nonce, and maximum gas spend.
+   proposal digest, expected nonce, exact contract, gas ceilings, no-funds
+   posture, and `broadcast=true`.
 
 ## Broadcast boundary
 
-After the promotion commit passes full CI and review, broadcast once from the
+After the activation commit passes full CI and review, broadcast once from the
 designated proposal-only wallet. If the result is unknown, stop and reconcile
 the expected address and nonce through independent observers; never retry
 blindly. This signer posture does not satisfy any production deployment gate.
@@ -67,8 +68,8 @@ runtime code, latest nonce `0`, pending nonce `0`, and balance
 `159318862860265` wei. The
 expected CREATE address at nonce `0` is
 `0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`. Every value must be refreshed
-immediately before final approval and broadcast; this record is not permission
-to send.
+immediately before broadcast. Any drift cancels the ceremony even though the
+approval is recorded.
 
 No token approval or funding transaction may be bundled with or follow from
 this deployment ceremony. The deployment record must remain

@@ -5,18 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {FlowOpsProposalAnchor} from "../src/FlowOpsProposalAnchor.sol";
 import {DeployFlowOpsProposalAnchorBaseMainnet} from "../script/DeployFlowOpsProposalAnchorBaseMainnet.s.sol";
 
-contract ApprovedProposalAnchorDeploymentHarness is DeployFlowOpsProposalAnchorBaseMainnet {
-    bytes32 public constant READY_APPROVAL_DIGEST = keccak256("fresh-mainnet-approval");
-
-    function _deploymentApprovalDigest() internal pure override returns (bytes32) {
-        return READY_APPROVAL_DIGEST;
-    }
-
-    function _broadcastEnabled() internal pure override returns (bool) {
-        return true;
-    }
-}
-
 contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
     DeployFlowOpsProposalAnchorBaseMainnet internal deployment;
 
@@ -24,7 +12,7 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         deployment = new DeployFlowOpsProposalAnchorBaseMainnet();
     }
 
-    function test_committedPackagePinsActivationApprovalAndStaysStructurallyBlocked() public view {
+    function test_committedPackagePinsOneTimeBroadcastApproval() public view {
         assertEq(deployment.BASE_MAINNET_CHAIN_ID(), 8_453);
         assertEq(deployment.DESIGNATED_DEPLOYER(), 0xEEC526F6555dD43536F712D5c978CbC13CB4517f);
         assertEq(deployment.PROPOSAL_DIGEST(), 0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362);
@@ -44,9 +32,9 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         assertEq(deployment.MAX_FEE_PER_GAS_WEI(), 20_000_000);
         assertEq(deployment.MAX_GAS_SPEND_WEI(), 5_000_000_000_000);
         assertEq(
-            deployment.DEPLOYMENT_APPROVAL_DIGEST(), 0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17
+            deployment.DEPLOYMENT_APPROVAL_DIGEST(), 0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377
         );
-        assertFalse(deployment.MAINNET_BROADCAST_ENABLED());
+        assertTrue(deployment.MAINNET_BROADCAST_ENABLED());
     }
 
     function test_runRejectsEveryOtherChainBeforeReleaseGates() public {
@@ -57,22 +45,15 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         deployment.run();
     }
 
-    function test_runCannotBroadcastFromCommittedPackage() public {
+    function test_committedPackageRejectsNonceDriftBeforeBroadcast() public {
         vm.chainId(8_453);
-        vm.expectRevert(DeployFlowOpsProposalAnchorBaseMainnet.MainnetBroadcastDisabled.selector);
-        deployment.run();
-    }
-
-    function test_promotedHarnessRejectsNonceDriftBeforeBroadcast() public {
-        ApprovedProposalAnchorDeploymentHarness ready = new ApprovedProposalAnchorDeploymentHarness();
-        vm.chainId(8_453);
-        vm.setNonce(ready.DESIGNATED_DEPLOYER(), 1);
+        vm.setNonce(deployment.DESIGNATED_DEPLOYER(), 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 DeployFlowOpsProposalAnchorBaseMainnet.DeployerNonceMismatch.selector, uint64(0), uint64(1)
             )
         );
-        ready.run();
+        deployment.run();
     }
 
     function test_releaseGatesRejectEveryMissingBinding() public {
@@ -97,17 +78,16 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         deployment.validateReleaseGates(deployer, proposalDigest, sourceCommit, approvalDigest, false);
     }
 
-    function test_promotedHarnessDeploysPermanentNoFundsAnchor() public {
-        ApprovedProposalAnchorDeploymentHarness ready = new ApprovedProposalAnchorDeploymentHarness();
+    function test_committedPackageDeploysPermanentNoFundsAnchor() public {
         vm.chainId(8_453);
 
-        FlowOpsProposalAnchor anchor = ready.run();
+        FlowOpsProposalAnchor anchor = deployment.run();
 
-        assertEq(address(anchor), ready.EXPECTED_ANCHOR_ADDRESS());
-        assertEq(address(anchor).codehash, ready.EXPECTED_RUNTIME_CODE_HASH());
-        assertEq(anchor.deployer(), ready.DESIGNATED_DEPLOYER());
-        assertEq(anchor.proposalDigest(), ready.PROPOSAL_DIGEST());
-        assertEq(anchor.sourceCommit(), ready.SOURCE_COMMIT());
+        assertEq(address(anchor), deployment.EXPECTED_ANCHOR_ADDRESS());
+        assertEq(address(anchor).codehash, deployment.EXPECTED_RUNTIME_CODE_HASH());
+        assertEq(anchor.deployer(), deployment.DESIGNATED_DEPLOYER());
+        assertEq(anchor.proposalDigest(), deployment.PROPOSAL_DIGEST());
+        assertEq(anchor.sourceCommit(), deployment.SOURCE_COMMIT());
         assertEq(anchor.DEPLOYMENT_STATUS(), "EXPERIMENTAL_UNAUDITED_NO_FUNDS");
         assertFalse(anchor.productionReady());
         assertFalse(anchor.acceptsFunds());
