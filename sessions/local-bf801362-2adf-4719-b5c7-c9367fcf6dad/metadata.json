@@ -3,8 +3,8 @@
   "sessionId": "local-bf801362-2adf-4719-b5c7-c9367fcf6dad",
   "model": "gpt-5.6-sol",
   "startedAt": "2026-08-14T10:25:29.910Z",
-  "endedAt": "2026-08-15T13:37:10.370Z",
-  "durationMs": 97900453,
+  "endedAt": "2026-08-15T14:11:54.042Z",
+  "durationMs": 99984123,
   "status": "running",
   "tokens": {
     "total": 0,
@@ -16,20 +16,24 @@
   },
   "toolCalls": 0,
   "lines": {
-    "added": 11,
-    "removed": 11
+    "added": 56,
+    "removed": 20
   },
   "filesChanged": [
+    "contracts/script/DeployFlowOpsProposalAnchorBaseMainnet.s.sol",
+    "contracts/test/DeployFlowOpsProposalAnchorBaseMainnet.t.sol",
     "deploy/proposal-anchor/check-base-mainnet-proposal-anchor.sh",
+    "deploy/proposal-anchor/test-base-mainnet-proposal-anchor.sh",
     "deployments/base-mainnet-proposal-anchor.json",
+    "docs/adr/ADR-0029-experimental-proposal-anchor.md",
     "docs/operations/FLOWOPS_PROPOSAL_ANCHOR_BASE_MAINNET.md"
   ],
   "git": {
-    "branch": "chore/proposal-anchor-deployer",
-    "headBefore": "69213b90151415e8c0e24199a85033c49a1e92df",
-    "headAfter": "69213b90151415e8c0e24199a85033c49a1e92df",
+    "branch": "chore/proposal-anchor-activation-approval",
+    "headBefore": "105856961dc94b3f928800cb27683ba08959ea56",
+    "headAfter": "105856961dc94b3f928800cb27683ba08959ea56",
     "commitShas": [
-      "69213b90151415e8c0e24199a85033c49a1e92df"
+      "105856961dc94b3f928800cb27683ba08959ea56"
     ]
   },
   "summary": "",
