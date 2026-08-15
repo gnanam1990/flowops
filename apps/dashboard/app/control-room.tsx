@@ -9,6 +9,7 @@ import type {
   DashboardSnapshot,
   Risk,
 } from "./dashboard-data";
+import type { ProposalAnchorDeployment } from "./proposal-anchor";
 
 type Section =
   | "overview"
@@ -20,6 +21,7 @@ type Section =
 
 type ControlRoomProps = {
   snapshot: DashboardSnapshot;
+  proposalAnchor: ProposalAnchorDeployment;
   viewer: { name: string; email: string };
   accountHref: string;
 };
@@ -33,7 +35,7 @@ const navItems: { id: Section; label: string; mark: string }[] = [
   { id: "developers", label: "Developers", mark: "↗" },
 ];
 
-export function ControlRoom({ snapshot, viewer, accountHref }: ControlRoomProps) {
+export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: ControlRoomProps) {
   const [section, setSection] = useState<Section>("overview");
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -208,6 +210,8 @@ export function ControlRoom({ snapshot, viewer, accountHref }: ControlRoomProps)
             </div>
           ) : null}
 
+          <ProposalAnchorNotice deployment={proposalAnchor} />
+
           {section === "overview" ? (
             <Overview
               snapshot={snapshot}
@@ -275,6 +279,35 @@ export function ControlRoom({ snapshot, viewer, accountHref }: ControlRoomProps)
         />
       ) : null}
     </div>
+  );
+}
+
+function ProposalAnchorNotice({ deployment }: { deployment: ProposalAnchorDeployment }) {
+  const deployed = deployment.status === "experimental-unaudited";
+  return (
+    <section className="proposal-anchor-notice" aria-label="Base mainnet proposal deployment status">
+      <div className="proposal-anchor-copy">
+        <span>BASE MAINNET · PROPOSAL EVIDENCE</span>
+        <h2>{deployed ? "Experimental / unaudited proposal anchor" : "No Base mainnet proposal anchor is deployed"}</h2>
+        <p>
+          {deployed
+            ? "Evidence-only deployment. It is not a factory, vault, escrow, audited release, or production payment contract."
+            : "Production contracts remain structurally blocked. No factory, vault, escrow, or payment contract is being represented as live."}
+        </p>
+        {deployment.address && deployment.explorerHref ? (
+          <a href={deployment.explorerHref} target="_blank" rel="noreferrer">
+            <code>{deployment.address}</code>
+            <span>View source on Base explorer ↗</span>
+          </a>
+        ) : null}
+      </div>
+      <dl className="proposal-anchor-controls">
+        <div><dt>Production ready</dt><dd>No</dd></div>
+        <div><dt>Vault creation</dt><dd>Disabled</dd></div>
+        <div><dt>USDC deposits</dt><dd>Disabled</dd></div>
+        <div><dt>Asset warning</dt><dd>Do not send ETH or tokens</dd></div>
+      </dl>
+    </section>
   );
 }
 

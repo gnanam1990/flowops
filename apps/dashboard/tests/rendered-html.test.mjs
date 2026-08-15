@@ -158,7 +158,36 @@ test("renders a fail-closed public control room without illustrative organizatio
   assert.match(html, /real public health data/);
   assert.match(html, /Organization controls locked/);
   assert.match(html, /Economic activity/);
+  assert.match(html, /No Base mainnet proposal anchor is deployed/);
+  assert.match(html, /Production contracts remain structurally blocked/);
+  assert.match(html, /USDC deposits/);
+  assert.match(html, /Do not send ETH or tokens/);
   assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
+});
+
+test("shows a configured proposal address only as experimental and never as production", async () => {
+  const address = "0x1234567890abcdef1234567890ABCDEF12345678";
+  const response = await render({
+    env: { FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: address },
+  });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Experimental \/ unaudited proposal anchor/);
+  assert.match(html, new RegExp(address));
+  assert.match(html, new RegExp(`https://basescan\\.org/address/${address}#code`));
+  assert.match(html, /not a factory, vault, escrow, audited release, or production payment contract/i);
+  assert.match(html, /Production ready/);
+  assert.match(html, /Vault creation/);
+  assert.match(html, /USDC deposits/);
+  assert.match(html, /Do not send ETH or tokens/);
+  assert.doesNotMatch(html, /Production ready<\/dt><dd>Yes/);
+
+  const invalid = await render({
+    env: { FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: "0xnot-a-mainnet-address" },
+  });
+  const invalidHtml = await invalid.text();
+  assert.match(invalidHtml, /No Base mainnet proposal anchor is deployed/);
+  assert.doesNotMatch(invalidHtml, /0xnot-a-mainnet-address/);
 });
 
 test("renders validated live public health without exposing organization records", async (t) => {

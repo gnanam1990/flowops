@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "kind": "flowops-proposal-anchor",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "status": "blocked-no-deployment",
+  "proposalDocument": "docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md",
+  "proposalDigest": null,
+  "sourceCommit": null,
+  "designatedDeployer": null,
+  "deploymentApprovalDigest": null,
+  "contractAddress": null,
+  "transactionHash": null,
+  "blockNumber": null,
+  "runtimeCodeHash": null,
+  "sourceVerified": false,
+  "broadcastAuthorized": false,
+  "productionReady": false,
+  "fundingEnabled": false,
+  "vaultCreationEnabled": false,
+  "externalAuditCompleted": false,
+  "warnings": [
+    "Experimental and unaudited evidence-only proposal deployment.",
+    "Not approved for production.",
+    "Do not send ETH or tokens.",
+    "No USDC approval, deposit, funding, or vault creation is authorized."
+  ]
+}
