@@ -27,10 +27,14 @@ func main() {
 
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) != 1 {
-		return errors.New("use sites-bootstrap-owner, sites-rotate-token, or sites-disable-provider")
+		return errors.New("use migrate, sites-bootstrap-owner, sites-rotate-token, or sites-disable-provider")
 	}
 	var operation func(context.Context, *sql.DB) (any, error)
 	switch args[0] {
+	case "migrate":
+		operation = func(context.Context, *sql.DB) (any, error) {
+			return map[string]any{"status": "ok", "migrations": "current"}, nil
+		}
 	case "sites-bootstrap-owner":
 		var request controlapi.SiteOwnerBootstrap
 		if err := decodeStrictJSON(input, &request); err != nil {
@@ -71,7 +75,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			return map[string]any{"status": "ok", "disabled": disabled}, nil
 		}
 	default:
-		return errors.New("use sites-bootstrap-owner, sites-rotate-token, or sites-disable-provider")
+		return errors.New("use migrate, sites-bootstrap-owner, sites-rotate-token, or sites-disable-provider")
 	}
 	databaseURL := strings.TrimSpace(os.Getenv("FLOWOPS_DATABASE_URL"))
 	if databaseURL == "" {

@@ -19,7 +19,8 @@ production Base value as part of this procedure.
 - the private owner-only Sites project recorded in `.openai/hosting.json`.
 
 The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
-`/flowops/flowops-admin`, and `/flowops/flowops-operator`. `railway.json` selects that image, checks `/health`,
+`/flowops/flowops-admin`, `/flowops/flowops-operator`, and
+`/flowops/postgres-readiness`. `railway.json` selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
 before the API starts.
@@ -73,7 +74,54 @@ mode. Apply migrations with a transient privileged database credential through
 `flowops-admin`, grant the API role only its required runtime permissions, and
 then run the API with `FLOWOPS_APPLY_MIGRATIONS=false`. The default remains
 `true` for local development and upgrades must not rely on that default. Do not
-place secret-bearing URLs or tokens in process arguments.
+place secret-bearing URLs or tokens in process arguments. Production database
+URLs must set `sslmode=verify-full`; an encrypted session without server
+identity verification is not the capped-pilot posture.
+
+## Managed PostgreSQL gate
+
+Use two credentials. The migration credential may create and alter schema
+objects and is available only to a transient operator job. The API credential
+is the `flowops_runtime`-style role and must never be used to apply migrations
+or run owner bootstrap commands.
+
+1. Using the migration credential, run `/flowops/flowops-admin migrate`. This
+   applies every embedded migration and records its exact checksum
+   transactionally without provisioning a tenant or owner.
+2. From a trusted machine with `psql`, apply the reviewed grant contract after
+   substituting only the already-created role identifier:
+
+   ```sh
+   psql "$FLOWOPS_DATABASE_ADMIN_URL" \
+     --set=runtime_role=flowops_runtime \
+     --file=deploy/control-plane/configure-runtime-role.sql
+   ```
+
+3. Set `FLOWOPS_DATABASE_URL` to the runtime credential with
+   `sslmode=verify-full`, then run `/flowops/postgres-readiness sql`. A pass
+   proves the current backend negotiated TLS, the runtime role and every role
+   reachable through `SET ROLE` lack escalation flags, schema DDL is denied,
+   all embedded migration checksums match with no extras, and the exact table
+   grant matrix has neither missing nor surplus privileges.
+4. Separately collect provider-console evidence for enabled backups, PITR,
+   encryption at rest, and monitoring. References must be credential-free HTTPS
+   URLs with no query string. Create a short-lived JSON record whose
+   `signature` is empty, sign it in a transient operator job with
+   `/flowops/postgres-readiness provider-evidence-sign`, and verify it with
+   `/flowops/postgres-readiness provider-evidence`. The signing private key is
+   supplied only to the transient signing job; the verifier receives only the
+   corresponding public key.
+5. Run `make smoke-postgres-readiness`. The smoke always tests the code and
+   grant contract. It performs the live SQL and provider proofs only when
+   `FLOWOPS_DATABASE_URL`, `FLOWOPS_DB_EVIDENCE_PUBLIC_KEY_B64`, and
+   `FLOWOPS_DB_EVIDENCE_FILE` are present; otherwise it prints `NOT RUN` and the
+   deployment gate stays open.
+
+SQL cannot prove provider backup retention, PITR, encryption at rest, or
+monitoring. A signed operator record is tamper evidence and an accountable
+snapshot, not an independent provider attestation. Before pilot admission,
+also execute one restore drill into an isolated database and one runtime-
+credential rotation drill; neither is inferred from the readiness report.
 
 Signer receipt keys are public material but remain tenant-scoped security
 configuration. Each JSON item must contain exactly `organizationId`,
