@@ -184,7 +184,11 @@ func (a *ClefAdapter) prepareExact(ctx context.Context, target common.Address, d
 	}
 
 	signRequest := transactionArgs{
-		From: from, To: to, Value: "0x0", Data: call.Data,
+		// Clef rejects an all-lowercase address when its EIP-55 checksum contains
+		// uppercase characters. Keep canonical lowercase addresses at FlowOps and
+		// Base RPC boundaries, but render both wallet-facing addresses with the
+		// checksum Clef validates before showing the approval prompt.
+		From: a.sender.Hex(), To: target.Hex(), Value: "0x0", Data: call.Data,
 		Nonce: quantity(nonce), Gas: quantity(new(big.Int).SetUint64(gasLimit)),
 		MaxFeePerGas: quantity(feeCap), MaxPriorityFeePerGas: quantity(priority),
 		ChainID: quantity(a.chainID),

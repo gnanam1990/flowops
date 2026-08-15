@@ -22,9 +22,9 @@ import (
 )
 
 const (
-	testAsset     = "0x1111111111111111111111111111111111111111"
+	testAsset     = "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
 	testRecipient = "0x2222222222222222222222222222222222222222"
-	testEscrow    = "0x4444444444444444444444444444444444444444"
+	testEscrow    = "0x86e145397f58e71c134c0e054320db929483227a"
 )
 
 type adapterHarness struct {
@@ -47,7 +47,7 @@ type adapterHarness struct {
 
 func newAdapterHarness(t *testing.T) *adapterHarness {
 	t.Helper()
-	key, err := crypto.GenerateKey()
+	key, err := crypto.HexToECDSA(strings.Repeat("1", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +159,12 @@ func (h *adapterHarness) handleWallet(w http.ResponseWriter, r *http.Request) {
 	var args transactionArgs
 	if err := json.Unmarshal(request.Params[0], &args); err != nil {
 		h.t.Fatal(err)
+	}
+	if args.From != common.HexToAddress(args.From).Hex() {
+		h.t.Errorf("wallet from address is not EIP-55 checksummed: %s", args.From)
+	}
+	if args.To != common.HexToAddress(args.To).Hex() {
+		h.t.Errorf("wallet to address is not EIP-55 checksummed: %s", args.To)
 	}
 	nonce, _ := parseQuantity(args.Nonce)
 	gas, _ := parseQuantity(args.Gas)
