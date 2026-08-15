@@ -164,6 +164,7 @@ func run(ctx context.Context) error {
 	api, err := controlapi.NewServer(controlapi.ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
 		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
+		Reconciliation: reconciliationEngine,
 	})
 	if err != nil {
 		return err

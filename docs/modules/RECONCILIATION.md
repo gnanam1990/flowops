@@ -3,8 +3,9 @@
 Status: production observer, signer receipt registration, receipt/finality
 worker wiring, durable CallEscrow intent and transition reconciliation, and
 live Evidence Fetch release and acknowledged-refund manifests complete;
-one funded customer-signer escrow lifecycle complete; dedicated production
-provider selection and measurement remain open
+one funded customer-signer escrow lifecycle complete; tenant-scoped operator
+read model and explicit unproven-outcome quarantine complete; dedicated
+production provider selection and measurement remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
@@ -188,6 +189,25 @@ The funded customer reference-signer FUND-to-REFUND lifecycle is documented in
 - Corrections append an exact reversing transaction and preserve the original.
 - The hash-chained journal is synchronized before state becomes visible and locked to one process.
 
+## Operator read model and exceptions
+
+`OrganizationView` derives a single locked snapshot of chain state, candidate
+reconciliation progress, exceptions, and asset-bound ledger effects. It binds a
+ledger transaction to an asset only through the immutable direct execution or
+escrow call named by its reference. Unbound entries are excluded from asset
+totals and counted explicitly. Recognized expense, locked escrow, UTC-day/month
+expense, and unresolved exposure are operational subledger values in atomic
+units; they are not wallet balances or spendable funds.
+
+The authenticated dashboard receives only its organization view. A separate
+operator-key endpoint exposes the same scoped view for incident response.
+Operators can contain an unresolved direct execution with
+`DROPPED_UNPROVEN`, `REPLACED_UNPROVEN`, or `MANUAL_INVESTIGATION`. This
+appends a quarantine event; it does not assert the external outcome, move
+money, rebroadcast, replace, settle, or refund. Proven replacement/drop
+automation remains blocked on independent nonce and transaction-content
+evidence.
+
 ## Halt invariants
 
 - No new executable authorization or signer approval while the state is not `HEALTHY`.
@@ -230,12 +250,16 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
 - select and contractually assess at least two production Base RPC providers;
 - complete and record the multi-hour Sepolia confirmation, stall-age,
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
-- add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
+- add unknown-transfer detection and quorum nonce/content evidence for proven
+  transaction-replacement and dropped-transaction workflows; explicit
+  unproven-outcome quarantine is implemented;
 - assess and document production Clef/HSM operations for the runnable
   customer-side signer packaging; the deployed no-funds pilot worker remains idle until a
   design partner provisions a signer receipt public key and supplies a real
   transaction;
-- expose status, exceptions, backfill progress, and manual gates in the dashboard;
+- expose operator-only escrow quarantine/resolution actions; status, direct
+  exceptions, candidate progress, asset-bound aggregates, and manual gates are
+  now exposed read-only in the dashboard;
 - execute the live halt/recovery acceptance run with the customer signer and a
   separate real Sepolia transaction; the completed funded proof exercised
   healthy FUND and REFUND reconciliation, not a chain halt.

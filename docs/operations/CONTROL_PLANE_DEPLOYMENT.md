@@ -118,6 +118,27 @@ The actor string is journaled audit context. Possession of the operator key is
 the operational authority. Rotate the key after suspected exposure; tenant and
 Sites credentials are deliberately not accepted by these endpoints.
 
+Inspect one organization's durable recovery projection from the trusted
+operator environment:
+
+```sh
+printf '%s\n' '{"organizationId":"org_acme"}' \
+  | /flowops/flowops-operator reconciliation-status
+```
+
+If an unresolved direct transaction must be contained while its external
+outcome is still unproved, quarantine it explicitly:
+
+```sh
+printf '%s\n' '{"organizationId":"org_acme","executionId":"exec_123","operator":"operator_alice","disposition":"REPLACED_UNPROVEN","reason":"receipt absent and sender nonce outcome requires independent investigation"}' \
+  | /flowops/flowops-operator execution-quarantine
+```
+
+This is not a declaration that the transaction was replaced or dropped. It
+does not create a retry, settlement, refund, or replacement transaction. Keep
+the execution quarantined until separately collected nonce and transaction
+evidence supports a reviewed resolution.
+
 ## Owner enrollment and bootstrap
 
 1. Deploy the private Sites version with only `FLOWOPS_SITES_PROJECT_ID` set.

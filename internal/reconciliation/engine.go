@@ -429,13 +429,27 @@ func (e *Engine) ReconcileReceipt(ctx context.Context, executionID string, evide
 }
 
 func (e *Engine) Quarantine(ctx context.Context, executionID, operator, reason string) (Execution, error) {
+	return e.quarantine(ctx, "", executionID, operator, reason)
+}
+
+// QuarantineForOrganization makes the tenant check and state transition under
+// the same engine lock. The unscoped method remains for internal recovery
+// callers that already hold an execution identity from the engine itself.
+func (e *Engine) QuarantineForOrganization(ctx context.Context, organizationID, executionID, operator, reason string) (Execution, error) {
+	if !identifierPattern.MatchString(organizationID) {
+		return Execution{}, ErrUnknownExecution
+	}
+	return e.quarantine(ctx, organizationID, executionID, operator, reason)
+}
+
+func (e *Engine) quarantine(ctx context.Context, organizationID, executionID, operator, reason string) (Execution, error) {
 	if !identifierPattern.MatchString(operator) || reason == "" || len(reason) > 1024 {
 		return Execution{}, errors.New("operator or quarantine reason is invalid")
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	execution, ok := e.executions[executionID]
-	if !ok {
+	if !ok || organizationID != "" && execution.Expected.OrganizationID != organizationID {
 		return Execution{}, ErrUnknownExecution
 	}
 	if execution.State != ExecutionPendingChainRecovery && execution.State != ExecutionBroadcast {

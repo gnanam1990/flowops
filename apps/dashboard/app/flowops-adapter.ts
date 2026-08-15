@@ -43,6 +43,41 @@ type ControlSnapshot = {
   };
   pendingApprovals: ControlApproval[];
   agents: ControlAgent[];
+	reconciliation: ControlReconciliation;
+};
+
+type ControlReconciliation = {
+	available: boolean;
+	recovery: {
+		checkpointBlock: number;
+		observedThroughBlock: number;
+		totalCandidates: number;
+		resolvedCandidates: number;
+		unresolvedOutcomes: number;
+		quarantinedOutcomes: number;
+		pendingFinality: number;
+		readyForManualResume: boolean;
+		complete: boolean;
+	};
+	assets: Array<{
+		asset: string;
+		escrowLockedAtomic: string;
+		recognizedExpenseAtomic: string;
+		spentTodayAtomic: string;
+		spentMonthAtomic: string;
+		unresolvedAtomic: string;
+	}>;
+	exceptions: Array<{
+		id: string;
+		kind: string;
+		state: string;
+		asset: string;
+		amountAtomic: string;
+		firstObservedAt: string;
+		reason: string;
+		operatorActionNeeded: boolean;
+	}>;
+	unclassifiedLedgerTransactions: number;
 };
 
 type ControlApproval = {
@@ -202,9 +237,10 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     !Number.isSafeInteger(raw.chain.requiredObserverQuorum) ||
     raw.chain.requiredObserverQuorum < 2 ||
     raw.chain.requiredObserverQuorum > 5 ||
-    !Number.isSafeInteger(raw.chain.respondingObservers) ||
+	!Number.isSafeInteger(raw.chain.respondingObservers) ||
     raw.chain.respondingObservers < 0 ||
-    raw.chain.respondingObservers > 5
+	raw.chain.respondingObservers > 5 ||
+	!validReconciliation(raw.reconciliation)
   ) {
     throw new Error("invalid dashboard snapshot");
   }
@@ -220,14 +256,16 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     amount: approval.amount,
     state: "approval",
   }));
-  const risks = liveRisks(raw, agents, generatedAt);
+	const risks = liveRisks(raw, agents, generatedAt);
   const checkpoint = raw.chain.lastTrusted;
   if (checkpoint && (!Number.isSafeInteger(checkpoint.blockNumber) || checkpoint.blockNumber < 0)) {
     throw new Error("invalid checkpoint");
   }
   const checkpointTime = checkpoint ? parseDate(checkpoint.observedAt) : null;
   const observerProgress = `${raw.chain.respondingObservers} / ${raw.chain.requiredObserverQuorum}`;
-  const unavailable = "Not available";
+	const unavailable = "Not available";
+	const singleAsset = raw.reconciliation.available && raw.reconciliation.assets.length === 1 ? raw.reconciliation.assets[0] : null;
+	const assetLabel = singleAsset ? shortAddress(singleAsset.asset) : raw.reconciliation.assets.length > 1 ? "Multiple assets" : "Asset unavailable";
   return {
     mode: "live",
     connection: {
@@ -244,13 +282,14 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
       lastTrustedAt: checkpointTime ? age(checkpointTime, new Date()) : "Unavailable",
     },
     money: {
-      total: unavailable,
+	  asset: assetLabel,
+	  total: singleAsset ? `${formatAtomic(singleAsset.recognizedExpenseAtomic)} atomic` : unavailable,
       available: unavailable,
-      reserved: unavailable,
-      pending: unavailable,
-      unresolved: unavailable,
-      spentToday: unavailable,
-      monthlySpent: unavailable,
+	  reserved: singleAsset ? `${formatAtomic(singleAsset.escrowLockedAtomic)} atomic` : unavailable,
+	  pending: `${raw.reconciliation.recovery.pendingFinality} item${raw.reconciliation.recovery.pendingFinality === 1 ? "" : "s"}`,
+	  unresolved: singleAsset ? `${formatAtomic(singleAsset.unresolvedAtomic)} atomic` : `${raw.reconciliation.recovery.unresolvedOutcomes} item${raw.reconciliation.recovery.unresolvedOutcomes === 1 ? "" : "s"}`,
+	  spentToday: singleAsset ? `${formatAtomic(singleAsset.spentTodayAtomic)} atomic` : unavailable,
+	  monthlySpent: singleAsset ? `${formatAtomic(singleAsset.spentMonthAtomic)} atomic` : unavailable,
       monthlyBudget: unavailable,
       monthlySpentPercent: null,
     },
@@ -258,6 +297,19 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     agents,
     activity,
     risks,
+	reconciliation: {
+		available: raw.reconciliation.available,
+		checkpointBlock: raw.reconciliation.recovery.checkpointBlock.toLocaleString("en-US"),
+		observedThroughBlock: raw.reconciliation.recovery.observedThroughBlock.toLocaleString("en-US"),
+		resolvedCandidates: raw.reconciliation.recovery.resolvedCandidates,
+		totalCandidates: raw.reconciliation.recovery.totalCandidates,
+		unresolvedOutcomes: raw.reconciliation.recovery.unresolvedOutcomes,
+		quarantinedOutcomes: raw.reconciliation.recovery.quarantinedOutcomes,
+		pendingFinality: raw.reconciliation.recovery.pendingFinality,
+		readyForManualResume: raw.reconciliation.recovery.readyForManualResume,
+		complete: raw.reconciliation.recovery.complete,
+		unclassifiedLedgerTransactions: raw.reconciliation.unclassifiedLedgerTransactions,
+	},
   };
 }
 
@@ -326,6 +378,23 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
 
 function liveRisks(raw: ControlSnapshot, agents: Agent[], now: Date): Risk[] {
   const risks: Risk[] = [];
+	for (const exception of raw.reconciliation.exceptions) {
+		risks.push({
+			id: `reconciliation-${exception.kind}-${exception.id}`,
+			severity: exception.state === "QUARANTINED" ? "critical" : "warning",
+			title: `${humanize(exception.kind)} is ${humanize(exception.state).toLowerCase()}`,
+			detail: `${formatAtomic(exception.amountAtomic)} atomic on ${shortAddress(exception.asset)}. ${exception.reason || "Canonical outcome remains unresolved."}`,
+			time: age(parseDate(exception.firstObservedAt), now),
+		});
+	}
+	if (raw.reconciliation.unclassifiedLedgerTransactions > 0) {
+		risks.push({
+			id: "unclassified-ledger-transactions", severity: "warning",
+			title: "Ledger entries excluded from asset totals",
+			detail: `${raw.reconciliation.unclassifiedLedgerTransactions} operational ledger entr${raw.reconciliation.unclassifiedLedgerTransactions === 1 ? "y is" : "ies are"} not bound to a proved asset and were not aggregated.`,
+			time: "Current snapshot",
+		});
+	}
   if (raw.organization.authorizationsPaused) {
     risks.push({
       id: "organization-authorization-pause",
@@ -354,6 +423,23 @@ function liveRisks(raw: ControlSnapshot, agents: Agent[], now: Date): Risk[] {
     });
   }
   return risks;
+}
+
+function validReconciliation(value: ControlReconciliation | undefined): value is ControlReconciliation {
+	if (!value || typeof value.available !== "boolean" || !Array.isArray(value.assets) || !Array.isArray(value.exceptions)) return false;
+	const recovery = value.recovery;
+	if (!recovery || ![recovery.checkpointBlock, recovery.observedThroughBlock, recovery.totalCandidates, recovery.resolvedCandidates, recovery.unresolvedOutcomes, recovery.quarantinedOutcomes, recovery.pendingFinality].every((item) => Number.isSafeInteger(item) && item >= 0)) return false;
+	if (typeof recovery.readyForManualResume !== "boolean" || typeof recovery.complete !== "boolean" || !Number.isSafeInteger(value.unclassifiedLedgerTransactions) || value.unclassifiedLedgerTransactions < 0) return false;
+	if (!value.assets.every((asset) => /^0x[0-9a-f]{40}$/.test(asset.asset) && [asset.escrowLockedAtomic, asset.recognizedExpenseAtomic, asset.spentTodayAtomic, asset.spentMonthAtomic, asset.unresolvedAtomic].every(validSignedAtomic))) return false;
+	return value.exceptions.every((exception) => isIdentifier(exception.id) && typeof exception.kind === "string" && typeof exception.state === "string" && /^0x[0-9a-f]{40}$/.test(exception.asset) && validUnsignedAtomic(exception.amountAtomic) && typeof exception.firstObservedAt === "string" && typeof exception.reason === "string" && typeof exception.operatorActionNeeded === "boolean");
+}
+
+function validSignedAtomic(value: unknown): value is string {
+	return typeof value === "string" && /^-?(?:0|[1-9][0-9]{0,77})$/.test(value);
+}
+
+function validUnsignedAtomic(value: unknown): value is string {
+	return typeof value === "string" && /^(?:0|[1-9][0-9]{0,77})$/.test(value);
 }
 
 function preview(detail: string): DashboardSnapshot {

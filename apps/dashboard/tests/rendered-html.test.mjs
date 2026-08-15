@@ -210,7 +210,28 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
             amountAtomic: "1250000", purpose: "Buy verified dataset",
           },
         }],
-        agents: [{ id: "agent_live", name: "Research Agent", purpose: "Evidence acquisition", status: "ACTIVE" }],
+		agents: [{ id: "agent_live", name: "Research Agent", purpose: "Evidence acquisition", status: "ACTIVE" }],
+		reconciliation: {
+		  available: true,
+		  recovery: {
+			checkpointBlock: 12345670, observedThroughBlock: 12345678,
+			totalCandidates: 4, resolvedCandidates: 3, unresolvedOutcomes: 1,
+			quarantinedOutcomes: 0, pendingFinality: 1,
+			readyForManualResume: false, complete: false,
+		  },
+		  assets: [{
+			asset: `0x${"2".repeat(40)}`, escrowLockedAtomic: "250000",
+			recognizedExpenseAtomic: "1750000", spentTodayAtomic: "500000",
+			spentMonthAtomic: "1750000", unresolvedAtomic: "125000",
+		  }],
+		  exceptions: [{
+			id: "exec_unresolved", kind: "DIRECT_EXECUTION", state: "PENDING_CHAIN_RECOVERY",
+			asset: `0x${"2".repeat(40)}`, amountAtomic: "125000",
+			firstObservedAt: new Date(now.getTime() - 60_000).toISOString(),
+			reason: "canonical outcome remains unresolved", operatorActionNeeded: true,
+		  }],
+		  unclassifiedLedgerTransactions: 0,
+		},
       }));
       return;
     }
@@ -236,8 +257,11 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.match(html, /Buy verified dataset/);
   assert.match(html, /1,250,000 atomic/);
   assert.match(html, /0x2222…2222/);
-  assert.match(html, /Ledger aggregates not exposed/);
-  assert.match(html, /Monthly usage<\/span><strong>Unavailable/);
+	assert.match(html, /Recognized economic expense/);
+	assert.match(html, /1,750,000 atomic/);
+	assert.match(html, /Journal-derived/);
+	assert.match(html, /Direct execution is pending chain recovery/);
+	assert.match(html, /Monthly usage<\/span><strong>Unavailable/);
   assert.doesNotMatch(html, /On track|Spendable now/);
   assert.doesNotMatch(html, /Northstar Labs|\$15,140\.00|Signal Harbor/);
   assert.doesNotMatch(html, new RegExp(exchangeCredential));

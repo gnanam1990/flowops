@@ -18,6 +18,7 @@ export type DashboardSnapshot = {
     lastTrustedAt: string;
   };
   money: {
+	asset: string;
     total: string;
     available: string;
     reserved: string;
@@ -32,6 +33,19 @@ export type DashboardSnapshot = {
   agents: Agent[];
   activity: Activity[];
   risks: Risk[];
+	reconciliation: {
+		available: boolean;
+		checkpointBlock: string;
+		observedThroughBlock: string;
+		resolvedCandidates: number;
+		totalCandidates: number;
+		unresolvedOutcomes: number;
+		quarantinedOutcomes: number;
+		pendingFinality: number;
+		readyForManualResume: boolean;
+		complete: boolean;
+		unclassifiedLedgerTransactions: number;
+	};
 };
 
 export type Approval = {
@@ -102,6 +116,7 @@ export const dashboardSnapshot: DashboardSnapshot = {
     lastTrustedAt: "18 seconds ago",
   },
   money: {
+	asset: "USDC",
     total: "$15,140.00",
     available: "$12,840.00",
     reserved: "$1,260.00",
@@ -112,6 +127,19 @@ export const dashboardSnapshot: DashboardSnapshot = {
     monthlyBudget: "$20,000",
     monthlySpentPercent: 37,
   },
+	reconciliation: {
+		available: true,
+		checkpointBlock: "45,347,753",
+		observedThroughBlock: "45,347,753",
+		resolvedCandidates: 22,
+		totalCandidates: 24,
+		unresolvedOutcomes: 1,
+		quarantinedOutcomes: 1,
+		pendingFinality: 0,
+		readyForManualResume: false,
+		complete: false,
+		unclassifiedLedgerTransactions: 0,
+	},
   approvals: [
     {
       id: "APR-2048",

@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -67,6 +67,10 @@ smoke-evidence-fetch:
 
 smoke-reconciliation:
 	go test -race -run '^(TestHaltDrillPreservesAmbiguousExecutionAndRecoversOnce|TestCanonicalReorgReversesLedgerAndRequiresFreshOutcome|TestWorkerFinalizesCanonicalReceiptExactlyOnce|TestWorkerPersistsPositiveFinalityAndDoesNotPollItAgain|TestWorkerReorgAtomicallyReversesSettlement|TestSmokeChainHaltStopsBothAuthorizationBoundaries)$$' ./internal/reconciliation ./internal/controlplane
+
+smoke-reconciliation-operator:
+	go test -race -run '^(TestOrganizationViewSeparatesProvedAssetAggregatesAndExceptions|TestOperatorReconciliationIsTenantBoundAndQuarantinePreservesUnprovenOutcome|TestOperatorClientReadsReconciliationAndQuarantinesWithoutClaimingOutcome)$$' ./internal/reconciliation ./internal/controlapi ./cmd/flowops-operator
+	npm test --prefix apps/dashboard
 
 smoke-signer-executor:
 	go test -race -run '^(TestExecutorBroadcastsAndRegistersExactlyOnce|TestExecutorBroadcastErrorBecomesDurableAmbiguousWithoutRetry|TestLostLocalRegistrationAckRetriesReceiptOnlyAfterRestart|TestRestartFromPreparedBroadcastsOnce|TestRestartFromBroadcastingMarksAmbiguousWithoutWallet|TestRemovingFlowOpsTrustStopsPreparedAttempt)$$' ./pkg/referencesigner

@@ -241,10 +241,12 @@ func cloneCommand(command Command) Command {
 }
 
 type mutableChain struct {
-	mu        sync.Mutex
-	status    reconciliation.ChainStatus
-	haltErr   error
-	resumeErr error
+	mu          sync.Mutex
+	status      reconciliation.ChainStatus
+	haltErr     error
+	resumeErr   error
+	views       map[string]reconciliation.OrganizationView
+	quarantined []string
 }
 
 func (c *mutableChain) ForceHalt(_ context.Context, _ string, reason string) (reconciliation.ChainStatus, error) {
@@ -347,6 +349,54 @@ func TestOperatorChainControlClassifiesUncommittedJournalEventsAsRetriable(t *te
 	}
 }
 
+func TestOperatorReconciliationIsTenantBoundAndQuarantinePreservesUnprovenOutcome(t *testing.T) {
+	server, _, chain, _, journal, now := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	operatorToken := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32)))
+	chain.mu.Lock()
+	chain.views["org_a"] = reconciliation.OrganizationView{
+		Available: true, GeneratedAt: now,
+		Recovery: reconciliation.RecoveryProgress{TotalCandidates: 1, UnresolvedOutcomes: 1},
+		Exceptions: []reconciliation.Exception{{
+			ID: "exec_pending", Kind: "DIRECT_EXECUTION", State: string(reconciliation.ExecutionPendingChainRecovery),
+			Asset: testUSDC, AmountAtomic: "100", FirstObservedAt: now, OperatorActionNeeded: true,
+		}},
+	}
+	chain.mu.Unlock()
+
+	status, body := doRequest(t, server.Client(), http.MethodGet, server.URL+"/v1/operator/reconciliation?organizationId=org_a", ownerTokenA, "", nil)
+	if status != http.StatusUnauthorized || body["error"].(map[string]any)["code"] != "UNAUTHENTICATED" {
+		t.Fatalf("tenant credential reached operator read = %d %+v", status, body)
+	}
+	status, body = doRequest(t, server.Client(), http.MethodGet, server.URL+"/v1/operator/reconciliation?organizationId=org_a", operatorToken, "", nil)
+	if status != http.StatusOK || body["reconciliation"].(map[string]any)["available"] != true {
+		t.Fatalf("operator reconciliation = %d %+v", status, body)
+	}
+
+	request := operatorQuarantineRequest{OrganizationID: "org_b", Operator: "operator_alice", Disposition: "DROPPED_UNPROVEN", Reason: "nonce outcome not proved"}
+	status, body = doRequest(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/executions/exec_pending/quarantine", operatorToken, "", request)
+	if status != http.StatusNotFound {
+		t.Fatalf("cross-tenant quarantine = %d %+v", status, body)
+	}
+	request.OrganizationID = "org_a"
+	request.Disposition = "DROPPED"
+	status, body = doRequest(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/executions/exec_pending/quarantine", operatorToken, "", request)
+	if status != http.StatusBadRequest || body["error"].(map[string]any)["code"] != "INVALID_QUARANTINE" {
+		t.Fatalf("proved-drop claim accepted = %d %+v", status, body)
+	}
+	request.Disposition = "DROPPED_UNPROVEN"
+	status, body = doRequest(t, server.Client(), http.MethodPost, server.URL+"/v1/operator/executions/exec_pending/quarantine", operatorToken, "", request)
+	if status != http.StatusOK || body["execution"].(map[string]any)["state"] != string(reconciliation.ExecutionQuarantined) {
+		t.Fatalf("safe quarantine = %d %+v", status, body)
+	}
+	chain.mu.Lock()
+	defer chain.mu.Unlock()
+	if len(chain.quarantined) != 1 || chain.quarantined[0] != "exec_pending\x00operator_alice\x00DROPPED_UNPROVEN: nonce outcome not proved" {
+		t.Fatalf("quarantine audit input = %#v", chain.quarantined)
+	}
+}
+
 func newHealthyChain(now time.Time) *mutableChain {
 	return &mutableChain{status: reconciliation.ChainStatus{
 		State: reconciliation.StateHealthy, StateChangedAt: now.Add(-time.Minute),
@@ -367,6 +417,24 @@ func (c *mutableChain) Status() reconciliation.ChainStatus {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.status
+}
+
+func (c *mutableChain) OrganizationView(organizationID string) reconciliation.OrganizationView {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	view := c.views[organizationID]
+	view.Chain = c.status
+	return view
+}
+
+func (c *mutableChain) QuarantineForOrganization(_ context.Context, _, executionID, operator, reason string) (reconciliation.Execution, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.quarantined = append(c.quarantined, executionID+"\x00"+operator+"\x00"+reason)
+	return reconciliation.Execution{
+		Expected: reconciliation.ExpectedExecution{ExecutionID: executionID},
+		State:    reconciliation.ExecutionQuarantined, Resolution: "manual quarantine by " + operator + ": " + reason,
+	}, nil
 }
 
 func (c *mutableChain) halt(now time.Time) {
@@ -490,6 +558,7 @@ func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *
 	store.agents[agentKey("org_a", "agent_a")] = Agent{OrganizationID: "org_a", ID: "agent_a", CustomerID: "customer_a", Name: "Research", Status: AgentActive, UpdatedAt: now}
 	store.agents[agentKey("org_b", "agent_b")] = Agent{OrganizationID: "org_b", ID: "agent_b", CustomerID: "customer_b", Name: "Other", Status: AgentActive, UpdatedAt: now}
 	chain := newHealthyChain(now)
+	chain.views = make(map[string]reconciliation.OrganizationView)
 	lifecycle, journal := testLifecycle(t, store, chain, now)
 	siteSessions, err := NewSiteSessionCodec([]byte(strings.Repeat("s", 32)), 2*time.Minute, func() time.Time { return now })
 	if err != nil {
@@ -500,7 +569,7 @@ func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *
 	ids := &sequenceIDs{}
 	server, err := NewServer(ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: chain, Clock: func() time.Time { return now },
-		IDSource: ids.next, SiteSessions: siteSessions, OperatorControlKey: []byte(strings.Repeat("o", 32)),
+		IDSource: ids.next, SiteSessions: siteSessions, OperatorControlKey: []byte(strings.Repeat("o", 32)), Reconciliation: chain,
 	})
 	if err != nil {
 		t.Fatal(err)

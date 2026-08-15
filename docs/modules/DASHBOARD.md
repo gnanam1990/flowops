@@ -1,6 +1,6 @@
 # Operator dashboard module
 
-Status: membership-bound reads and step-up command bridge implemented; hosted step-up issuance and ledger aggregates remain gated
+Status: membership-bound reads, step-up command bridge, and journal-backed reconciliation aggregates implemented; hosted step-up issuance remains gated
 
 Package: `apps/dashboard`
 
@@ -10,6 +10,14 @@ The dashboard gives an operator one control room for governed agents and their
 money. It answers what is spendable, what is reserved, what is awaiting chain
 evidence, what is unresolved, which human decisions are pending, and whether
 Base is producing a trusted canonical head.
+
+The live snapshot includes the tenant-scoped reconciliation read model:
+canonical checkpoint progress, unresolved and quarantined outcomes, pending
+finality, operator-resume readiness, and journal-derived asset summaries. It
+shows recognized expense and escrow-locked amounts only in atomic units for an
+asset proved by the immutable execution or escrow reference. It never labels
+the operational subledger as a wallet balance or available treasury. Entries
+without a proved asset binding are excluded and counted visibly.
 
 ## Entry and identity flow
 
