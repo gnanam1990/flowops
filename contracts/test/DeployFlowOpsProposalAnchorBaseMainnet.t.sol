@@ -5,6 +5,12 @@ import {Test} from "forge-std/Test.sol";
 import {FlowOpsProposalAnchor} from "../src/FlowOpsProposalAnchor.sol";
 import {DeployFlowOpsProposalAnchorBaseMainnet} from "../script/DeployFlowOpsProposalAnchorBaseMainnet.s.sol";
 
+contract ProposalAnchorDeploymentHarness is DeployFlowOpsProposalAnchorBaseMainnet {
+    function _broadcastEnabled() internal pure override returns (bool) {
+        return true;
+    }
+}
+
 contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
     DeployFlowOpsProposalAnchorBaseMainnet internal deployment;
 
@@ -12,7 +18,7 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         deployment = new DeployFlowOpsProposalAnchorBaseMainnet();
     }
 
-    function test_committedPackagePinsOneTimeBroadcastApproval() public view {
+    function test_committedPackagePinsConsumedOneTimeApproval() public view {
         assertEq(deployment.BASE_MAINNET_CHAIN_ID(), 8_453);
         assertEq(deployment.DESIGNATED_DEPLOYER(), 0xEEC526F6555dD43536F712D5c978CbC13CB4517f);
         assertEq(deployment.PROPOSAL_DIGEST(), 0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362);
@@ -34,7 +40,7 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         assertEq(
             deployment.DEPLOYMENT_APPROVAL_DIGEST(), 0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377
         );
-        assertTrue(deployment.MAINNET_BROADCAST_ENABLED());
+        assertFalse(deployment.MAINNET_BROADCAST_ENABLED());
     }
 
     function test_runRejectsEveryOtherChainBeforeReleaseGates() public {
@@ -45,15 +51,22 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         deployment.run();
     }
 
-    function test_committedPackageRejectsNonceDriftBeforeBroadcast() public {
+    function test_committedPackageCannotRebroadcastAfterEvidence() public {
         vm.chainId(8_453);
-        vm.setNonce(deployment.DESIGNATED_DEPLOYER(), 1);
+        vm.expectRevert(DeployFlowOpsProposalAnchorBaseMainnet.MainnetBroadcastDisabled.selector);
+        deployment.run();
+    }
+
+    function test_harnessRejectsNonceDriftBeforeBroadcast() public {
+        ProposalAnchorDeploymentHarness harness = new ProposalAnchorDeploymentHarness();
+        vm.chainId(8_453);
+        vm.setNonce(harness.DESIGNATED_DEPLOYER(), 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 DeployFlowOpsProposalAnchorBaseMainnet.DeployerNonceMismatch.selector, uint64(0), uint64(1)
             )
         );
-        deployment.run();
+        harness.run();
     }
 
     function test_releaseGatesRejectEveryMissingBinding() public {
@@ -78,16 +91,17 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         deployment.validateReleaseGates(deployer, proposalDigest, sourceCommit, approvalDigest, false);
     }
 
-    function test_committedPackageDeploysPermanentNoFundsAnchor() public {
+    function test_harnessDeploysPermanentNoFundsAnchor() public {
+        ProposalAnchorDeploymentHarness harness = new ProposalAnchorDeploymentHarness();
         vm.chainId(8_453);
 
-        FlowOpsProposalAnchor anchor = deployment.run();
+        FlowOpsProposalAnchor anchor = harness.run();
 
-        assertEq(address(anchor), deployment.EXPECTED_ANCHOR_ADDRESS());
-        assertEq(address(anchor).codehash, deployment.EXPECTED_RUNTIME_CODE_HASH());
-        assertEq(anchor.deployer(), deployment.DESIGNATED_DEPLOYER());
-        assertEq(anchor.proposalDigest(), deployment.PROPOSAL_DIGEST());
-        assertEq(anchor.sourceCommit(), deployment.SOURCE_COMMIT());
+        assertEq(address(anchor), harness.EXPECTED_ANCHOR_ADDRESS());
+        assertEq(address(anchor).codehash, harness.EXPECTED_RUNTIME_CODE_HASH());
+        assertEq(anchor.deployer(), harness.DESIGNATED_DEPLOYER());
+        assertEq(anchor.proposalDigest(), harness.PROPOSAL_DIGEST());
+        assertEq(anchor.sourceCommit(), harness.SOURCE_COMMIT());
         assertEq(anchor.DEPLOYMENT_STATUS(), "EXPERIMENTAL_UNAUDITED_NO_FUNDS");
         assertFalse(anchor.productionReady());
         assertFalse(anchor.acceptsFunds());
