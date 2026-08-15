@@ -7,6 +7,7 @@ interface Env {
   FLOWOPS_CONTROL_API_URL?: string;
   FLOWOPS_SITES_PROJECT_ID?: string;
   FLOWOPS_SITES_EXCHANGE_TOKEN?: string;
+  FLOWOPS_PROPOSAL_ANCHOR_ADDRESS?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -25,6 +26,7 @@ const SERVER_ENVIRONMENT_KEYS = [
   "FLOWOPS_CONTROL_API_URL",
   "FLOWOPS_SITES_PROJECT_ID",
   "FLOWOPS_SITES_EXCHANGE_TOKEN",
+  "FLOWOPS_PROPOSAL_ANCHOR_ADDRESS",
 ] as const;
 
 const initialServerEnvironment = Object.fromEntries(

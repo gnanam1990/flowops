@@ -5,8 +5,8 @@ exact-intent approvals, Base chain health, economic evidence, and emergency
 controls visible in one place.
 
 The module renders membership-authorized live control-plane reads when its
-server environment is configured, and otherwise falls back to an immutable,
-explicitly labelled preview. In live mode, approval and organization-pause
+server environment is configured, and otherwise falls back to a fail-closed
+public health view without organization data. In live mode, approval and organization-pause
 commands require a separate fresh credential bound to the exact same member,
 organization, and role. The read session itself deliberately has no step-up
 authority.
@@ -47,6 +47,11 @@ starter copy or fabricated preview success states.
   recovery stores only a command ID, or before one exists, a random operation
   ID and non-secret action digest so the exact retry stays idempotent.
 - No D1 or R2 binding is configured for this module.
+- `FLOWOPS_PROPOSAL_ANCHOR_ADDRESS` must stay unset until the canonical Base
+  receipt, runtime, immutable evidence, and explorer source are verified. When
+  absent or malformed, the public UI says no proposal anchor is deployed. When
+  valid, it remains permanently labelled experimental, unaudited, no funds,
+  no vault creation, and not production.
 - Runtime dependencies must pass the high-severity audit gate. The vinext build
   tool currently brings a development-only `image-size` advisory; FlowOps does
   not accept untrusted image input and production dependencies audit clean.
