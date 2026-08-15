@@ -1,6 +1,6 @@
 # FlowOps Proposal Anchor Base Mainnet Runbook
 
-Status: promotion package approved; final broadcast remains blocked; no deployment exists
+Status: deployment package approved; broadcast remains disabled; no deployment exists
 
 This runbook covers only the evidence-only `FlowOpsProposalAnchor`. It does not
 authorize `CallEscrow`, a factory, a vault, USDC approval, token funding, or any
@@ -17,13 +17,15 @@ production payment path.
 - nonce `0` and predicted address
   `0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`;
 - initcode/runtime hashes and a maximum gas spend of `5000000000000` wei;
-- `DEPLOYMENT_APPROVAL_DIGEST = bytes32(0)`; and
+- deployment-approval digest
+  `0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17`; and
 - `MAINNET_BROADCAST_ENABLED = false`.
 
-The final two fields force every committed broadcast attempt to revert. The
-recorded promotion approval authorizes only this prepared package and explicitly
-does not authorize broadcast. Do not bypass the package with `forge create`, a
-raw transaction, a copied script, or an environment-only override.
+The final boolean forces every committed broadcast attempt to revert. The
+record preserves both the canonical activation statement and the user's actual
+response, and both explicitly stop short of broadcast authorization. Do not
+bypass the package with `forge create`, a raw transaction, a copied script, or
+an environment-only override.
 
 ## Promotion prerequisites
 

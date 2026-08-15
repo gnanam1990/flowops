@@ -11,7 +11,7 @@ jq -e '
   and .kind == "flowops-proposal-anchor"
   and .network == "base-mainnet"
   and .chainId == 8453
-  and .status == "promotion-package-approved-no-deployment"
+  and .status == "deployment-approved-broadcast-disabled-no-deployment"
   and .proposalDocument == "docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md"
   and .proposalDigest == "0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362"
   and .sourceCommit == "bd9292d0f916b1e3d828443b41e31a8e635b2b3e"
@@ -39,7 +39,14 @@ jq -e '
   and .ceremony.maxGasLimit == 250000
   and .ceremony.maxFeePerGasWei == "20000000"
   and .ceremony.maxGasSpendWei == "5000000000000"
-  and .deploymentApprovalDigest == null
+  and (.deploymentApproval.canonicalStatement | startswith("APPROVE FLOWOPS BASE MAINNET PROPOSAL ANCHOR ACTIVATION:"))
+  and .deploymentApproval.digestAlgorithm == "sha256-utf8-no-newline"
+  and .deploymentApproval.canonicalStatementDigest == "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17"
+  and .deploymentApproval.userResponse == "do remaining all"
+  and .deploymentApproval.userResponseDigest == "0xf55b7fae90bcceffa559f7d763162b024f5399898d374566623916ee52d2a851"
+  and (.deploymentApproval.approvedAt | fromdateiso8601 > 0)
+  and .deploymentApproval.scope == "activation-package-only-no-broadcast"
+  and .deploymentApprovalDigest == "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17"
   and .contractAddress == null
   and .transactionHash == null
   and .blockNumber == null
@@ -62,7 +69,7 @@ grep -Fq 'bytes32 public constant PROPOSAL_DIGEST = 0x35476d70f7c33d19bb8fc1fa34
 grep -Fq 'bytes20 public constant SOURCE_COMMIT = hex"bd9292d0f916b1e3d828443b41e31a8e635b2b3e";' "${script}"
 grep -Fq 'uint64 public constant EXPECTED_DEPLOYER_NONCE = 0;' "${script}"
 grep -Fq 'address public constant EXPECTED_ANCHOR_ADDRESS = 0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250;' "${script}"
-grep -Fq 'bytes32 public constant DEPLOYMENT_APPROVAL_DIGEST = bytes32(0);' "${script}"
+grep -Fq '0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17;' "${script}"
 grep -Fq 'bool public constant MAINNET_BROADCAST_ENABLED = false;' "${script}"
 grep -Fq 'string public constant DEPLOYMENT_STATUS = "EXPERIMENTAL_UNAUDITED_NO_FUNDS";' "${contract}"
 
@@ -106,4 +113,12 @@ test "0x${proposal_digest}" = "0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2bec
 approval_digest="$(printf '%s' 'APPROVE FLOWOPS PROPOSAL ANCHOR PROMOTION PACKAGE' | shasum -a 256 | awk '{print $1}')"
 test "0x${approval_digest}" = "0xbfc1cd20d1f05885029683100e8c0a5387948597db5de68ea13eb1043223a726"
 
-printf 'validated pinned Base mainnet proposal package; final approval and broadcast remain blocked\n'
+deployment_statement="$(jq -r '.deploymentApproval.canonicalStatement' "${record}")"
+deployment_digest="$(printf '%s' "${deployment_statement}" | shasum -a 256 | awk '{print $1}')"
+test "0x${deployment_digest}" = "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17"
+
+user_response="$(jq -r '.deploymentApproval.userResponse' "${record}")"
+user_response_digest="$(printf '%s' "${user_response}" | shasum -a 256 | awk '{print $1}')"
+test "0x${user_response_digest}" = "0xf55b7fae90bcceffa559f7d763162b024f5399898d374566623916ee52d2a851"
+
+printf 'validated approved Base mainnet proposal package; broadcast remains disabled\n'

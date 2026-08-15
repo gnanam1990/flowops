@@ -24,7 +24,7 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         deployment = new DeployFlowOpsProposalAnchorBaseMainnet();
     }
 
-    function test_committedPackagePinsPromotionInputsAndStaysStructurallyBlocked() public view {
+    function test_committedPackagePinsActivationApprovalAndStaysStructurallyBlocked() public view {
         assertEq(deployment.BASE_MAINNET_CHAIN_ID(), 8_453);
         assertEq(deployment.DESIGNATED_DEPLOYER(), 0xEEC526F6555dD43536F712D5c978CbC13CB4517f);
         assertEq(deployment.PROPOSAL_DIGEST(), 0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362);
@@ -43,7 +43,9 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
         assertEq(deployment.MAX_GAS_LIMIT(), 250_000);
         assertEq(deployment.MAX_FEE_PER_GAS_WEI(), 20_000_000);
         assertEq(deployment.MAX_GAS_SPEND_WEI(), 5_000_000_000_000);
-        assertEq(deployment.DEPLOYMENT_APPROVAL_DIGEST(), bytes32(0));
+        assertEq(
+            deployment.DEPLOYMENT_APPROVAL_DIGEST(), 0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17
+        );
         assertFalse(deployment.MAINNET_BROADCAST_ENABLED());
     }
 
@@ -57,7 +59,7 @@ contract DeployFlowOpsProposalAnchorBaseMainnetTest is Test {
 
     function test_runCannotBroadcastFromCommittedPackage() public {
         vm.chainId(8_453);
-        vm.expectRevert(DeployFlowOpsProposalAnchorBaseMainnet.DeploymentApprovalNotRecorded.selector);
+        vm.expectRevert(DeployFlowOpsProposalAnchorBaseMainnet.MainnetBroadcastDisabled.selector);
         deployment.run();
     }
 

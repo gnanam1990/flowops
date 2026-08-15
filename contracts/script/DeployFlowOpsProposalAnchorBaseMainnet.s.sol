@@ -26,7 +26,8 @@ contract DeployFlowOpsProposalAnchorBaseMainnet is Script {
     uint256 public constant MAX_FEE_PER_GAS_WEI = 20_000_000;
     uint256 public constant MAX_GAS_SPEND_WEI = MAX_GAS_LIMIT * MAX_FEE_PER_GAS_WEI;
 
-    bytes32 public constant DEPLOYMENT_APPROVAL_DIGEST = bytes32(0);
+    bytes32 public constant DEPLOYMENT_APPROVAL_DIGEST =
+        0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17;
     bool public constant MAINNET_BROADCAST_ENABLED = false;
 
     error WrongChain(uint256 expected, uint256 actual);
