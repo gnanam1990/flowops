@@ -33,6 +33,17 @@ The public UI fails closed when no verified address is configured. A configured
 address is displayed only as experimental and unaudited, with production,
 funding, and vault creation explicitly disabled.
 
+Because the anchor has no post-deployment authority or economic method, its
+one-time proposal ceremony may use a dedicated software EOA with a minimal gas
+balance. That exception is valid only when two independent Base observers agree
+that the account has no code and matching latest and pending nonces, the exact
+expected CREATE address and gas ceiling are pinned, the signer credential never
+enters the repository or command line, and a fresh human approval precedes the
+single broadcast. The account is permanently ineligible for `CallEscrow`, a
+factory, a vault, a customer signer, treasury custody, or any production role.
+Production deployment continues to require the hardware-backed identity and
+recovery posture in ADR-0018.
+
 ## Consequences
 
 - A mainnet anchor can prove that a proposal and source revision existed at a
@@ -46,3 +57,5 @@ funding, and vault creation explicitly disabled.
   send assets, and the anchor deliberately has no withdrawal function.
 - Existing CallEscrow mainnet prohibitions and evidence records remain
   unchanged.
+- Using a software EOA for the evidence-only anchor is not evidence of
+  production key security and creates no exception to ADR-0018.

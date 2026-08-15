@@ -32,8 +32,13 @@ Before a separate promotion commit may fill the blocked fields:
 3. Review the deployed runtime surface and confirm no payable, factory, vault,
    funding, token, upgrade, admin, arbitrary-call, delegatecall, or self-destruct
    path exists.
-4. Designate a dedicated hardware-backed Base mainnet deployer. Do not reuse a
-   Base Sepolia MetaMask wallet or import a production key into Foundry.
+4. Designate a dedicated Base mainnet deployer. A software EOA is permitted
+   only for this authority-free proposal anchor when it has a minimal gas
+   balance, is prohibited from every production role, and passes independent
+   code/latest-nonce/pending-nonce checks. Never paste its private key into
+   chat, an environment variable, a command, or the repository. If it is
+   imported interactively into a local encrypted keystore, that keystore is
+   proposal-only and must never hold a production key.
 5. Rehearse the exact deployment on a pinned Base mainnet fork and record the
    predicted constructor values, creation bytecode, runtime hash, deployer
    nonce, and a strict gas ceiling.
@@ -45,8 +50,18 @@ Before a separate promotion commit may fill the blocked fields:
 ## Broadcast boundary
 
 After the promotion commit passes full CI and review, broadcast once from the
-designated hardware wallet. If the result is unknown, stop and reconcile the
-expected address and nonce through independent observers; never retry blindly.
+designated proposal-only wallet. If the result is unknown, stop and reconcile
+the expected address and nonce through independent observers; never retry
+blindly. This signer posture does not satisfy any production deployment gate.
+
+The accepted candidate is
+`0xE8405844a45C209895afE2e49be6aA2C6C6202a6`. At the recorded read-only
+preflight, both admitted public observers reported Base chain ID `8453`, empty
+runtime code, latest nonce `0`, pending nonce `0`, and balance
+`307657574152182` wei. The expected CREATE address at nonce `0` is
+`0x524A95082dAD59fd8bf18FA27F89E3f55202eEcf`. Every value must be refreshed
+immediately before final approval and broadcast; this record is not permission
+to send.
 
 No token approval or funding transaction may be bundled with or follow from
 this deployment ceremony. The deployment record must remain
