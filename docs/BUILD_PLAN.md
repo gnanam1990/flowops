@@ -25,7 +25,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
    Sepolia proof are complete; production dependencies and external review
    remain gated.**
 10. Dashboard and operator workflows. **Preview-safe reads, exact-member step-up command binding, exact-digest approval/denial, durable browser recovery, persistent organization-wide authorization pause, tenant-scoped reconciliation exceptions/progress, and asset-bound operational-ledger aggregates are implemented. The production step-up issuer remains an integration gate; wallet balances are deliberately not inferred.**
-11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, and explicit edge-proxy transport checks are implemented; managed PostgreSQL deployment and Base observer wiring remain live gates.**
+11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, explicit edge-proxy transport checks, exact runtime grants, TLS/role/migration verification, and signed provider-control evidence validation are implemented. A real managed PostgreSQL instance and its live evidence remain deployment gates.**
 12. Independent capped-pilot limits. **The control plane and both customer signer rails enforce the proposed per-customer Base mainnet profile before the wallet boundary, with restart-safe conservative exposure reconstruction. One capped escrow signer path is funded and reconciled on Sepolia; full two-rail production-shaped pilot admission remains open and mainnet funding remains disabled.**
 13. Final Base mainnet readiness audit. **One read-only aggregate gate now authenticates the readiness, promotion, source-rehearsal, security-review, and funded-signer evidence records, separates eight implementation capabilities from eleven production blockers, and is required by the hardware broadcast wrapper. Its current and correct decision is `BLOCKED`.**
 
@@ -55,9 +55,10 @@ Each item lands as one or more isolated conventional commits with focused tests.
 - Sites owner provisioning and exchange-token rotation must be executed and
   evidenced on the selected managed database; production operators must not
   hand-edit membership rows.
-- The API schema, PostgreSQL adapter, production container, and owner workflow
-  are implemented, but managed PostgreSQL backup/restore, TLS, least-privilege
-  roles, and rotation are not operationally proven.
+- The managed PostgreSQL verifier and exact least-privilege grant contract are
+  implemented, but no selected provider connection or signed backup/PITR/
+  encryption/monitoring evidence has passed them yet. Restore and credential-
+  rotation drills also remain operational gates.
 - GitHub-hosted Actions now runs on `ubuntu-24.04-arm`; PR #29 and its post-merge
   `main` run passed. The previous ephemeral self-hosted runner procedure is
   retained only as a documented fallback.

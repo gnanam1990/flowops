@@ -36,3 +36,10 @@ func TestRunRejectsUnknownCommandBeforeReadingSecrets(t *testing.T) {
 		t.Fatal("unknown command accepted")
 	}
 }
+
+func TestMigrateRequiresDatabaseCredential(t *testing.T) {
+	t.Setenv("FLOWOPS_DATABASE_URL", "")
+	if err := run(t.Context(), []string{"migrate"}, strings.NewReader(""), &bytes.Buffer{}); err == nil {
+		t.Fatal("migrate accepted no database credential")
+	}
+}
