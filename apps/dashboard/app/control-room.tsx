@@ -297,12 +297,13 @@ function ProposalAnchorNotice({ deployment }: { deployment: ProposalAnchorDeploy
         {deployment.address && deployment.explorerHref ? (
           <a href={deployment.explorerHref} target="_blank" rel="noreferrer">
             <code>{deployment.address}</code>
-            <span>View source on Base explorer ↗</span>
+            <span>View verified source on Base Blockscout ↗</span>
           </a>
         ) : null}
       </div>
       <dl className="proposal-anchor-controls">
         <div><dt>Production ready</dt><dd>No</dd></div>
+        <div><dt>Source verified</dt><dd>Yes</dd></div>
         <div><dt>Vault creation</dt><dd>Disabled</dd></div>
         <div><dt>USDC deposits</dt><dd>Disabled</dd></div>
         <div><dt>Asset warning</dt><dd>Do not send ETH or tokens</dd></div>

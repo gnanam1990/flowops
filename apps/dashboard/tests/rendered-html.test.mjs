@@ -166,7 +166,7 @@ test("renders a fail-closed public control room without illustrative organizatio
 });
 
 test("shows a configured proposal address only as experimental and never as production", async () => {
-  const address = "0x1234567890abcdef1234567890ABCDEF12345678";
+  const address = "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250";
   const response = await render({
     env: { FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: address },
   });
@@ -174,9 +174,11 @@ test("shows a configured proposal address only as experimental and never as prod
   const html = await response.text();
   assert.match(html, /Experimental \/ unaudited proposal anchor/);
   assert.match(html, new RegExp(address));
-  assert.match(html, new RegExp(`https://basescan\\.org/address/${address}#code`));
+  assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${address}\\?tab=contract`));
+  assert.match(html, /View verified source on Base Blockscout/);
   assert.match(html, /not a factory, vault, escrow, audited release, or production payment contract/i);
   assert.match(html, /Production ready/);
+  assert.match(html, /Source verified/);
   assert.match(html, /Vault creation/);
   assert.match(html, /USDC deposits/);
   assert.match(html, /Do not send ETH or tokens/);

@@ -25,6 +25,6 @@ export function loadProposalAnchorDeployment(
     status: "experimental-unaudited",
     network: "Base mainnet",
     address,
-    explorerHref: `https://basescan.org/address/${address}#code`,
+    explorerHref: `https://base.blockscout.com/address/${address}?tab=contract`,
   };
 }
