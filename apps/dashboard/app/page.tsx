@@ -1,4 +1,4 @@
-import { getChatGPTUser } from "./chatgpt-auth";
+import { chatGPTSignInPath, chatGPTSignOutPath, getChatGPTUser } from "./chatgpt-auth";
 import { ControlRoom } from "./control-room";
 import { dashboardForUser } from "./flowops-adapter";
 
@@ -12,9 +12,10 @@ export default async function Home() {
     <ControlRoom
       snapshot={snapshot}
       viewer={{
-        name: user?.displayName ?? "Local operator",
-        email: user?.email ?? "preview@flowops.local",
+        name: user?.displayName ?? "Public visitor",
+        email: user?.email ?? "",
       }}
+      accountHref={user ? chatGPTSignOutPath("/") : chatGPTSignInPath("/")}
     />
   );
 }

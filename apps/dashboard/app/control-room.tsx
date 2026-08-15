@@ -21,6 +21,7 @@ type Section =
 type ControlRoomProps = {
   snapshot: DashboardSnapshot;
   viewer: { name: string; email: string };
+  accountHref: string;
 };
 
 const navItems: { id: Section; label: string; mark: string }[] = [
@@ -32,7 +33,7 @@ const navItems: { id: Section; label: string; mark: string }[] = [
   { id: "developers", label: "Developers", mark: "↗" },
 ];
 
-export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
+export function ControlRoom({ snapshot, viewer, accountHref }: ControlRoomProps) {
   const [section, setSection] = useState<Section>("overview");
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -68,7 +69,7 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
     setNotice(
       snapshot.mode === "live"
         ? `${action} requires fresh step-up authentication. This read-only dashboard session submitted no command and performed no write.`
-        : `${action} is locked in preview mode. Nothing was submitted and no write occurred. Connect the authenticated FlowOps control plane to execute this action.`,
+        : `${action} is locked in the public status view. Nothing was submitted and no write occurred. Sign in with an authorized membership to access organization controls.`,
     );
   };
 
@@ -116,6 +117,7 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
     if (item.id === "security") return String(snapshot.risks.length).padStart(2, "0");
     return item.mark;
   };
+  const connectionLive = snapshot.mode === "live" || snapshot.connection.label === "Live public status";
 
   return (
     <div className="app-shell">
@@ -159,7 +161,7 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
         </nav>
 
         <div className="sidebar-foot">
-          <span className={snapshot.mode === "live" ? "preview-rail live" : "preview-rail"}><i /> {snapshot.connection.label}</span>
+          <span className={connectionLive ? "preview-rail live" : "preview-rail"}><i /> {snapshot.connection.label}</span>
           <div className="chain-summary">
             <span className="chain-dot" aria-hidden="true" />
             <span>
@@ -178,21 +180,21 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
             <span className="breadcrumb">Control room / {title}</span>
           </div>
           <dl className="context-strip">
-			<div><dt>Recognized expense</dt><dd>{snapshot.money.total} <span>{snapshot.money.asset}</span></dd></div>
+			<div><dt>{snapshot.mode === "public" ? "Organization data" : "Recognized expense"}</dt><dd>{snapshot.money.total} <span>{snapshot.money.asset}</span></dd></div>
             <div><dt>Base trusted block</dt><dd>#{snapshot.chain.lastTrustedBlock}</dd></div>
             <div><dt>Observer quorum</dt><dd className="quorum"><i />{snapshot.chain.observers}</dd></div>
           </dl>
           <div className="topbar-actions">
             <span className="fresh-label">Fresh {snapshot.chain.lastTrustedAt}</span>
-            <span className={snapshot.mode === "live" ? "preview-pill live" : "preview-pill"}>{snapshot.connection.label}</span>
+            <span className={connectionLive ? "preview-pill live" : "preview-pill"}>{snapshot.connection.label}</span>
             <button className="icon-button" aria-label="Notifications" type="button">
               <span aria-hidden="true">●</span>
               <i>{snapshot.risks.length}</i>
             </button>
-            <button className="viewer" type="button" aria-label={`Account for ${viewer.name}`}>
+            <a className="viewer account-link" href={accountHref} aria-label={snapshot.mode === "live" ? `Sign out ${viewer.name}` : "Sign in to FlowOps"}>
               <span>{initials(viewer.name)}</span>
-              <strong>{shortName(viewer.name)}</strong>
-            </button>
+              <strong>{snapshot.mode === "live" ? shortName(viewer.name) : "Sign in"}</strong>
+            </a>
           </div>
         </header>
 
@@ -214,6 +216,7 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
               onApproval={setApproval}
               onAgents={() => openSection("agents")}
               onActivity={() => openSection("activity")}
+              accountHref={accountHref}
             />
           ) : null}
           {section === "approvals" ? (
@@ -287,6 +290,7 @@ function Overview({
   onApproval,
   onAgents,
   onActivity,
+  accountHref,
 }: {
   snapshot: DashboardSnapshot;
   onApprovals: () => void;
@@ -294,6 +298,7 @@ function Overview({
   onApproval: (approval: Approval) => void;
   onAgents: () => void;
   onActivity: () => void;
+  accountHref: string;
 }) {
   const [range, setRange] = useState<"24h" | "7d" | "30d">("7d");
   return (
@@ -302,34 +307,43 @@ function Overview({
         <div className="command-index" aria-hidden="true">01 / OPERATIONS</div>
         <div className="command-copy">
           <div className="eyebrow"><span className={snapshot.organization.authorizationsPaused ? "halted-dot" : "healthy-dot"} /> {snapshot.organization.authorizationsPaused ? "Organization authorizations paused" : "Authorization boundary online"}</div>
-          <h1>Treasury command</h1>
-          <p>Govern agent spend from frozen intent to canonical Base evidence.</p>
+          <h1>{snapshot.mode === "public" ? "Live Base operations" : "Treasury command"}</h1>
+          <p>{snapshot.mode === "public" ? "Public, non-sensitive control-plane health from the same system that governs agent payments." : "Govern agent spend from frozen intent to canonical Base evidence."}</p>
           <div className="observation-meta">
             <span>Observed {snapshot.generatedAt}</span>
-            <span>{snapshot.mode === "live" ? "Organization-scoped read" : "Policy v14.2"}</span>
-            <span>{snapshot.mode === "live" ? snapshot.connection.detail : "4 external signers"}</span>
+            <span>{snapshot.mode === "live" ? "Organization-scoped read" : "Public operational read"}</span>
+            <span>{snapshot.connection.detail}</span>
           </div>
         </div>
         <div className="command-actions">
-          <div className="time-range" aria-label="Time range">
-            {(["24h", "7d", "30d"] as const).map((item) => (
-              <button aria-pressed={range === item} className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)} type="button">{item}</button>
-            ))}
-          </div>
-          <button className="primary-button" type="button" onClick={onApprovals}>
-            Review {snapshot.approvals.length} approvals <span>→</span>
-          </button>
-          <button className="danger-button" type="button" onClick={onPause} disabled={snapshot.organization.authorizationsPaused}>
-            {snapshot.organization.authorizationsPaused ? "Authorizations paused" : "Emergency pause"}
-          </button>
+          {snapshot.mode === "public" ? (
+            <>
+              <a className="primary-button account-cta" href={accountHref}>Sign in to control room <span>→</span></a>
+              <button className="danger-button" type="button" disabled>Organization controls locked</button>
+            </>
+          ) : (
+            <>
+              <div className="time-range" aria-label="Time range">
+                {(["24h", "7d", "30d"] as const).map((item) => (
+                  <button aria-pressed={range === item} className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)} type="button">{item}</button>
+                ))}
+              </div>
+              <button className="primary-button" type="button" onClick={onApprovals}>
+                Review {snapshot.approvals.length} approvals <span>→</span>
+              </button>
+              <button className="danger-button" type="button" onClick={onPause} disabled={snapshot.organization.authorizationsPaused}>
+                {snapshot.organization.authorizationsPaused ? "Authorizations paused" : "Emergency pause"}
+              </button>
+            </>
+          )}
         </div>
       </section>
 
       <section className="money-grid balance-ledger" aria-label="Organization balance">
         <div className="balance-card primary-balance">
-		  <span>{snapshot.mode === "live" ? "Recognized economic expense" : "Observed treasury / USDC"}</span>
+		  <span>{snapshot.mode === "live" ? "Recognized economic expense" : snapshot.mode === "public" ? "Organization economic data" : "Observed treasury / USDC"}</span>
           <strong>{snapshot.money.total}</strong>
-		  <small><i /> {snapshot.mode === "live" ? `Journal-derived · ${snapshot.money.asset} · not a wallet balance` : "Read-only aggregate across customer-controlled signers"}</small>
+		  <small><i /> {snapshot.mode === "live" ? `Journal-derived · ${snapshot.money.asset} · not a wallet balance` : snapshot.mode === "public" ? "Private by default · sign in with an authorized membership" : "Read-only aggregate across customer-controlled signers"}</small>
           <div className="balance-signal" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /></div>
         </div>
         <MoneyCard label="Available" value={snapshot.money.available} tone="good" />
@@ -361,6 +375,7 @@ function Overview({
                 <span className="row-arrow" aria-hidden="true">→</span>
               </button>
             ))}
+            {snapshot.approvals.length === 0 ? <p className="empty-state">Approval data is organization-private. Sign in to view an authorized queue.</p> : null}
           </div>
         </section>
 
@@ -382,8 +397,8 @@ function Overview({
             <span>{snapshot.money.monthlyBudget} limit</span>
           </div>
           <div className="budget-note">
-            <span>{snapshot.mode === "live" ? "i" : "↗"}</span>
-			<p>{snapshot.mode === "live" ? <><strong>Operational subledger only</strong><br />Wallet balance and spendable funds are not inferred</> : <><strong>12% below forecast</strong><br />Based on the last 14 days</>}</p>
+            <span>i</span>
+			<p>{snapshot.mode === "live" ? <><strong>Operational subledger only</strong><br />Wallet balance and spendable funds are not inferred</> : <><strong>Private by design</strong><br />Public status never exposes organization spend or wallet balances</>}</p>
           </div>
         </section>
 
@@ -393,6 +408,7 @@ function Overview({
             {snapshot.agents.slice(0, 3).map((agent) => (
               <AgentRow key={agent.id} agent={agent} />
             ))}
+            {snapshot.agents.length === 0 ? <p className="empty-state">Governed agents are visible only to authorized organization members.</p> : null}
           </div>
         </section>
 
@@ -411,11 +427,12 @@ function Overview({
         </section>
 
         <section className="panel activity-panel">
-          <PanelHeader kicker="Evidence graph" title="Economic activity" meta={snapshot.mode === "live" ? "Observed" : "Preview"} onView={onActivity} />
+          <PanelHeader kicker="Evidence graph" title="Economic activity" meta={snapshot.mode === "live" ? "Observed" : "Private"} onView={onActivity} />
           <ActivityRows activity={snapshot.activity.slice(0, 4)} />
+          {snapshot.activity.length === 0 ? <p className="empty-state">Economic activity and evidence records require an authorized membership.</p> : null}
         </section>
       </div>
-      <p className="freshness"><span>END OF OBSERVED WINDOW</span> Snapshot refreshed {snapshot.generatedAt}. {snapshot.mode === "live" ? "Values marked unavailable are not exposed by the control plane; writes require a separate step-up session." : "Preview records are illustrative and cannot move funds."}</p>
+      <p className="freshness"><span>END OF OBSERVED WINDOW</span> Snapshot refreshed {snapshot.generatedAt}. {snapshot.mode === "live" ? "Values marked unavailable are not exposed by the control plane; writes require a separate step-up session." : "This is real public health data; organization records remain private and no control is available without sign-in."}</p>
     </>
   );
 }
@@ -554,13 +571,9 @@ function Developers({ snapshot }: { snapshot: DashboardSnapshot }) {
       <SectionHeading eyebrow="Build with boundaries" title="Developer center" description="Connect agents through MCP or the SDK without giving them an unrestricted wallet or FlowOps a customer key." />
       <div className="developer-grid">
         <article className="panel code-card"><span className="code-kicker">MCP connection</span><pre><code>{configuration}</code></pre><button type="button" onClick={copyConfiguration}>{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy unavailable" : "Copy configuration"}</button></article>
-        <article className="panel api-health"><PanelHeader kicker="Integration health" title="All boundaries" meta={snapshot.mode === "live" ? "Read only" : "Preview"} /><dl><div><dt>Control plane</dt><dd>{snapshot.mode === "live" ? "Membership authorized" : "Not connected"}</dd></div><div><dt>Customer signer</dt><dd>{snapshot.mode === "live" ? "Not exposed" : "Fixture healthy"}</dd></div><div><dt>x402 facilitator</dt><dd>{snapshot.mode === "live" ? "Not exposed" : "Fixture healthy"}</dd></div><div><dt>Base observers</dt><dd>{snapshot.chain.observers}</dd></div></dl><p>{snapshot.connection.detail}</p></article>
+        <article className="panel api-health"><PanelHeader kicker="Integration health" title="All boundaries" meta={snapshot.mode === "live" ? "Read only" : "Public status"} /><dl><div><dt>Control plane</dt><dd>{snapshot.mode === "live" ? "Membership authorized" : snapshot.connection.label}</dd></div><div><dt>Customer signer</dt><dd>Not exposed</dd></div><div><dt>x402 facilitator</dt><dd>Not exposed</dd></div><div><dt>Base observers</dt><dd>{snapshot.chain.observers}</dd></div></dl><p>{snapshot.connection.detail}</p></article>
       </div>
-      <div className="panel logs-card"><PanelHeader kicker="Recent requests" title="Developer logs" meta={snapshot.mode === "live" ? "Unavailable" : "Preview"} /><div className="log-row head"><span>Time</span><span>Request</span><span>Agent</span><span>Outcome</span><span>Latency</span></div>{snapshot.mode === "live" ? <p className="empty-state">Request logs are not exposed by the current control-plane snapshot.</p> : [
-        ["14:42:18", "req_7fa2", "Research Scout", "ALLOW", "48ms"],
-        ["14:39:04", "req_7f91", "Growth Operator", "APPROVAL", "61ms"],
-        ["14:32:51", "req_7f78", "Finance Copilot", "DENY", "44ms"],
-      ].map((row) => <div className="log-row" key={row[1]}>{row.map((cell, index) => <span key={cell} className={index === 3 ? `outcome ${cell.toLowerCase()}` : ""}>{cell}</span>)}</div>)}</div>
+      <div className="panel logs-card"><PanelHeader kicker="Recent requests" title="Developer logs" meta="Unavailable" /><div className="log-row head"><span>Time</span><span>Request</span><span>Agent</span><span>Outcome</span><span>Latency</span></div><p className="empty-state">Request logs are not exposed by the current control-plane snapshot.</p></div>
     </section>
   );
 }
@@ -642,7 +655,7 @@ function PauseDialog({ organization, mode, onClose, onConfirm, onCommand }: { or
   return (
     <div className="overlay centered" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="pause-dialog" role="alertdialog" aria-modal="true" aria-labelledby="pause-title">
-        <span className="pause-symbol">!</span><small>Emergency control</small><h2 id="pause-title">Pause every agent?</h2><p>This requests an organization-wide authorization stop for <strong>{organization}</strong>. Pending evidence remains readable and no transaction is silently retried.</p><div className="pause-warning">{mode === "live" ? "Requires the same member's fresh step-up token. The result is shown only after the durable command is read back." : "Preview mode cannot send this command. A live action also requires step-up authentication."}</div>{mode === "live" ? <div className="step-up-box"><label htmlFor="pause-reason">Containment reason</label><textarea id="pause-reason" value={reason} maxLength={1024} onChange={(event) => setReason(event.target.value)} disabled={busy} /><label htmlFor="pause-step-up">Fresh step-up token</label><input id="pause-step-up" type="password" autoComplete="off" value={stepUpToken} onChange={(event) => setStepUpToken(event.target.value)} disabled={busy} /><small>Held in memory for this request only. Never stored by the dashboard.</small>{error ? <p role="alert">{error}</p> : null}</div> : null}<footer><button ref={cancelRef} className="secondary-button" onClick={onClose} disabled={busy} type="button">Keep running</button><button className="danger-solid" onClick={() => void pause()} disabled={busy || (mode === "live" && (!stepUpToken || !reason.trim()))} aria-busy={busy} type="button">{busy ? "Verifying…" : "Request emergency pause"}</button></footer>
+        <span className="pause-symbol">!</span><small>Emergency control</small><h2 id="pause-title">Pause every agent?</h2><p>This requests an organization-wide authorization stop for <strong>{organization}</strong>. Pending evidence remains readable and no transaction is silently retried.</p><div className="pause-warning">{mode === "live" ? "Requires the same member's fresh step-up token. The result is shown only after the durable command is read back." : "The public status view cannot send commands. Sign in with an authorized membership and complete step-up authentication."}</div>{mode === "live" ? <div className="step-up-box"><label htmlFor="pause-reason">Containment reason</label><textarea id="pause-reason" value={reason} maxLength={1024} onChange={(event) => setReason(event.target.value)} disabled={busy} /><label htmlFor="pause-step-up">Fresh step-up token</label><input id="pause-step-up" type="password" autoComplete="off" value={stepUpToken} onChange={(event) => setStepUpToken(event.target.value)} disabled={busy} /><small>Held in memory for this request only. Never stored by the dashboard.</small>{error ? <p role="alert">{error}</p> : null}</div> : null}<footer><button ref={cancelRef} className="secondary-button" onClick={onClose} disabled={busy} type="button">Keep running</button><button className="danger-solid" onClick={() => void pause()} disabled={busy || (mode === "live" && (!stepUpToken || !reason.trim()))} aria-busy={busy} type="button">{busy ? "Verifying…" : "Request emergency pause"}</button></footer>
       </section>
     </div>
   );
@@ -657,7 +670,7 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
 }
 
 function MoneyCard({ label, value, tone }: { label: string; value: string; tone: string }) {
-  const detail = value === "Not available" ? "Not exposed by control plane" : tone === "good" ? "Spendable now" : tone === "risk" ? "Needs review" : "Tracked separately";
+  const detail = value === "Private" ? "Authorized members only" : value === "Not available" ? "Not exposed by control plane" : tone === "good" ? "Spendable now" : tone === "risk" ? "Needs review" : "Tracked separately";
   return <div className={`balance-card compact ${tone}`}><span>{label}</span><strong>{value}</strong><small><i /> {detail}</small></div>;
 }
 
