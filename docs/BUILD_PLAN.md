@@ -15,6 +15,10 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
    canonically reconciled on Base Sepolia.**
 5. Control-plane intent and approval lifecycle.
 6. x402 V2 Base Sepolia adapter and Builder Code conformance fixture.
+   **Fail-closed quote/extension handling and the private-key-free hosted
+   facilitator experiment harness are implemented. The live 0.001 test-USDC
+   calldata proof remains gated on designated Builder Codes and explicit
+   payment approval.**
 7. Evidence Fetch provider. **Implementation complete; verification commands are documented in the module contract.**
 8. Base reconciliation and halt-safe state. **Continuous production observer wiring, durable quorum progress, customer-signer receipt registration, receipt/finality worker, bounded reorg correction, customer-side one-way transaction executor, and the manual operator gate are implemented; the funded customer signer path has completed one Base Sepolia FUND-to-REFUND run, while production provider selection and extended threshold measurements remain external gates.**
 9. Escrow contracts after the dispute-state redesign. **Local implementation,

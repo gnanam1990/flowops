@@ -38,7 +38,9 @@ On 2026-08-11, `https://x402.org/facilitator/supported` advertised:
 - EVM signer `0xd407e409E34E0b9afb99EcCeb609bDbcD5e7f1bf` under `eip155:*`.
 
 This proves advertised capability only. No payment was signed or sent, and the
-FlowOps-specific calldata classification remains `UNRESOLVED` as recorded in
+The private-key-free, confirmation-gated hosted-facilitator experiment harness
+is implemented in `cmd/x402-builder-experiment`. FlowOps-specific calldata
+classification remains `UNRESOLVED` as recorded in
 `CALLDATA_EXPERIMENT.md`.
 
 ## Commands
