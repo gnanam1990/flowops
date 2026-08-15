@@ -3,7 +3,8 @@
 Status: production observer, signer receipt registration, receipt/finality
 worker wiring, durable CallEscrow intent and transition reconciliation, and
 live Evidence Fetch release and acknowledged-refund manifests complete;
-dedicated provider selection and funded signer proof remain open
+one funded customer-signer escrow lifecycle complete; dedicated production
+provider selection and measurement remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
@@ -175,6 +176,8 @@ hash. Do not commit a pilot manifest until every field and receipt is verified.
 The committed successful-release and acknowledged-refund manifests are
 documented in `docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_LIVE_2026-08-14.md`
 and `docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_REFUND_2026-08-14.md`.
+The funded customer reference-signer FUND-to-REFUND lifecycle is documented in
+`docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.md`.
 
 ## Ledger invariants
 
@@ -227,15 +230,14 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
 - select and contractually assess at least two production Base RPC providers;
 - complete and record the multi-hour Sepolia confirmation, stall-age,
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
-- complete the separately approved funded Sepolia proof for the customer-side
-  escrow executor; local tests already validate signed terms and exact calldata,
-  and the registry itself never broadcasts;
 - add funding, unknown-transfer, transaction-replacement, and dropped-transaction workflows;
 - assess and document production Clef/HSM operations for the runnable
   customer-side signer packaging; the deployed no-funds pilot worker remains idle until a
   design partner provisions a signer receipt public key and supplies a real
   transaction;
 - expose status, exceptions, backfill progress, and manual gates in the dashboard;
-- execute the live halt/recovery acceptance run with the customer signer and a real Sepolia transaction.
+- execute the live halt/recovery acceptance run with the customer signer and a
+  separate real Sepolia transaction; the completed funded proof exercised
+  healthy FUND and REFUND reconciliation, not a chain halt.
 
 The module supplies P0 halt-safe refusal and a deterministic manual recovery kernel. Automated provider scoring and operator-free resume are intentionally not claimed.

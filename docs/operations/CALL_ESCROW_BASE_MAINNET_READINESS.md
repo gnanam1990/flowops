@@ -26,17 +26,18 @@ variable.
 The canonical blocked record is
 `deployments/base-mainnet-readiness.json`. It intentionally contains no
 contract address, transaction hash, block, reviewed source commit, or deployer.
-It records the proposed but still unfunded 1 USDC per-call and 10 USDC
-per-customer pilot profile. Full enforcement remains false because the escrow
-signer path has not yet completed its funded, canonically reconciled Sepolia
-proof.
+It records the proposed 1 USDC per-call and 10 USDC per-customer pilot profile.
+One 0.1 test-USDC escrow signer lifecycle is funded and canonically reconciled
+on Sepolia. Full pilot enforcement remains false because both rails have not
+completed the production-shaped admission evidence and mainnet funding remains
+disabled.
 
 The aggregate decision is produced by
 `deploy/call-escrow/audit-base-mainnet-readiness.sh`. It authenticates this
 record together with the promotion, source-rehearsal, and security-review
 records, verifies their cross-bindings, and distinguishes completed code from
 missing production evidence. `make mainnet-final-audit` currently returns a
-secret-free JSON `BLOCKED` report with twelve promotion blockers. The only
+secret-free JSON `BLOCKED` report with eleven promotion blockers. The only
 hardware broadcast wrapper invokes the same audit with `--require-ready` and
 must refuse before simulation or a hardware prompt.
 
@@ -73,10 +74,13 @@ Complete all items in a separate promotion package:
    posture.
 3. Designate a new production signing identity with hardware-backed recovery
    and documented operators. Do not reuse either Sepolia MetaMask wallet.
-4. Wire escrow FUND, ACKNOWLEDGE, DELIVERY, RELEASE, and REFUND events into the
-   durable intent journal, ledger correction, and reorg workflow.
-5. Complete one funded, capped reference-signer execution on Base Sepolia and
-   reconcile it through the production-shaped worker.
+4. **Completed in code and live Sepolia evidence:** escrow FUND, ACKNOWLEDGE,
+   DELIVERY, RELEASE, and REFUND events are wired into the durable intent
+   journal, ledger correction, and reorg workflow.
+5. **Completed for one capped FUND-to-REFUND path:** the customer reference
+   signer funded `0.1` test USDC on Base Sepolia and the production-shaped
+   worker canonically reconciled FUND and REFUND. See
+   `docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.md`.
 6. Select two operationally independent paid Base RPC providers. Store their
    credential-bearing URLs only in the deployment secret manager. Create the
    separate URL-free schema-v1 admission record that binds each runtime name to
@@ -87,9 +91,10 @@ Complete all items in a separate promotion package:
    immutable getter reads, and dual-provider receipt confirmation. Measure and
    approve a positive deployment-confirmation depth; do not copy an unmeasured
    threshold from another chain.
-8. Complete the separately approved funded Sepolia proof for the implemented
-   exact-allowance-check and exact-fund-calldata customer signer. Local and
-   no-funds tests are not evidence of a canonical funded outcome.
+8. **Completed for escrow:** the separately approved funded Sepolia proof binds
+   the exact allowance, FUND calldata, signed receipt, canonical receipts,
+   ledger entries, finality, and terminal zero allowance. This does not satisfy
+   funded direct-USDC or full production-pilot evidence.
 
 ## Stage 2: local and read-only verification
 

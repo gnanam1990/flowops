@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-evidence-fetch smoke-reconciliation smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -19,6 +19,9 @@ deployment-evidence-check:
 
 test-deployment-evidence:
 	deploy/call-escrow/test-base-sepolia-evidence.sh
+
+funded-signer-evidence-check:
+	deploy/call-escrow/check-funded-reference-signer-evidence.sh
 
 mainnet-readiness-check:
 	deploy/call-escrow/check-base-mainnet-readiness.sh
@@ -73,6 +76,9 @@ smoke-reference-signer:
 
 smoke-escrow-signer:
 	go test -race -run '^(TestReferenceSignerEscrowNoFundsEndToEnd|TestEscrowClefAdapterPreparesValidatesAndBroadcastsExactFund|TestEscrowClefAdapterFailsClosedBeforeWallet|TestEscrowClefAdapterRejectsWalletMutation|TestFundDataMatchesSolidityABI|TestSignerEscrowBroadcastDerivesAttestedFundAndAcceptsDelayedCallback|TestSignerEscrowBroadcastHTTPBoundaryIsSeparateAndFailClosed|TestAttestedEscrowBroadcastPersistsExactCustomerProofDuringChainPause|TestAttestedEscrowBroadcastReplayAfterResolutionReturnsOriginalProof|TestHTTPEscrowRegistrationSinkRequiresDurableAttestationEcho|TestHTTPEscrowRegistrationSinkAcceptsResolvedAttestationReplay|TestExecutorPilotOutstandingLimitIsDurableAndPreWallet)$$' ./cmd/reference-signer ./pkg/referencewallet ./pkg/referencesigner ./internal/controlapi ./internal/reconciliation
+
+smoke-funded-signer-evidence:
+	deploy/call-escrow/smoke-funded-reference-signer-evidence.sh
 
 smoke-pilot-limits:
 	go test -race -run '^(TestLimitsCheckExactBoundaries|TestInitialBaseMainnetProfileIsExact|TestBaseMainnetReadinessRecordMatchesProfile|TestPilotLimitsOverridePermissivePolicyAndSurviveRestart|TestExecutorPilotOutstandingLimitIsDurableAndPreWallet|TestLoadConfigRejectsUnsafePilotLimits|TestLoadConfigPinsInitialBaseMainnetPilotLimits|TestLoadConfigRejectsLegacyV1AfterRequiredLimitMigration|TestLoadConfigRequiresOneExplicitRailAndEscrowTuple)$$' ./pkg/pilotlimits ./internal/controlplane ./pkg/referencesigner ./cmd/control-plane-api ./cmd/reference-signer

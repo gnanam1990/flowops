@@ -3,8 +3,8 @@
 Status: local implementation, verified Base Sepolia deployment, durable
 lifecycle reconciliation, live Evidence Fetch release and forced-expiry refund
 complete, and structurally blocked Base mainnet deployment package; customer
-escrow signer and mainnet promotion gates remain open
-Date: 2026-08-14
+escrow signer funded proof complete; mainnet promotion gates remain open
+Updated: 2026-08-15
 
 ## Purpose and promise
 
@@ -82,9 +82,6 @@ The current local suite includes 21 unit/fuzz tests and three stateful invariant
 
 ## Remaining gates
 
-- Complete the separately approved funded Sepolia proof for the implemented
-  customer-side escrow executor. Local tests independently validate the signed
-  exact terms, allowance, live deployment tuple, and generated calldata.
 - Configure and verify the exact reviewed deployment contract, asset, and
   immutable release window; partial or mismatched tuples fail closed.
 - Complete independent security and legal review before any Base mainnet deployment or non-trivial value.
@@ -93,7 +90,9 @@ The Base mainnet preparation package pins the chain, native USDC asset, and
 release window while leaving the deployer and external-review digest empty and
 broadcast disabled. Its blocked record pins the proposed profile at 1 USDC per
 call and 10 USDC conservative exposure per customer signer. Escrow admission
-remains false until the new signer path passes funded Sepolia reconciliation.
+is evidenced for one capped escrow signer run on Sepolia. Full pilot admission
+and mainnet funding remain false until both rails and all production gates are
+independently evidenced.
 Its mutation tests, read-only two-RPC smoke,
 and promotion ceremony are documented in
 `docs/operations/CALL_ESCROW_BASE_MAINNET_READINESS.md`. Passing those
@@ -104,3 +103,5 @@ expected broadcast refusal are recorded in
 The successful release and failed-delivery refund lifecycles are recorded in
 `docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_LIVE_2026-08-14.md` and
 `docs/evidence/CALL_ESCROW_EVIDENCE_FETCH_REFUND_2026-08-14.md`.
+The customer reference-signer funded FUND-to-REFUND lifecycle is recorded in
+`docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.md`.

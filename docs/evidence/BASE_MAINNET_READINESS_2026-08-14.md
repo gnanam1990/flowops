@@ -2,6 +2,7 @@
 
 Status: blocked; no deployment and no mainnet fund movement
 Observed: 2026-08-14
+Updated: 2026-08-15 with funded signer evidence; mainnet observation unchanged
 
 ## Scope
 
@@ -111,8 +112,8 @@ occurred.
 
 `make test-mainnet-final-audit` passed. The aggregate read-only audit validates
 the readiness, promotion, source-rehearsal, and review-package records and
-their cross-bindings, then reports seven completed implementation capabilities
-separately from twelve unresolved promotion gates. Its current decision is
+their cross-bindings, then reports eight completed implementation capabilities
+separately from eleven unresolved promotion gates. Its current decision is
 `BLOCKED`; deployment and funding are both unauthorized. The hardware wrapper
 clears every test record override and requires this joined audit to become
 ready before simulation or a hardware prompt.
@@ -134,8 +135,10 @@ wrapper refuses both missing and explicitly false approval.
 - the exact external-review package is prepared, but no independent reviewer,
   completed review, retest, or bound report digest exists;
 - no completed legal review;
-- no durable escrow event registration and reorg correction integration;
-- no funded reference-signer Base Sepolia proof;
+- durable escrow event registration and reorg correction are implemented, and
+  one capped reference-signer FUND-to-REFUND lifecycle is canonically
+  reconciled on Base Sepolia; the machine evidence is
+  `docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.json`;
 - no selected independent paid production RPC providers;
 - no measured and approved deployment-confirmation depth;
 - production RPC admission is implemented and smoke-tested, but no provider
@@ -143,8 +146,9 @@ wrapper refuses both missing and explicitly false approval.
 - deterministic source verification is rehearsed, but no live deployment or
   approved explorer submission exists;
 - the proposed capped-pilot profile is implemented by the control plane and
-  both signer rails, but escrow pilot admission remains open until a funded
-  reference-signer Sepolia proof; funding remains disabled;
+  both signer rails, and one escrow signer lifecycle is funded on Sepolia, but
+  two-rail production-shaped pilot admission is not evidenced; funding remains
+  disabled;
 - no explicit mainnet broadcast approval.
 
 Until all gates are independently evidenced in a separate promotion PR, the

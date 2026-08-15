@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "evidenceType": "flowops.reference-signer-funded-escrow.v1",
+  "status": "complete-refunded",
+  "recordedAt": "2026-08-15T05:28:02Z",
+  "mainnetAuthorized": false,
+  "network": {
+    "name": "base-sepolia",
+    "chainId": 84532,
+    "rpcEvidence": [
+      {
+        "provider": "Base public Sepolia RPC",
+        "url": "https://sepolia.base.org",
+        "productionEligible": false,
+        "fundReceiptMatched": true,
+        "refundReceiptMatched": true
+      },
+      {
+        "provider": "PublicNode Base Sepolia",
+        "url": "https://base-sepolia-rpc.publicnode.com",
+        "productionEligible": false,
+        "fundReceiptMatched": true,
+        "refundReceiptMatched": true
+      }
+    ]
+  },
+  "deployment": {
+    "contract": "0x86e145397f58e71c134c0e054320db929483227a",
+    "asset": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+    "releaseWindowSeconds": 3600
+  },
+  "actors": {
+    "buyer": "0x079bdde909e28e437768a06d7001eb40896668d4",
+    "provider": "0xc2f0967c4df966636e4ac1dad40abda65536cbb6"
+  },
+  "authorization": {
+    "version": "flowops.authorization.v1",
+    "authorizationId": "auth_d8842a2102e191a4ce08d6b7cf1d672a",
+    "organizationId": "org_flowops_sepolia_proof",
+    "customerId": "customer_flowops_sepolia_proof",
+    "agentId": "agent_reference_signer",
+    "taskId": "task_reference_signer_funded_20260815_6",
+    "actionId": "action_escrow_fund_20260815_6",
+    "rail": "escrow",
+    "amountAtomic": "100000",
+    "policyVersion": "policy_sepolia_proof_1",
+    "nonce": "0xb9767726025350162f9c3cc0d87182c4f2bfe0e7ecf50ab5f7fb7ee5f537933b",
+    "issuedAt": 1786770688,
+    "expiresAt": 1786770988,
+    "authorizationDigest": "0x891539dafbbb4bc6f134a54c4dc4ac0f66226f7530dd3fe9020d4fd5b9e7461f",
+    "envelopeKeyId": "flowops_envelope_sepolia_20260815",
+    "receiptKeyId": "customer_receipt_sepolia_20260815",
+    "receiptPublicKeyB64": "BxbhJTn9StZAiUl3JTSRevBHABAeJjED3LYTAuusuWg=",
+    "receiptSignature": "0x839ebe7bd5bb42de20d6a7af99f95b3bef0b3cbab5640c31290f11de86a4b6c058c4d30cdf1f1e328dc2e7fa92331caec4ab8d5136b48629a0483fba4c79e40e"
+  },
+  "signer": {
+    "sourceCommit": "fa32fad28b73d0095b62880e3fbf30459563c9a0",
+    "binarySha256": "d479ec31ce976d8a65fe5736386125a3a3e5d022632d43d3b407d49536ffb8f4",
+    "goVersion": "go1.26.5",
+    "platform": "darwin/arm64",
+    "vcsModified": false,
+    "walletAdapter": "Clef 1.16.9",
+    "customerKeyCustodiedByFlowOps": false,
+    "pilotLimits": {
+      "maximumPerActionAtomic": "1000000",
+      "maximumOutstandingAtomic": "10000000",
+      "exactApprovalOnly": true
+    }
+  },
+  "call": {
+    "callId": "0xa9cb4708de15f8f3a9ced649a949aab3539a5c9f1cab00186c48c324f10b8e3e",
+    "derivationDomain": "FLOWOPS_CALL_ESCROW_V1",
+    "taskDigest": "0x8dfdb628c5ff29bdcd2c3d87d143fa2dd2dd06db935d2cdd268d85b5f35ef3b0",
+    "requestDigest": "0x1184e3c363ec508d7f56fe8d3f2873f730c81f3fa30f2462bf989d6fd0d3cc97",
+    "intentDigest": "0x441b34c006401456caa751337ab4edc90dc44a561f711e34c761d9b1fd7d1c89",
+    "acknowledgeBy": 1786771587,
+    "deliverBy": 1786772487,
+    "finalState": "REFUNDED",
+    "pendingTransition": null
+  },
+  "transitions": [
+    {
+      "action": "FUND",
+      "transactionHash": "0x0bacd7dff777cc646d1f48984e7a240fd914d416f5b93c14831c3fbcedaf89ab",
+      "sender": "0x079bdde909e28e437768a06d7001eb40896668d4",
+      "recipient": "0x86e145397f58e71c134c0e054320db929483227a",
+      "nativeValueAtomic": "0",
+      "calldata": "0xdbbb2845a9cb4708de15f8f3a9ced649a949aab3539a5c9f1cab00186c48c324f10b8e3e000000000000000000000000c2f0967c4df966636e4ac1dad40abda65536cbb600000000000000000000000000000000000000000000000000000000000186a08dfdb628c5ff29bdcd2c3d87d143fa2dd2dd06db935d2cdd268d85b5f35ef3b01184e3c363ec508d7f56fe8d3f2873f730c81f3fa30f2462bf989d6fd0d3cc97000000000000000000000000000000000000000000000000000000006a7ff883000000000000000000000000000000000000000000000000000000006a7ffc07",
+      "receiptStatus": 1,
+      "blockNumber": 45501208,
+      "blockHash": "0x5361b553f9cd635b3024023fec4bac723c2af083b9bba785f302795719914970",
+      "blockTimestamp": "2026-08-15T05:11:44Z",
+      "registeredAt": "2026-08-15T05:11:42.877515Z",
+      "resolvedAt": "2026-08-15T05:11:50.655826Z",
+      "evidenceDigest": "0x7e8dcbd4aa4771488f94709bc57a5b12363e8ec81986536c50523dc0eb16794e",
+      "ledgerTransactionId": "escrow_a4e8b5d3fa895b102fd55398ab2f1421d3ee4988c6abeb9392ff35f4032c00da",
+      "finalityCheckedAt": "2026-08-15T05:12:14.833175Z",
+      "finalityCheckedHead": 45501223,
+      "usdcTransfer": {
+        "from": "0x079bdde909e28e437768a06d7001eb40896668d4",
+        "to": "0x86e145397f58e71c134c0e054320db929483227a",
+        "amountAtomic": "100000"
+      }
+    },
+    {
+      "action": "REFUND",
+      "transactionHash": "0x8813d944c1851279ef5bbc4899f47dba1f87841b6bc2029738dd2647b06107e6",
+      "sender": "0x079bdde909e28e437768a06d7001eb40896668d4",
+      "recipient": "0x86e145397f58e71c134c0e054320db929483227a",
+      "nativeValueAtomic": "0",
+      "calldata": "0xcc3e049ba9cb4708de15f8f3a9ced649a949aab3539a5c9f1cab00186c48c324f10b8e3e",
+      "receiptStatus": 1,
+      "refundedFromState": 1,
+      "blockNumber": 45501671,
+      "blockHash": "0xe0b733e46cf91a16b258322e31933f92de087b9927c7153f3892496e451775ab",
+      "blockTimestamp": "2026-08-15T05:27:10Z",
+      "registeredAt": "2026-08-15T05:27:51.836862Z",
+      "resolvedAt": "2026-08-15T05:27:56.683297Z",
+      "evidenceDigest": "0x69eed32bb8febea19ba9190312bcd9d822408edc3ff0cd96060b38ad3a0db188",
+      "ledgerTransactionId": "escrow_d0e414887bbaf60e3ab0bb3b622eedb11c24ccc5ba1c4f45ecf6d2886e4ddf40",
+      "finalityCheckedAt": "2026-08-15T05:28:02.710014Z",
+      "finalityCheckedHead": 45501697,
+      "usdcTransfer": {
+        "from": "0x86e145397f58e71c134c0e054320db929483227a",
+        "to": "0x079bdde909e28e437768a06d7001eb40896668d4",
+        "amountAtomic": "100000"
+      }
+    }
+  ],
+  "terminalChecks": {
+    "buyerUsdcAtomic": "19900000",
+    "escrowUsdcAtomic": "0",
+    "buyerAllowanceToEscrowAtomic": "0"
+  },
+  "limitations": [
+    "This is Base Sepolia test-USDC evidence and authorizes no Base mainnet action.",
+    "Both RPC endpoints are public integration observers and are not production-eligible providers.",
+    "The proof covers one 0.1 test-USDC escrow FUND followed by an unacknowledged-expiry REFUND.",
+    "The refund was submitted manually after expiry; automated refund execution is not claimed.",
+    "Earlier checksum and late-approval attempts produced no broadcast and are not successful lifecycle evidence."
+  ]
+}

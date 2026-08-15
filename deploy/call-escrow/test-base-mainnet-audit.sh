@@ -20,11 +20,12 @@ jq -e '
   and .decision == "BLOCKED"
   and .deploymentAuthorized == false
   and .fundingAuthorized == false
-  and (.implementationEvidence | length == 7)
-  and (.blockers | length == 12)
+  and (.implementationEvidence | length == 8)
+  and (.implementationEvidence | index("funded-sepolia-reference-signer-reconciled") != null)
+  and (.blockers | length == 11)
   and ([.blockers[].id] | length == (unique | length))
   and ([.blockers[].id] | index("external-security-review") != null)
-  and ([.blockers[].id] | index("funded-sepolia-signer-proof") != null)
+  and ([.blockers[].id] | index("funded-sepolia-signer-proof") == null)
   and ([.blockers[].id] | index("explicit-zero-fund-broadcast-approval") != null)
 ' <<<"${report}" >/dev/null
 

@@ -1,6 +1,6 @@
 # ADR-0021: Customer-bound CallEscrow fund executor
 
-Status: accepted; funded Sepolia proof open
+Status: accepted; funded Sepolia proof completed 2026-08-15
 Date: 2026-08-14
 
 ## Context
@@ -41,9 +41,13 @@ cannot bypass signer limits or fabricate customer attestation.
 - Provider and permissionless lifecycle transitions remain outside customer
   spend authority and continue through the strict reconciliation intake.
 - Sufficient allowance is a prerequisite, not an instruction to approve.
-- Mainnet remains blocked until a separately approved funded Base Sepolia run
-  proves the signer callback and canonical reconciliation path.
+- A separately approved funded Base Sepolia run proved the signer callback and
+  canonical FUND-to-REFUND reconciliation path. Its machine record is
+  `docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.json`. Mainnet
+  remains blocked by the independent production gates.
 
 ## Verification
 
 Run `make smoke-escrow-signer`, `make smoke-pilot-limits`, and `make check`.
+Validate the funded proof with
+`deploy/call-escrow/check-funded-reference-signer-evidence.sh`.

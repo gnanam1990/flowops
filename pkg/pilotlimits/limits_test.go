@@ -81,7 +81,7 @@ func TestBaseMainnetReadinessRecordMatchesProfile(t *testing.T) {
 	if !record.Pilot.ProfileSelected || record.Pilot.LimitsEnforced || record.Pilot.MaximumPerCallUSDC != "1.000000" ||
 		record.Pilot.MaximumOutstandingUSDC != "10.000000" || record.Pilot.ExposureScope != "per-customer-signer" ||
 		record.Pilot.SignerAccountingPosture != "conservative-lifetime-reservation" || !record.Pilot.ControlPlaneEnforced ||
-		!record.Pilot.DirectSignerEnforced || record.Pilot.EscrowSignerEnforced {
+		!record.Pilot.DirectSignerEnforced || !record.Pilot.EscrowSignerEnforced {
 		t.Fatalf("readiness pilot profile drifted: %+v", record.Pilot)
 	}
 }

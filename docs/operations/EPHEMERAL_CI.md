@@ -1,12 +1,11 @@
 # Ephemeral CI Runner
 
-Status: active fallback while GitHub-hosted Actions is blocked by the repository
-owner's billing/spending hold.
+Status: inactive fallback; hosted GitHub Actions runs on `ubuntu-24.04-arm`
 
 ## Security posture
 
-- The `go` job targets a repository-scoped, Linux ARM64 runner carrying the
-  custom `flowops-ephemeral` label.
+- If reactivated, the `go` job targets a repository-scoped, Linux ARM64 runner
+  carrying the custom `flowops-ephemeral` label.
 - The runner is registered with GitHub's `--ephemeral` option and automatically
   deregisters after exactly one job.
 - Each runner executes inside a fresh local Linux virtual machine/container and
@@ -28,13 +27,16 @@ owner's billing/spending hold.
 
 ## Gate
 
-The self-hosted job runs the same formatting, vet, and race-enabled test steps
-as the previous GitHub-hosted job. A green check is required before merge. The
+The active hosted job runs formatting, vet, race-enabled Go tests, Solidity
+checks, readiness mutations, and dashboard checks on `ubuntu-24.04-arm`. A
+green check is required before merge. If this fallback is reactivated, its
+self-hosted job must run the same workflow steps. The
 module's independent clean-clone, Linux-container, and relevant live read-only
 smoke tests remain separate evidence and are not replaced by this runner.
 
 ## Recovery
 
-When GitHub-hosted Actions billing is restored, change `runs-on` back to
-`ubuntu-latest` in an isolated CI pull request and require the hosted `go` check
-to pass before merging that migration.
+Reactivating this fallback requires an isolated CI pull request that restores
+the custom runner labels, verifies the ephemeral registration and teardown
+procedure, and passes the complete `go` job before merge. Do not silently move
+wallet, RPC, facilitator, or application secrets onto the fallback runner.
