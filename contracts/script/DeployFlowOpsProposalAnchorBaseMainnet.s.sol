@@ -4,10 +4,11 @@ pragma solidity 0.8.26;
 import {Script, console2} from "forge-std/Script.sol";
 import {FlowOpsProposalAnchor} from "../src/FlowOpsProposalAnchor.sol";
 
-/// @notice Structurally blocked Base-mainnet deployment package for the
-///         evidence-only FlowOps proposal anchor.
-/// @dev The reviewed promotion package pins the immutable deployment inputs but
-///      deliberately leaves final deployment approval and broadcast disabled.
+/// @notice One-time Base-mainnet deployment package for the evidence-only
+///         FlowOps proposal anchor.
+/// @dev The reviewed package pins the immutable deployment inputs and the
+///      exact human broadcast approval. It authorizes no funding or production
+///      action.
 contract DeployFlowOpsProposalAnchorBaseMainnet is Script {
     uint256 public constant BASE_MAINNET_CHAIN_ID = 8_453;
 
@@ -27,8 +28,8 @@ contract DeployFlowOpsProposalAnchorBaseMainnet is Script {
     uint256 public constant MAX_GAS_SPEND_WEI = MAX_GAS_LIMIT * MAX_FEE_PER_GAS_WEI;
 
     bytes32 public constant DEPLOYMENT_APPROVAL_DIGEST =
-        0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17;
-    bool public constant MAINNET_BROADCAST_ENABLED = false;
+        0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377;
+    bool public constant MAINNET_BROADCAST_ENABLED = true;
 
     error WrongChain(uint256 expected, uint256 actual);
     error MainnetDeployerNotDesignated();

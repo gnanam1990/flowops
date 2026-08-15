@@ -11,7 +11,7 @@ jq -e '
   and .kind == "flowops-proposal-anchor"
   and .network == "base-mainnet"
   and .chainId == 8453
-  and .status == "deployment-approved-broadcast-disabled-no-deployment"
+  and .status == "broadcast-authorized-no-deployment"
   and .proposalDocument == "docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md"
   and .proposalDigest == "0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362"
   and .sourceCommit == "bd9292d0f916b1e3d828443b41e31a8e635b2b3e"
@@ -39,20 +39,25 @@ jq -e '
   and .ceremony.maxGasLimit == 250000
   and .ceremony.maxFeePerGasWei == "20000000"
   and .ceremony.maxGasSpendWei == "5000000000000"
-  and (.deploymentApproval.canonicalStatement | startswith("APPROVE FLOWOPS BASE MAINNET PROPOSAL ANCHOR ACTIVATION:"))
+  and (.activationApproval.canonicalStatement | startswith("APPROVE FLOWOPS BASE MAINNET PROPOSAL ANCHOR ACTIVATION:"))
+  and .activationApproval.digestAlgorithm == "sha256-utf8-no-newline"
+  and .activationApproval.canonicalStatementDigest == "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17"
+  and .activationApproval.userResponse == "do remaining all"
+  and .activationApproval.userResponseDigest == "0xf55b7fae90bcceffa559f7d763162b024f5399898d374566623916ee52d2a851"
+  and (.activationApproval.approvedAt | fromdateiso8601 > 0)
+  and .activationApproval.scope == "activation-package-only-no-broadcast"
+  and .deploymentApproval.canonicalStatement == "APPROVE FLOWOPS BASE MAINNET PROPOSAL ANCHOR BROADCAST: chainId=8453; deployer=0xEEC526F6555dD43536F712D5c978CbC13CB4517f; proposalDigest=0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362; sourceCommit=bd9292d0f916b1e3d828443b41e31a8e635b2b3e; expectedNonce=0; expectedContract=0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250; estimatedGas=188437; maxGasLimit=250000; maxFeePerGasWei=20000000; maxGasSpendWei=5000000000000; noTokenApprovalOrFunding=true; experimentalUnauditedNoFunds=true; broadcast=true"
   and .deploymentApproval.digestAlgorithm == "sha256-utf8-no-newline"
-  and .deploymentApproval.canonicalStatementDigest == "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17"
-  and .deploymentApproval.userResponse == "do remaining all"
-  and .deploymentApproval.userResponseDigest == "0xf55b7fae90bcceffa559f7d763162b024f5399898d374566623916ee52d2a851"
+  and .deploymentApproval.canonicalStatementDigest == "0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377"
   and (.deploymentApproval.approvedAt | fromdateiso8601 > 0)
-  and .deploymentApproval.scope == "activation-package-only-no-broadcast"
-  and .deploymentApprovalDigest == "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17"
+  and .deploymentApproval.scope == "one-time-proposal-anchor-broadcast"
+  and .deploymentApprovalDigest == "0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377"
   and .contractAddress == null
   and .transactionHash == null
   and .blockNumber == null
   and .runtimeCodeHash == null
   and .sourceVerified == false
-  and .broadcastAuthorized == false
+  and .broadcastAuthorized == true
   and .productionReady == false
   and .fundingEnabled == false
   and .vaultCreationEnabled == false
@@ -69,8 +74,8 @@ grep -Fq 'bytes32 public constant PROPOSAL_DIGEST = 0x35476d70f7c33d19bb8fc1fa34
 grep -Fq 'bytes20 public constant SOURCE_COMMIT = hex"bd9292d0f916b1e3d828443b41e31a8e635b2b3e";' "${script}"
 grep -Fq 'uint64 public constant EXPECTED_DEPLOYER_NONCE = 0;' "${script}"
 grep -Fq 'address public constant EXPECTED_ANCHOR_ADDRESS = 0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250;' "${script}"
-grep -Fq '0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17;' "${script}"
-grep -Fq 'bool public constant MAINNET_BROADCAST_ENABLED = false;' "${script}"
+grep -Fq '0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377;' "${script}"
+grep -Fq 'bool public constant MAINNET_BROADCAST_ENABLED = true;' "${script}"
 grep -Fq 'string public constant DEPLOYMENT_STATUS = "EXPERIMENTAL_UNAUDITED_NO_FUNDS";' "${contract}"
 
 method_identifiers="$(
@@ -113,12 +118,16 @@ test "0x${proposal_digest}" = "0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2bec
 approval_digest="$(printf '%s' 'APPROVE FLOWOPS PROPOSAL ANCHOR PROMOTION PACKAGE' | shasum -a 256 | awk '{print $1}')"
 test "0x${approval_digest}" = "0xbfc1cd20d1f05885029683100e8c0a5387948597db5de68ea13eb1043223a726"
 
-deployment_statement="$(jq -r '.deploymentApproval.canonicalStatement' "${record}")"
-deployment_digest="$(printf '%s' "${deployment_statement}" | shasum -a 256 | awk '{print $1}')"
-test "0x${deployment_digest}" = "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17"
+activation_statement="$(jq -r '.activationApproval.canonicalStatement' "${record}")"
+activation_digest="$(printf '%s' "${activation_statement}" | shasum -a 256 | awk '{print $1}')"
+test "0x${activation_digest}" = "0x5f7b7a92e649df58f7df8afd468e514c8ac5d0f7ff7c5a8108150d25f2cefd17"
 
-user_response="$(jq -r '.deploymentApproval.userResponse' "${record}")"
+user_response="$(jq -r '.activationApproval.userResponse' "${record}")"
 user_response_digest="$(printf '%s' "${user_response}" | shasum -a 256 | awk '{print $1}')"
 test "0x${user_response_digest}" = "0xf55b7fae90bcceffa559f7d763162b024f5399898d374566623916ee52d2a851"
 
-printf 'validated approved Base mainnet proposal package; broadcast remains disabled\n'
+deployment_statement="$(jq -r '.deploymentApproval.canonicalStatement' "${record}")"
+deployment_digest="$(printf '%s' "${deployment_statement}" | shasum -a 256 | awk '{print $1}')"
+test "0x${deployment_digest}" = "0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377"
+
+printf 'validated one-time Base mainnet proposal anchor broadcast authorization; no deployment receipt recorded\n'
