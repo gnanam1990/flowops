@@ -8,6 +8,7 @@ export type DashboardSnapshot = {
   organization: {
     name: string;
     plan: string;
+    authorizationsPaused: boolean;
   };
   chain: {
     network: string;
@@ -91,6 +92,7 @@ export const dashboardSnapshot: DashboardSnapshot = {
   organization: {
     name: "Northstar Labs",
     plan: "Capped pilot",
+    authorizationsPaused: false,
   },
   chain: {
     network: "Base Sepolia",

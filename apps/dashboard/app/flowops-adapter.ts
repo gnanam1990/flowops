@@ -11,23 +11,25 @@ import {
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 4_000;
 
-type AdapterConfig = {
+export type AdapterConfig = {
   controlApiUrl: string;
   siteProjectId: string;
   exchangeToken: string;
 };
 
-type SessionResponse = {
+export type SessionResponse = {
   accessToken: string;
   expiresAt: string;
   organizationId: string;
+  principalId: string;
+  role: string;
 };
 
 type ControlSnapshot = {
   live: boolean;
   generatedAt: string;
   organizationId: string;
-  organization: { id: string; name: string };
+  organization: { id: string; name: string; authorizationsPaused: boolean };
   chain: {
     state: DashboardSnapshot["chain"]["state"];
     reason: string;
@@ -79,25 +81,11 @@ export async function dashboardForUser(
   }
 
   try {
-    const siteUserKey = await deriveSiteUserKey(config.siteProjectId, user.userId);
-    const session = await requestJSON<SessionResponse>(
-      request,
-      `${config.controlApiUrl}/v1/sites/session`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${config.exchangeToken}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          siteProjectId: config.siteProjectId,
-          siteUserKey,
-          email: user.email,
-        }),
-      },
-    );
+    const session = await exchangeSiteSession(user, config, request);
     if (
       !isIdentifier(session.organizationId) ||
+      !isIdentifier(session.principalId) ||
+      !isHumanRole(session.role) ||
       typeof session.accessToken !== "string" ||
       !session.accessToken.startsWith("fos_v1.") ||
       session.accessToken.length > 2_048 ||
@@ -118,6 +106,30 @@ export async function dashboardForUser(
     console.warn("[flowops-adapter] live snapshot unavailable", safeErrorMessage(error));
     return preview("Membership or control-plane data is unavailable. No live state is shown.");
   }
+}
+
+export async function exchangeSiteSession(
+  user: ChatGPTUser,
+  config: AdapterConfig,
+  request: typeof fetch = fetch,
+): Promise<SessionResponse> {
+  const siteUserKey = await deriveSiteUserKey(config.siteProjectId, user.userId);
+  return requestJSON<SessionResponse>(
+    request,
+    `${config.controlApiUrl}/v1/sites/session`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.exchangeToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        siteProjectId: config.siteProjectId,
+        siteUserKey,
+        email: user.email,
+      }),
+    },
+  );
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -183,6 +195,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     typeof raw.organization?.name !== "string" ||
     !raw.organization.name.trim() ||
     raw.organization.name.length > 200 ||
+    typeof raw.organization.authorizationsPaused !== "boolean" ||
     !Array.isArray(raw.pendingApprovals) ||
     !Array.isArray(raw.agents) ||
     !isChainState(raw.chain?.state) ||
@@ -222,7 +235,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
       detail: "Organization-scoped read session. Writes require separate step-up authentication.",
     },
     generatedAt: age(generatedAt, new Date()),
-    organization: { name: raw.organization.name, plan: "Authorized membership" },
+    organization: { name: raw.organization.name, plan: "Authorized membership", authorizationsPaused: raw.organization.authorizationsPaused },
     chain: {
       network: "Base control plane",
       state: raw.chain.state,
@@ -313,6 +326,15 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
 
 function liveRisks(raw: ControlSnapshot, agents: Agent[], now: Date): Risk[] {
   const risks: Risk[] = [];
+  if (raw.organization.authorizationsPaused) {
+    risks.push({
+      id: "organization-authorization-pause",
+      severity: "critical",
+      title: "Organization authorizations are paused",
+      detail: "The persistent organization gate blocks new authorization issuance until a separately reviewed recovery action.",
+      time: age(parseDate(raw.generatedAt), now),
+    });
+  }
   if (raw.chain.state !== "HEALTHY" || raw.chain.authorizationsPaused) {
     risks.push({
       id: "chain-control-state",
@@ -363,6 +385,10 @@ function isChainState(value: unknown): value is DashboardSnapshot["chain"]["stat
 
 function isAgentStatus(value: unknown): value is Agent["status"] {
   return value === "DRAFT" || value === "ACTIVE" || value === "PAUSED" || value === "QUARANTINED" || value === "REVOKED" || value === "ARCHIVED";
+}
+
+function isHumanRole(value: unknown): boolean {
+  return ["OWNER", "ADMIN", "DEVELOPER", "FINANCE", "APPROVER", "AUDITOR", "VIEWER"].includes(String(value));
 }
 
 function age(then: Date, now: Date): string {

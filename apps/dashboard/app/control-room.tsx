@@ -37,6 +37,25 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pauseOpen, setPauseOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const commandId = window.localStorage.getItem("flowops.pendingCommand");
+    if (!commandId) {
+      if (window.localStorage.getItem("flowops.pendingOperation")) queueMicrotask(() => setNotice("A prior command has no confirmed reference yet. Retry only the exact same action; FlowOps will reuse its idempotency identity."));
+      return;
+    }
+    void fetch(`/api/flowops/commands/${encodeURIComponent(commandId)}`, { cache: "no-store" })
+      .then(async (response) => ({ response, body: await response.json() as { state?: string; error?: { message?: string } } }))
+      .then(({ response, body }) => {
+        if (!response.ok) {
+          setNotice(body.error?.message ?? `Command ${commandId} is still unresolved.`);
+          return;
+        }
+        if (body.state === "SUCCEEDED" || body.state === "FAILED") window.localStorage.removeItem("flowops.pendingCommand");
+        setNotice(`Recovered command ${commandId}: ${body.state ?? "UNRESOLVED"}.`);
+      })
+      .catch(() => setNotice(`Command ${commandId} could not be recovered yet. Do not submit a replacement.`));
+  }, []);
   const title = navItems.find((item) => item.id === section)?.label ?? "Overview";
 
   const openSection = (next: Section) => {
@@ -51,6 +70,43 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
         ? `${action} requires fresh step-up authentication. This read-only dashboard session submitted no command and performed no write.`
         : `${action} is locked in preview mode. Nothing was submitted and no write occurred. Connect the authenticated FlowOps control plane to execute this action.`,
     );
+  };
+
+  const submitCommand = async (input: Record<string, string>) => {
+    const safeInput = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "stepUpToken" && key !== "operationId"));
+    const inputDigest = await browserDigest(JSON.stringify(safeInput));
+    const pendingRaw = window.localStorage.getItem("flowops.pendingOperation");
+    let operationId = input.operationId;
+    if (pendingRaw) {
+      try {
+        const pending = JSON.parse(pendingRaw) as { operationId?: string; inputDigest?: string };
+        if (pending.inputDigest !== inputDigest || !pending.operationId) throw new Error("different command");
+        operationId = pending.operationId;
+      } catch {
+        throw new Error("A different command is unresolved. Recover or retry that exact action before starting another.");
+      }
+    }
+    window.localStorage.setItem("flowops.pendingOperation", JSON.stringify({ operationId, inputDigest }));
+    const response = await fetch("/api/flowops/commands", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...input, operationId }),
+    });
+    const body = await response.json() as { commandId?: string; state?: string; auditId?: string; error?: { code?: string; message?: string } };
+    if (body.commandId) {
+      window.localStorage.setItem("flowops.pendingCommand", body.commandId);
+      window.localStorage.removeItem("flowops.pendingOperation");
+    } else if (response.status < 500) {
+      window.localStorage.removeItem("flowops.pendingOperation");
+    }
+    if (!response.ok) throw new Error(body.commandId ? `${body.error?.message ?? "Command unresolved"} Reference: ${body.commandId}.` : body.error?.message ?? "Command rejected.");
+    if (body.state === "SUCCEEDED" || body.state === "FAILED") {
+      window.localStorage.removeItem("flowops.pendingCommand");
+      window.localStorage.removeItem("flowops.pendingOperation");
+    }
+    setNotice(`Authoritative command state: ${body.state ?? "UNRESOLVED"}${body.commandId ? ` · ${body.commandId}` : ""}${body.auditId ? ` · audit ${body.auditId}` : ""}.`);
+    if (body.state === "SUCCEEDED") window.setTimeout(() => window.location.reload(), 700);
   };
 
   const navigationMark = (item: (typeof navItems)[number]) => {
@@ -171,6 +227,7 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
             <Security
               risks={snapshot.risks}
               chain={snapshot.chain}
+              authorizationsPaused={snapshot.organization.authorizationsPaused}
               onPause={() => setPauseOpen(true)}
             />
           ) : null}
@@ -195,8 +252,10 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
       {approval ? (
         <ApprovalDrawer
           approval={approval}
+          mode={snapshot.mode}
           onClose={() => setApproval(null)}
           onAction={explainLockedAction}
+          onCommand={submitCommand}
         />
       ) : null}
       {pauseOpen ? (
@@ -208,10 +267,16 @@ export function ControlRoom({ snapshot, viewer }: ControlRoomProps) {
             setPauseOpen(false);
             explainLockedAction("Emergency pause");
           }}
+          onCommand={submitCommand}
         />
       ) : null}
     </div>
   );
+}
+
+async function browserDigest(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function Overview({
@@ -235,7 +300,7 @@ function Overview({
       <section className="command-header">
         <div className="command-index" aria-hidden="true">01 / OPERATIONS</div>
         <div className="command-copy">
-          <div className="eyebrow"><span className="healthy-dot" /> Authorization boundary online</div>
+          <div className="eyebrow"><span className={snapshot.organization.authorizationsPaused ? "halted-dot" : "healthy-dot"} /> {snapshot.organization.authorizationsPaused ? "Organization authorizations paused" : "Authorization boundary online"}</div>
           <h1>Treasury command</h1>
           <p>Govern agent spend from frozen intent to canonical Base evidence.</p>
           <div className="observation-meta">
@@ -253,8 +318,8 @@ function Overview({
           <button className="primary-button" type="button" onClick={onApprovals}>
             Review {snapshot.approvals.length} approvals <span>→</span>
           </button>
-          <button className="danger-button" type="button" onClick={onPause}>
-            Emergency pause
+          <button className="danger-button" type="button" onClick={onPause} disabled={snapshot.organization.authorizationsPaused}>
+            {snapshot.organization.authorizationsPaused ? "Authorizations paused" : "Emergency pause"}
           </button>
         </div>
       </section>
@@ -434,12 +499,12 @@ function ActivityView({ activity }: { activity: Activity[] }) {
   );
 }
 
-function Security({ risks, chain, onPause }: { risks: Risk[]; chain: DashboardSnapshot["chain"]; onPause: () => void }) {
+function Security({ risks, chain, authorizationsPaused, onPause }: { risks: Risk[]; chain: DashboardSnapshot["chain"]; authorizationsPaused: boolean; onPause: () => void }) {
   return (
     <section className="section-stack">
-      <SectionHeading eyebrow="Fail closed" title="Security & recovery" description="Critical controls stay visible until the underlying risk is acknowledged or canonically resolved." action={<button className="danger-button" onClick={onPause} type="button">Emergency pause</button>} />
+      <SectionHeading eyebrow="Fail closed" title="Security & recovery" description="Critical controls stay visible until the underlying risk is acknowledged or canonically resolved." action={<button className="danger-button" onClick={onPause} disabled={authorizationsPaused} type="button">{authorizationsPaused ? "Authorizations paused" : "Emergency pause"}</button>} />
       <div className="security-grid">
-        <div className="panel security-state"><span className="healthy-dot" /><div><small>Authorization state</small><strong>Protected</strong><p>Organization and signer boundaries are accepting policy-valid requests.</p></div></div>
+        <div className="panel security-state"><span className={authorizationsPaused ? "halted-dot" : "healthy-dot"} /><div><small>Authorization state</small><strong>{authorizationsPaused ? "PAUSED" : "Protected"}</strong><p>{authorizationsPaused ? "The persistent organization gate rejects new authorization issuance." : "Organization and signer boundaries are accepting policy-valid requests."}</p></div></div>
         <div className="panel security-state"><span className="healthy-dot" /><div><small>Base canonical state</small><strong>{chain.state}</strong><p>{chain.observers} at block #{chain.lastTrustedBlock}.</p></div></div>
       </div>
       <div className="risk-list">
@@ -488,14 +553,37 @@ function Developers({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
-function ApprovalDrawer({ approval, onClose, onAction }: { approval: Approval; onClose: () => void; onAction: (action: string) => void }) {
+function ApprovalDrawer({ approval, mode, onClose, onAction, onCommand }: { approval: Approval; mode: DashboardSnapshot["mode"]; onClose: () => void; onAction: (action: string) => void; onCommand: (input: Record<string, string>) => Promise<void> }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [stepUpToken, setStepUpToken] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   useEffect(() => {
     closeRef.current?.focus();
     const close = (event: KeyboardEvent) => event.key === "Escape" && onClose();
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [onClose]);
+  const decide = async (action: "APPROVE" | "REJECT") => {
+    if (mode !== "live") {
+      onClose();
+      onAction(action === "APPROVE" ? "Approval" : "Denial");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await onCommand({ type: "approval", requestId: approval.id, action, note, operationId: crypto.randomUUID(), stepUpToken });
+      setStepUpToken("");
+      onClose();
+    } catch (cause) {
+      setStepUpToken("");
+      setError(cause instanceof Error ? cause.message : "Command outcome is unresolved.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="approval-title">
@@ -505,24 +593,44 @@ function ApprovalDrawer({ approval, onClose, onAction }: { approval: Approval; o
         <dl className="detail-list"><div><dt>Recipient / vendor</dt><dd>{approval.vendor}</dd></div><div><dt>Agent</dt><dd>{approval.agent}</dd></div><div><dt>Task</dt><dd>{approval.title}</dd></div><div><dt>Rail</dt><dd>{approval.rail}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Policy snapshot</dt><dd className="mono">{approval.policyVersion ?? "Not exposed"}</dd></div><div><dt>Evidence refs</dt><dd className="mono">{approval.evidenceRefs ?? "Not exposed"}</dd></div><div><dt>Created</dt><dd>{approval.requested}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Request digest</dt><dd className="mono">{approval.requestDigest ?? "Not exposed"}</dd></div></dl>
         <div className="reason-box"><span>Why approval is required</span><p>{approval.reason}</p></div>
         <div className="truth-box"><strong>What this decision means</strong><p>Approval authorizes only this frozen intent. Any change to amount, recipient, task, rail, or request digest requires a new decision.</p></div>
-        <footer><button className="secondary-button" onClick={() => { onClose(); onAction("Denial"); }} type="button">Deny</button><button className="primary-button" onClick={() => { onClose(); onAction("Approval"); }} type="button">Approve exact intent</button></footer>
+        {mode === "live" ? <div className="step-up-box"><label htmlFor="approval-step-up">Fresh step-up token</label><input id="approval-step-up" type="password" autoComplete="off" value={stepUpToken} onChange={(event) => setStepUpToken(event.target.value)} disabled={busy} /><label htmlFor="approval-note">Decision note</label><textarea id="approval-note" value={note} maxLength={2048} onChange={(event) => setNote(event.target.value)} disabled={busy} /><small>Held in memory for this request only. Never stored by the dashboard.</small>{error ? <p role="alert">{error}</p> : null}</div> : null}
+        <footer><button className="secondary-button" onClick={() => void decide("REJECT")} disabled={busy || (mode === "live" && !stepUpToken)} type="button">Deny</button><button className="primary-button" onClick={() => void decide("APPROVE")} disabled={busy || (mode === "live" && !stepUpToken)} aria-busy={busy} type="button">{busy ? "Verifying…" : "Approve exact intent"}</button></footer>
       </aside>
     </div>
   );
 }
 
-function PauseDialog({ organization, mode, onClose, onConfirm }: { organization: string; mode: DashboardSnapshot["mode"]; onClose: () => void; onConfirm: () => void }) {
+function PauseDialog({ organization, mode, onClose, onConfirm, onCommand }: { organization: string; mode: DashboardSnapshot["mode"]; onClose: () => void; onConfirm: () => void; onCommand: (input: Record<string, string>) => Promise<void> }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const [stepUpToken, setStepUpToken] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   useEffect(() => {
     cancelRef.current?.focus();
     const close = (event: KeyboardEvent) => event.key === "Escape" && onClose();
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [onClose]);
+  const pause = async () => {
+    if (mode !== "live") return onConfirm();
+    setBusy(true);
+    setError("");
+    try {
+      await onCommand({ type: "organization-pause", reason, operationId: crypto.randomUUID(), stepUpToken });
+      setStepUpToken("");
+      onClose();
+    } catch (cause) {
+      setStepUpToken("");
+      setError(cause instanceof Error ? cause.message : "Command outcome is unresolved.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="overlay centered" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="pause-dialog" role="alertdialog" aria-modal="true" aria-labelledby="pause-title">
-        <span className="pause-symbol">!</span><small>Emergency control</small><h2 id="pause-title">Pause every agent?</h2><p>This requests an organization-wide authorization stop for <strong>{organization}</strong>. Pending evidence remains readable and no transaction is silently retried.</p><div className="pause-warning">{mode === "live" ? "This read session cannot send the command. Continue in a fresh step-up session." : "Preview mode cannot send this command. A live action also requires step-up authentication."}</div><footer><button ref={cancelRef} className="secondary-button" onClick={onClose} type="button">Keep running</button><button className="danger-solid" onClick={onConfirm} type="button">Request emergency pause</button></footer>
+        <span className="pause-symbol">!</span><small>Emergency control</small><h2 id="pause-title">Pause every agent?</h2><p>This requests an organization-wide authorization stop for <strong>{organization}</strong>. Pending evidence remains readable and no transaction is silently retried.</p><div className="pause-warning">{mode === "live" ? "Requires the same member's fresh step-up token. The result is shown only after the durable command is read back." : "Preview mode cannot send this command. A live action also requires step-up authentication."}</div>{mode === "live" ? <div className="step-up-box"><label htmlFor="pause-reason">Containment reason</label><textarea id="pause-reason" value={reason} maxLength={1024} onChange={(event) => setReason(event.target.value)} disabled={busy} /><label htmlFor="pause-step-up">Fresh step-up token</label><input id="pause-step-up" type="password" autoComplete="off" value={stepUpToken} onChange={(event) => setStepUpToken(event.target.value)} disabled={busy} /><small>Held in memory for this request only. Never stored by the dashboard.</small>{error ? <p role="alert">{error}</p> : null}</div> : null}<footer><button ref={cancelRef} className="secondary-button" onClick={onClose} disabled={busy} type="button">Keep running</button><button className="danger-solid" onClick={() => void pause()} disabled={busy || (mode === "live" && (!stepUpToken || !reason.trim()))} aria-busy={busy} type="button">{busy ? "Verifying…" : "Request emergency pause"}</button></footer>
       </section>
     </div>
   );

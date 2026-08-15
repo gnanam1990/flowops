@@ -45,6 +45,7 @@ type memoryStore struct {
 	completionContextErr error
 	memberships          map[string]SiteMembership
 	membershipEmails     map[string][32]byte
+	organizationPaused   map[string]bool
 	exchangeToken        string
 	siteSessions         *SiteSessionCodec
 }
@@ -53,7 +54,7 @@ func newMemoryStore(now func() time.Time) *memoryStore {
 	return &memoryStore{
 		principals: make(map[[32]byte]Principal), agents: make(map[string]Agent),
 		commands: make(map[string]Command), commandKeys: make(map[string]string), memberships: make(map[string]SiteMembership),
-		membershipEmails: make(map[string][32]byte), now: now,
+		membershipEmails: make(map[string][32]byte), organizationPaused: make(map[string]bool), now: now,
 	}
 }
 
@@ -110,10 +111,27 @@ func (s *memoryStore) Organization(_ context.Context, organizationID string) (Or
 	defer s.mu.Unlock()
 	for _, agent := range s.agents {
 		if agent.OrganizationID == organizationID {
-			return Organization{ID: organizationID, Name: "Northstar Labs"}, nil
+			return Organization{ID: organizationID, Name: "Northstar Labs", AuthorizationsPaused: s.organizationPaused[organizationID]}, nil
 		}
 	}
 	return Organization{}, ErrNotFound
+}
+
+func (s *memoryStore) PauseOrganization(_ context.Context, organizationID, _, _ string) (Organization, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	found := false
+	for _, agent := range s.agents {
+		if agent.OrganizationID == organizationID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return Organization{}, ErrNotFound
+	}
+	s.organizationPaused[organizationID] = true
+	return Organization{ID: organizationID, Name: "Northstar Labs", AuthorizationsPaused: true}, nil
 }
 
 func (s *memoryStore) Agent(_ context.Context, organizationID, agentID string) (Agent, error) {
@@ -157,6 +175,9 @@ func (s *memoryStore) SetAgentStatus(_ context.Context, organizationID, agentID 
 func (s *memoryStore) WithActiveAgentLock(_ context.Context, organizationID, agentID string, operation func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.organizationPaused[organizationID] {
+		return fmt.Errorf("%w while organization authorizations are paused", controlplane.ErrFrozen)
+	}
 	agent, ok := s.agents[agentKey(organizationID, agentID)]
 	if !ok {
 		return ErrNotFound
@@ -524,6 +545,10 @@ func TestSitesExchangeIsMembershipBoundAndNeverCarriesStepUp(t *testing.T) {
 	if status != http.StatusOK || snapshot["organizationId"] != "org_a" || snapshot["live"] != true {
 		t.Fatalf("site dashboard = %d %+v", status, snapshot)
 	}
+	status, session := doRequest(t, client, http.MethodGet, server.URL+"/v1/session", siteToken, "", nil)
+	if status != http.StatusOK || session["principalId"] != membership.PrincipalID || session["organizationId"] != "org_a" || session["readOnly"] != true {
+		t.Fatalf("site session claims = %d %+v", status, session)
+	}
 
 	status, denied := doRequest(t, client, http.MethodPost, server.URL+"/v1/agents/agent_a/pause", siteToken, "pause_sites", pauseRequest{Reason: "test"})
 	if status != http.StatusForbidden || denied["error"].(map[string]any)["code"] != "FORBIDDEN" {
@@ -553,6 +578,44 @@ func TestSitesExchangeIsMembershipBoundAndNeverCarriesStepUp(t *testing.T) {
 	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/dashboard/snapshot", siteToken, "", nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("revoked membership status = %d", status)
+	}
+}
+
+func TestOrganizationPauseRequiresOwnerStepUpAndBlocksNewAuthorizations(t *testing.T) {
+	server, store, _, _, journal, _ := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	client := server.Client()
+
+	status, claims := doRequest(t, client, http.MethodGet, server.URL+"/v1/session", ownerTokenA, "", nil)
+	if status != http.StatusOK || claims["principalId"] != "owner_a" || claims["organizationId"] != "org_a" || claims["readOnly"] != false {
+		t.Fatalf("step-up claims = %d %+v", status, claims)
+	}
+	status, denied := doRequest(t, client, http.MethodPost, server.URL+"/v1/organization/pause", approverToken, "org_pause_denied", pauseRequest{Reason: "containment"})
+	if status != http.StatusForbidden || denied["error"].(map[string]any)["code"] != "FORBIDDEN" {
+		t.Fatalf("approver organization pause = %d %+v", status, denied)
+	}
+	status, paused := doRequest(t, client, http.MethodPost, server.URL+"/v1/organization/pause", ownerTokenA, "org_pause_1", pauseRequest{Reason: "suspected signer compromise"})
+	if status != http.StatusOK || paused["result"].(map[string]any)["organization"].(map[string]any)["authorizationsPaused"] != true || paused["result"].(map[string]any)["auditId"] == "" {
+		t.Fatalf("organization pause = %d %+v", status, paused)
+	}
+	status, snapshot := doRequest(t, client, http.MethodGet, server.URL+"/v1/dashboard/snapshot", ownerTokenA, "", nil)
+	if status != http.StatusOK || snapshot["organization"].(map[string]any)["authorizationsPaused"] != true {
+		t.Fatalf("paused organization snapshot = %d %+v", status, snapshot)
+	}
+	status, replayed := doRequest(t, client, http.MethodPost, server.URL+"/v1/organization/pause", ownerTokenA, "org_pause_1", pauseRequest{Reason: "suspected signer compromise"})
+	if status != http.StatusOK || replayed["command"].(map[string]any)["id"] != paused["command"].(map[string]any)["id"] {
+		t.Fatalf("organization pause replay = %d %+v", status, replayed)
+	}
+	status, blocked := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_org_paused", intent("intent_org_paused", "org_a", "agent_a", "50"))
+	if status != http.StatusConflict || blocked["error"].(map[string]any)["code"] != "AGENT_FROZEN" {
+		t.Fatalf("post-organization-pause intent = %d %+v", status, blocked)
+	}
+	store.mu.Lock()
+	otherPaused := store.organizationPaused["org_b"]
+	store.mu.Unlock()
+	if otherPaused {
+		t.Fatal("organization pause crossed tenant boundary")
 	}
 }
 

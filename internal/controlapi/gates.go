@@ -16,6 +16,13 @@ func (g AgentFreezeGate) Check(ctx context.Context, organizationID, _ string, ag
 	if g.Store == nil {
 		return errors.New("agent store is unavailable")
 	}
+	organization, err := g.Store.Organization(ctx, organizationID)
+	if err != nil {
+		return fmt.Errorf("read governed organization: %w", err)
+	}
+	if organization.AuthorizationsPaused {
+		return fmt.Errorf("%w while organization authorizations are paused", controlplane.ErrFrozen)
+	}
 	agent, err := g.Store.Agent(ctx, organizationID, agentID)
 	if err != nil {
 		return fmt.Errorf("read governed agent: %w", err)

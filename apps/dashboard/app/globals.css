@@ -167,6 +167,7 @@ body { background: #060a12; }
 .command-actions .primary-button span { transition: transform .2s ease; }.command-actions .primary-button:hover span { transform: translateX(4px); }
 .eyebrow { margin-bottom: 10px; font-family: var(--font-geist-mono); }
 .healthy-dot { animation: status-pulse 2.2s ease-out infinite; }
+.halted-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 4px rgba(255,92,108,.12); }
 .observation-meta { margin-top: 12px; }.observation-meta span::before { content: "//"; color: #526078; }
 .time-range button,.primary-button,.danger-button,.secondary-button,.danger-solid { border-radius: 1px; }
 
@@ -202,6 +203,12 @@ body { background: #060a12; }
 .security-grid > .panel,.developer-grid > .panel { border: 0; }
 .risk-list { gap: 1px; padding: 1px; background: var(--line); }.risk-row { border: 0; background: #141619; }.risk-row.info { border: 0; background: #0c1625; }
 .drawer { animation: drawer-in .3s cubic-bezier(.2,.8,.2,1) both; }.pause-dialog { animation: modal-in .25s cubic-bezier(.2,.8,.2,1) both; }
+.step-up-box { display: grid; gap: 7px; margin-top: 14px; padding: 13px; border: 1px solid #26344a; background: #080e18; text-align: left; }
+.step-up-box label { color: #aab7ca; font-family: var(--font-geist-mono); font-size: 8px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.step-up-box input,.step-up-box textarea { width: 100%; padding: 9px 10px; border: 1px solid #2a3950; border-radius: 1px; outline: none; color: var(--text); background: #0d1624; font: 10px/1.45 var(--font-geist-mono); resize: vertical; }
+.step-up-box textarea { min-height: 54px; }.step-up-box input:focus,.step-up-box textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(45,107,255,.18); }
+.step-up-box small { color: #6f7c90; font-size: 8px; line-height: 1.45; }.step-up-box p[role="alert"] { color: #ff8591; font-size: 9px; }
+button:disabled { cursor: not-allowed; opacity: .48; }
 
 @keyframes surface-in { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes status-pulse { 0% { box-shadow: 0 0 0 0 rgba(183,243,77,.28); } 70%,100% { box-shadow: 0 0 0 8px rgba(183,243,77,0); } }

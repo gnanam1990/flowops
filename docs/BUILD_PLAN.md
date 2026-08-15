@@ -24,7 +24,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
    enforcing customer escrow FUND signer and one funded, canonically reconciled
    Sepolia proof are complete; production dependencies and external review
    remain gated.**
-10. Dashboard and operator workflows. **Preview-safe surface and membership-bound live reads implemented; step-up write UX and ledger-backed aggregates remain integration gates.**
+10. Dashboard and operator workflows. **Preview-safe reads, exact-member step-up command binding, exact-digest approval/denial, durable browser recovery, and persistent organization-wide authorization pause are implemented. The production step-up issuer and ledger-backed aggregates remain integration gates.**
 11. Authenticated control-plane API and PostgreSQL command boundary. **Production container, audited Sites owner bootstrap, credential rotation, and explicit edge-proxy transport checks are implemented; managed PostgreSQL deployment and Base observer wiring remain live gates.**
 12. Independent capped-pilot limits. **The control plane and both customer signer rails enforce the proposed per-customer Base mainnet profile before the wallet boundary, with restart-safe conservative exposure reconstruction. One capped escrow signer path is funded and reconciled on Sepolia; full two-rail production-shaped pilot admission remains open and mainnet funding remains disabled.**
 13. Final Base mainnet readiness audit. **One read-only aggregate gate now authenticates the readiness, promotion, source-rehearsal, security-review, and funded-signer evidence records, separates eight implementation capabilities from eleven production blockers, and is required by the hardware broadcast wrapper. Its current and correct decision is `BLOCKED`.**
@@ -49,8 +49,9 @@ Each item lands as one or more isolated conventional commits with focused tests.
   USDC conservative exposure per customer signer. One 0.1 test-USDC escrow
   signer lifecycle passed, but funded two-rail production-shaped pilot evidence
   and single-customer or aggregate pilot admission remain hard blockers.
-- Dashboard live writes are intentionally unavailable until a separate fresh
-  step-up ceremony and durable browser command-recovery flow are implemented.
+- Dashboard write transport and durable recovery are implemented, but hosted
+  writes remain disabled until the production identity provider issues fresh,
+  short-lived step-up credentials bound to the same Sites principal.
 - Sites owner provisioning and exchange-token rotation must be executed and
   evidenced on the selected managed database; production operators must not
   hand-edit membership rows.

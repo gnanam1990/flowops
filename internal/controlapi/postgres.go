@@ -132,7 +132,9 @@ func (s *PostgresStore) ExchangeSiteIdentity(ctx context.Context, siteProjectID,
 
 func (s *PostgresStore) Organization(ctx context.Context, organizationID string) (Organization, error) {
 	var organization Organization
-	err := s.db.QueryRowContext(ctx, `SELECT id, name FROM organizations WHERE id = $1`, organizationID).Scan(&organization.ID, &organization.Name)
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, authorizations_paused FROM organizations WHERE id = $1`, organizationID).Scan(
+		&organization.ID, &organization.Name, &organization.AuthorizationsPaused,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Organization{}, ErrNotFound
 	}
@@ -141,6 +143,53 @@ func (s *PostgresStore) Organization(ctx context.Context, organizationID string)
 	}
 	if !organization.Valid() {
 		return Organization{}, errors.New("stored organization is invalid")
+	}
+	return organization, nil
+}
+
+func (s *PostgresStore) PauseOrganization(ctx context.Context, organizationID, actorID, auditID string) (Organization, error) {
+	if !identifierPattern.MatchString(organizationID) || !identifierPattern.MatchString(actorID) || !identifierPattern.MatchString(auditID) {
+		return Organization{}, errors.New("organization pause identifiers are invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return Organization{}, fmt.Errorf("begin organization pause: %w", err)
+	}
+	defer tx.Rollback()
+	var organization Organization
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, name, authorizations_paused
+		FROM organizations
+		WHERE id = $1
+		FOR UPDATE`, organizationID).Scan(&organization.ID, &organization.Name, &organization.AuthorizationsPaused)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Organization{}, ErrNotFound
+	}
+	if err != nil {
+		return Organization{}, fmt.Errorf("lock organization: %w", err)
+	}
+	previous, _ := json.Marshal(map[string]bool{"authorizationsPaused": organization.AuthorizationsPaused})
+	if !organization.AuthorizationsPaused {
+		if err := tx.QueryRowContext(ctx, `
+			UPDATE organizations
+			SET authorizations_paused = true
+			WHERE id = $1
+			RETURNING id, name, authorizations_paused`, organizationID).Scan(
+			&organization.ID, &organization.Name, &organization.AuthorizationsPaused,
+		); err != nil {
+			return Organization{}, fmt.Errorf("pause organization authorizations: %w", err)
+		}
+	}
+	current, _ := json.Marshal(map[string]bool{"authorizationsPaused": organization.AuthorizationsPaused})
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events (id, organization_id, actor_id, kind, target_id, previous, current)
+		VALUES ($1, $2, $3, 'organization.authorizations_paused', $2, $4, $5)`,
+		auditID, organizationID, actorID, previous, current,
+	); err != nil {
+		return Organization{}, fmt.Errorf("record organization pause audit event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Organization{}, fmt.Errorf("commit organization pause: %w", err)
 	}
 	return organization, nil
 }
@@ -264,6 +313,21 @@ func (s *PostgresStore) WithActiveAgentLock(ctx context.Context, organizationID,
 		return fmt.Errorf("begin authorization lock: %w", err)
 	}
 	defer tx.Rollback()
+	var organizationPaused bool
+	err = tx.QueryRowContext(ctx, `
+		SELECT authorizations_paused
+		FROM organizations
+		WHERE id = $1
+		FOR SHARE`, organizationID).Scan(&organizationPaused)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock organization for authorization: %w", err)
+	}
+	if organizationPaused {
+		return fmt.Errorf("%w while organization authorizations are paused", controlplane.ErrFrozen)
+	}
 	var status AgentStatus
 	err = tx.QueryRowContext(ctx, `
 		SELECT status

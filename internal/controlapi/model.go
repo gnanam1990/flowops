@@ -135,8 +135,9 @@ type Agent struct {
 }
 
 type Organization struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	AuthorizationsPaused bool   `json:"authorizationsPaused"`
 }
 
 func (o Organization) Valid() bool {
