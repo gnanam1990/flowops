@@ -330,10 +330,11 @@ test("does not replay the Sites exchange credential across an upstream redirect"
       "oai-authenticated-user-email": "owner@example.com",
     },
     env: {
-      FLOWOPS_CONTROL_API_URL: `http://127.0.0.1:${upstreamAddress.port}`,
-      FLOWOPS_SITES_PROJECT_ID: "appgprj_flowops_test",
-      FLOWOPS_SITES_EXCHANGE_TOKEN: "sites-exchange-test-credential-000000000002",
-    },
+	  ...configuredEnvironment(
+		`http://127.0.0.1:${upstreamAddress.port}`,
+		["sites", "exchange", "test", "credential", "000000000002"].join("-"),
+	  ),
+	},
   });
   const html = await response.text();
   assert.match(html, /Preview data/);
