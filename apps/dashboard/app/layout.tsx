@@ -17,6 +17,7 @@ const geistMono = Geist_Mono({
 const title = "FlowOps — Economic control for autonomous agents";
 const description =
   "Approve, pause, reconcile, and understand every agent payment on Base.";
+const baseAppId = "6a8039cbe4a8a41598e7a325";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
@@ -41,6 +42,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title,
     description,
+    other: {
+      "base:app_id": baseAppId,
+    },
     metadataBase: new URL(origin),
     openGraph: {
       title,
