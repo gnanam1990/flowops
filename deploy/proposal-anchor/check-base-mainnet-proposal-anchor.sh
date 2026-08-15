@@ -11,7 +11,7 @@ jq -e '
   and .kind == "flowops-proposal-anchor"
   and .network == "base-mainnet"
   and .chainId == 8453
-  and .status == "broadcast-authorized-no-deployment"
+  and .status == "experimental-deployed-evidence-verified"
   and .proposalDocument == "docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md"
   and .proposalDigest == "0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362"
   and .sourceCommit == "bd9292d0f916b1e3d828443b41e31a8e635b2b3e"
@@ -52,12 +52,47 @@ jq -e '
   and (.deploymentApproval.approvedAt | fromdateiso8601 > 0)
   and .deploymentApproval.scope == "one-time-proposal-anchor-broadcast"
   and .deploymentApprovalDigest == "0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377"
-  and .contractAddress == null
-  and .transactionHash == null
-  and .blockNumber == null
-  and .runtimeCodeHash == null
-  and .sourceVerified == false
-  and .broadcastAuthorized == true
+  and .deploymentEvidence.transactionHash == "0x7fe3986c45a1c4de2c9ca421222569ba8e41cc6b7fe9173340a3954c9306a76b"
+  and .deploymentEvidence.receiptStatus == "0x1"
+  and .deploymentEvidence.blockNumber == 50008264
+  and .deploymentEvidence.blockHash == "0xef4a24ad1b9803df3e5a03b533ee39e36c4a17b1585eb7b90e1b852d4a3a8ae8"
+  and .deploymentEvidence.blockTimestamp == "2026-08-15T14:57:55Z"
+  and .deploymentEvidence.deployer == "0xEEC526F6555dD43536F712D5c978CbC13CB4517f"
+  and .deploymentEvidence.deployerNonce == 0
+  and .deploymentEvidence.contractAddress == "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250"
+  and .deploymentEvidence.transactionValueWei == "0"
+  and .deploymentEvidence.gasLimit == 232243
+  and .deploymentEvidence.gasUsed == 185795
+  and .deploymentEvidence.maxFeePerGasWei == "20000000"
+  and .deploymentEvidence.maxPriorityFeePerGasWei == "1000000"
+  and .deploymentEvidence.effectiveGasPriceWei == "6000000"
+  and .deploymentEvidence.totalPaidWei == "1114770000000"
+  and .deploymentEvidence.creationInputHash == "0x41d3a9c08503394daca600ba7520c6818d7f373c08ecff3c916e2eceef93d35e"
+  and .deploymentEvidence.runtimeCodeHash == "0xe5b5b63f37bfd5b6627f48cedd8c0fdcc841f130fd1d5259058374e7a543ed86"
+  and .deploymentEvidence.eventSignature == "0x3a34f175c3fff575959bd2f7cff58cedda132bd7396d693e43e0ace0d5785c6e"
+  and (.deploymentEvidence.observedAt | fromdateiso8601 > 0)
+  and (.deploymentEvidence.observers | sort == ["base.drpc.org", "mainnet.base.org"])
+  and .deploymentEvidence.sourceVerification.provider == "base-blockscout"
+  and .deploymentEvidence.sourceVerification.url == "https://base.blockscout.com/address/0x149d03ec527ad8667d47e7b6a2d316dd54033250"
+  and .deploymentEvidence.sourceVerification.status == "fully-verified"
+  and .deploymentEvidence.sourceVerification.contractName == "FlowOpsProposalAnchor"
+  and .deploymentEvidence.sourceVerification.compilerVersion == "v0.8.26+commit.8a97fa7a"
+  and .deploymentEvidence.sourceVerification.optimizationEnabled == true
+  and .deploymentEvidence.sourceVerification.optimizationRuns == 200
+  and .deploymentEvidence.sourceVerification.evmVersion == "cancun"
+  and (.deploymentEvidence.sourceVerification.verifiedAt | fromdateiso8601 > 0)
+  and .postDeploymentObservation.deployerLatestNonce == 1
+  and .postDeploymentObservation.deployerPendingNonce == 1
+  and .postDeploymentObservation.deployerBalanceWei == "158200871075539"
+  and .postDeploymentObservation.runtimeCodeHash == "0xe5b5b63f37bfd5b6627f48cedd8c0fdcc841f130fd1d5259058374e7a543ed86"
+  and (.postDeploymentObservation.observedAt | fromdateiso8601 > 0)
+  and (.postDeploymentObservation.observers | sort == ["base-rpc.publicnode.com", "mainnet.base.org"])
+  and .contractAddress == "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250"
+  and .transactionHash == "0x7fe3986c45a1c4de2c9ca421222569ba8e41cc6b7fe9173340a3954c9306a76b"
+  and .blockNumber == 50008264
+  and .runtimeCodeHash == "0xe5b5b63f37bfd5b6627f48cedd8c0fdcc841f130fd1d5259058374e7a543ed86"
+  and .sourceVerified == true
+  and .broadcastAuthorized == false
   and .productionReady == false
   and .fundingEnabled == false
   and .vaultCreationEnabled == false
@@ -75,7 +110,7 @@ grep -Fq 'bytes20 public constant SOURCE_COMMIT = hex"bd9292d0f916b1e3d828443b41
 grep -Fq 'uint64 public constant EXPECTED_DEPLOYER_NONCE = 0;' "${script}"
 grep -Fq 'address public constant EXPECTED_ANCHOR_ADDRESS = 0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250;' "${script}"
 grep -Fq '0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377;' "${script}"
-grep -Fq 'bool public constant MAINNET_BROADCAST_ENABLED = true;' "${script}"
+grep -Fq 'bool public constant MAINNET_BROADCAST_ENABLED = false;' "${script}"
 grep -Fq 'string public constant DEPLOYMENT_STATUS = "EXPERIMENTAL_UNAUDITED_NO_FUNDS";' "${contract}"
 
 method_identifiers="$(
@@ -130,4 +165,4 @@ deployment_statement="$(jq -r '.deploymentApproval.canonicalStatement' "${record
 deployment_digest="$(printf '%s' "${deployment_statement}" | shasum -a 256 | awk '{print $1}')"
 test "0x${deployment_digest}" = "0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377"
 
-printf 'validated one-time Base mainnet proposal anchor broadcast authorization; no deployment receipt recorded\n'
+printf 'validated Base mainnet proposal anchor deployment evidence; broadcast is consumed\n'

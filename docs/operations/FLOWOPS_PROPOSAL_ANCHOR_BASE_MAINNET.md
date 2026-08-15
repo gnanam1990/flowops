@@ -1,12 +1,12 @@
 # FlowOps Proposal Anchor Base Mainnet Runbook
 
-Status: one-time broadcast approved; no deployment receipt exists yet
+Status: deployed and independently verified; one-time broadcast consumed
 
 This runbook covers only the evidence-only `FlowOpsProposalAnchor`. It does not
 authorize `CallEscrow`, a factory, a vault, USDC approval, token funding, or any
 production payment path.
 
-## Authorized package
+## Consumed deployment package
 
 `contracts/script/DeployFlowOpsProposalAnchorBaseMainnet.s.sol` now pins:
 
@@ -19,11 +19,12 @@ production payment path.
 - initcode/runtime hashes and a maximum gas spend of `5000000000000` wei;
 - deployment-approval digest
   `0x19b2ec0dad4ae81c0ec838d04285301618f670aa581bda4f218c52dbbd8b5377`; and
-- `MAINNET_BROADCAST_ENABLED = true`.
+- `MAINNET_BROADCAST_ENABLED = false` after the successful one-time broadcast.
 
-The record preserves the promotion approval, activation approval, and exact
-one-time broadcast statement. This authorizes only the pinned proposal anchor;
-it does not authorize any other transaction. Do not bypass the package with
+The record preserves the promotion approval, activation approval, exact
+one-time broadcast statement, and canonical receipt evidence. The authorization
+has been consumed and the committed package is structurally blocked again. It
+does not authorize any other transaction. Do not bypass the package with
 `forge create`, a raw transaction, a copied script, or an environment-only
 override.
 
@@ -56,38 +57,47 @@ The package was activated only after recording the following evidence:
 
 ## Broadcast boundary
 
-After the activation commit passes full CI and review, broadcast once from the
-designated proposal-only wallet. If the result is unknown, stop and reconcile
-the expected address and nonce through independent observers; never retry
-blindly. This signer posture does not satisfy any production deployment gate.
+The designated proposal-only wallet broadcast exactly once. The canonical Base
+receipt is transaction
+`0x7fe3986c45a1c4de2c9ca421222569ba8e41cc6b7fe9173340a3954c9306a76b`,
+block `50008264`, creating
+`0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250` from nonce `0` with zero
+transaction value. The package is disabled after recording that evidence. This
+signer posture does not satisfy any production deployment gate.
 
 The accepted candidate is
 `0xEEC526F6555dD43536F712D5c978CbC13CB4517f`. At the recorded read-only
 preflight, both admitted public observers reported Base chain ID `8453`, empty
 runtime code, latest nonce `0`, pending nonce `0`, and balance
 `159318862860265` wei. The
-expected CREATE address at nonce `0` is
-`0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`. Every value must be refreshed
-immediately before broadcast. Any drift cancels the ceremony even though the
-approval is recorded.
+expected CREATE address at nonce `0` was
+`0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`. Independent post-deployment
+observers now report nonce `1` and the exact reviewed runtime hash at that
+address. Any future attempt must fail closed; there is no remaining broadcast
+authorization.
 
 No token approval or funding transaction may be bundled with or follow from
 this deployment ceremony. The deployment record must remain
 `fundingEnabled: false`, `vaultCreationEnabled: false`, and
 `productionReady: false` permanently.
 
-## Post-deployment evidence
+## Verified post-deployment evidence
 
-Before the public UI may show an address:
+The deployment evidence records and validators confirm:
 
-1. confirm the canonical receipt and contract-creation sender;
-2. compare the exact creation input and runtime bytecode with the reviewed
-   build;
-3. read and confirm the proposal digest, source commit, deployer, status, and
-   three permanent `false` capability getters;
-4. verify source code on a Base-supported explorer;
-5. update the deployment record in a separate evidence PR; and
-6. configure the UI address only after that evidence PR is merged.
+1. canonical receipt status `0x1`, creation sender, nonce, zero value, gas
+   ceilings, block hash, and contract address through independent observers;
+2. creation-input hash and runtime-code hash match the reviewed build exactly;
+3. proposal digest, source commit, deployer, status, and the three permanent
+   `false` capability getters match through independent RPC reads;
+4. the single `ProposalAnchored` event binds the expected deployer, proposal,
+   and source revision; and
+5. source is fully verified on Base Blockscout with Solidity `0.8.26`, Cancun,
+   and 200 optimizer runs.
+
+The public UI may show the address only after the evidence PR is merged. It must
+remain a read-only proposal proof and must never expose payment controls for this
+contract.
 
 The address must always remain labelled experimental, unaudited, evidence-only,
 not production, no funds, and no vault creation.
