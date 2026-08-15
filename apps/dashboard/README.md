@@ -6,8 +6,9 @@ controls visible in one place.
 
 The module renders membership-authorized live control-plane reads when its
 server environment is configured, and otherwise falls back to an immutable,
-explicitly labelled preview. Actions that would change economic state remain
-disabled because the short-lived dashboard session deliberately has no step-up
+explicitly labelled preview. In live mode, approval and organization-pause
+commands require a separate fresh credential bound to the exact same member,
+organization, and role. The read session itself deliberately has no step-up
 authority.
 
 ## Local development
@@ -42,6 +43,9 @@ starter copy or fabricated preview success states.
 - ChatGPT/Sites identity headers never grant FlowOps membership by themselves.
   Live reads require the exact server-side exchange defined by ADR-0011.
 - The Go control plane remains the canonical application-data and write path.
+- Step-up credentials are held only in browser memory for one request. Local
+  recovery stores only a command ID, or before one exists, a random operation
+  ID and non-secret action digest so the exact retry stays idempotent.
 - No D1 or R2 binding is configured for this module.
 - Runtime dependencies must pass the high-severity audit gate. The vinext build
   tool currently brings a development-only `image-size` advisory; FlowOps does

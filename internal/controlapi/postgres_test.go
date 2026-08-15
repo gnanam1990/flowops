@@ -233,10 +233,34 @@ func TestPostgresPauseRejectsNonActiveLifecycleStates(t *testing.T) {
 	}
 }
 
+func TestPostgresOrganizationPauseIsPersistentAndAudited(t *testing.T) {
+	store, mock, db := newMockStore(t)
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT id, name, authorizations_paused[\s\S]+FOR UPDATE`).WithArgs("org_a").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "name", "authorizations_paused"}).AddRow("org_a", "Northstar", false),
+	)
+	mock.ExpectQuery(`UPDATE organizations[\s\S]+RETURNING id, name, authorizations_paused`).WithArgs("org_a").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "name", "authorizations_paused"}).AddRow("org_a", "Northstar", true),
+	)
+	mock.ExpectExec(`INSERT INTO audit_events`).WithArgs("audit_org_1", "org_a", "owner_a", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	organization, err := store.PauseOrganization(context.Background(), "org_a", "owner_a", "audit_org_1")
+	if err != nil || !organization.AuthorizationsPaused {
+		t.Fatalf("organization pause = %+v, %v", organization, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPostgresAuthorizationLockRejectsFrozenAgent(t *testing.T) {
 	store, mock, db := newMockStore(t)
 	defer db.Close()
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT authorizations_paused[\s\S]+FOR SHARE`).WithArgs("org_a").WillReturnRows(
+		sqlmock.NewRows([]string{"authorizations_paused"}).AddRow(false),
+	)
 	mock.ExpectQuery(`SELECT status[\s\S]+FOR UPDATE`).WithArgs("org_a", "agent_a").WillReturnRows(
 		sqlmock.NewRows([]string{"status"}).AddRow(AgentPaused),
 	)
@@ -248,6 +272,27 @@ func TestPostgresAuthorizationLockRejectsFrozenAgent(t *testing.T) {
 	})
 	if !errors.Is(err, controlplane.ErrFrozen) || called {
 		t.Fatalf("authorization lock error=%v called=%v", err, called)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresAuthorizationLockRejectsPausedOrganizationBeforeAgentLock(t *testing.T) {
+	store, mock, db := newMockStore(t)
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT authorizations_paused[\s\S]+FOR SHARE`).WithArgs("org_a").WillReturnRows(
+		sqlmock.NewRows([]string{"authorizations_paused"}).AddRow(true),
+	)
+	mock.ExpectRollback()
+	called := false
+	err := store.WithActiveAgentLock(context.Background(), "org_a", "agent_a", func() error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, controlplane.ErrFrozen) || called {
+		t.Fatalf("organization authorization lock error=%v called=%v", err, called)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

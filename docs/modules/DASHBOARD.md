@@ -1,6 +1,6 @@
 # Operator dashboard module
 
-Status: membership-bound live reads implemented; economic writes remain gated
+Status: membership-bound reads and step-up command bridge implemented; hosted step-up issuance and ledger aggregates remain gated
 
 Package: `apps/dashboard`
 
@@ -39,10 +39,24 @@ facilitator health that the API does not expose; those values are visibly
 unavailable. Missing configuration, identity, membership, or valid upstream
 data falls back to a fully labelled preview rather than mixing sources.
 
-Approve, deny, and emergency pause controls remain locked in both modes. A live
-read session has no step-up claim and only explains how to continue; it sends no
-command. Preview interactions likewise produce only a local notice. Filters and
-copying the MCP configuration are local UI operations and are allowed.
+Preview mutations remain locked. In live mode, approve, deny, and organization
+pause accept a fresh step-up credential in a password field held only in client
+memory. A same-origin server bridge exchanges the Sites identity again, reads
+the step-up credential's safe claims from the control plane, and requires an
+exact organization, principal, and role match before sending a command. The
+bridge re-reads the pending approval and supplies its current full request
+digest; the browser cannot choose the authoritative digest.
+
+The browser records an unresolved command ID, or before an ID is known, a random
+operation ID plus a digest of the non-secret action fields. It stores neither
+the action body nor the credential. An exact retry reuses that operation ID and
+therefore the same server idempotency key; a different command is blocked until
+the unresolved action is recovered. Commands with an ID are recovered through
+the read-only Sites session, and the bridge rejects any command whose actor is
+not the exact Sites principal. Success is never inferred from a click, timeout,
+or local state. The step-up credential is not stored, logged, returned, embedded
+in HTML, or used in the idempotency key. A hosted deployment remains write-inert
+until a production identity system issues the required short-lived credential.
 
 ## Inputs and outputs
 
@@ -52,9 +66,11 @@ page and Cloudflare Worker bundle. The snapshot includes
 generation time, organization label, chain health, economic buckets, pending
 approvals, agents, activity, and risks.
 
-Future economic mutations must use a separate step-up session and return a
-durable command reference and authoritative result rather than mutating
-dashboard state optimistically.
+Economic mutations use a separate step-up credential and return a durable
+command reference and authoritative result rather than mutating dashboard state
+optimistically. Organization pause persists in PostgreSQL, serializes against
+in-flight authorization issuance, blocks future authorization checks, and
+returns both command and append-only audit correlation IDs.
 
 `GET /api/flowops/enrollment` is the owner bootstrap bridge. For an
 authenticated Sites viewer it returns the configured project ID, Sites email,
@@ -77,6 +93,10 @@ also excludes the raw Sites user ID and grants no control-plane access.
   unresolved state; do not report settlement or recovery.
 - Command timeout or ambiguous response: keep the command unresolved and offer
   correlation evidence; never display success from browser state alone.
+- Step-up token belongs to another principal, organization, or role: reject
+  before the economic endpoint is called.
+- Approval disappeared between render and action: reject and require refresh;
+  never submit the stale browser digest.
 - Clipboard denial: show `Copy unavailable` without affecting other controls.
 
 ## Verification
@@ -91,21 +111,20 @@ make smoke-dashboard
 
 The rendered tests verify core FlowOps content, dynamic metadata, the full
 server-side identity exchange, derived enrollment-code isolation, live field
-mapping, tenant-ID agreement, absence of credentials in HTML, removal of
-starter content, and absence of fake success claims. The production dependency
-graph must contain no high severity advisory.
+mapping, tenant-ID agreement, exact-principal step-up binding, server-refetched
+approval digests, durable command recovery, absence of credentials in HTML,
+removal of starter content, and absence of fake success claims. The production
+dependency graph must contain no high severity advisory.
 
 The vinext development tool currently depends on an `image-size` release with a
 high-severity denial-of-service advisory. It is excluded from the production
 dependency audit, and this dashboard accepts no untrusted image input. Upgrade
 or remove that tool dependency before any feature accepts user-supplied images.
 
-## Remaining live-write acceptance criteria
+## Remaining acceptance criteria
 
-- Organization A cannot command organization B.
-- Roles and fresh step-up authentication are enforced server-side.
-- Approval binds the exact frozen intent and remains idempotent across retries.
-- Emergency pause fails closed and exposes a durable audit correlation ID.
+- A production identity provider issues and revokes the short-lived step-up
+  credential; a static pre-provisioned credential is not an accepted ceremony.
 - Available, reserved, pending, and unresolved totals reconcile with the Go
   ledger before they replace the current unavailable labels.
 - Base halt and recovery states propagate without stale success.

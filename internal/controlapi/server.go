@@ -92,11 +92,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /v1/sites/session", s.handleSiteSessionExchange)
+	mux.Handle("GET /v1/session", s.authenticate(http.HandlerFunc(s.handleSession)))
 	mux.Handle("POST /v1/intents", s.authenticate(http.HandlerFunc(s.handleCreateIntent)))
 	mux.Handle("POST /v1/intents/{requestID}/authorization", s.authenticate(http.HandlerFunc(s.handleIssueAuthorization)))
 	mux.Handle("GET /v1/approvals", s.authenticate(http.HandlerFunc(s.handleApprovals)))
 	mux.Handle("POST /v1/approvals/{requestID}/decision", s.authenticate(http.HandlerFunc(s.handleApprovalDecision)))
 	mux.Handle("POST /v1/agents/{agentID}/pause", s.authenticate(http.HandlerFunc(s.handlePauseAgent)))
+	mux.Handle("POST /v1/organization/pause", s.authenticate(http.HandlerFunc(s.handlePauseOrganization)))
 	mux.Handle("GET /v1/commands/{commandID}", s.authenticate(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("GET /v1/dashboard/snapshot", s.authenticate(http.HandlerFunc(s.handleDashboardSnapshot)))
 	mux.HandleFunc("POST /v1/signer/broadcasts", s.handleSignerBroadcast)
@@ -193,6 +195,15 @@ func (s *Server) handleSiteSessionExchange(w http.ResponseWriter, r *http.Reques
 func principalFrom(ctx context.Context) Principal {
 	principal, _ := ctx.Value(principalContextKey{}).(Principal)
 	return principal
+}
+
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"principalId": principal.ID, "organizationId": principal.OrganizationID,
+		"kind": principal.Kind, "role": principal.Role, "readOnly": principal.ReadOnly,
+		"stepUpUntil": principal.StepUpUntil,
+	})
 }
 
 func (s *Server) authorize(w http.ResponseWriter, principal Principal, permission Permission, scope string) bool {
@@ -616,6 +627,48 @@ func (s *Server) handlePauseAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.succeedCommand(w, r, command, agent, http.StatusOK)
+}
+
+func (s *Server) handlePauseOrganization(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if !s.authorize(w, principal, PermissionPause, "organization:pause") || !s.requireStepUp(w, principal) {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var request pauseRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.Reason == "" || len(request.Reason) > 1024 {
+		writeError(w, http.StatusBadRequest, "INVALID_REASON", errors.New("reason must contain 1 to 1024 characters"), false, "")
+		return
+	}
+	digest := digestJSON(struct {
+		OrganizationID string `json:"organizationId"`
+		Reason         string `json:"reason"`
+	}{principal.OrganizationID, request.Reason})
+	command, created, ok := s.beginCommand(w, r, principal, "organization.pause", principal.OrganizationID, idempotencyKey, digest)
+	if !ok || !created {
+		if ok {
+			writeStoredCommand(w, command)
+		}
+		return
+	}
+	auditID, err := s.idSource("audit")
+	if err != nil {
+		s.failCommand(w, r, command, err)
+		return
+	}
+	organization, err := s.store.PauseOrganization(r.Context(), principal.OrganizationID, principal.ID, auditID)
+	if err != nil {
+		s.failCommand(w, r, command, err)
+		return
+	}
+	s.succeedCommand(w, r, command, map[string]any{"organization": organization, "auditId": auditID}, http.StatusOK)
 }
 
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {

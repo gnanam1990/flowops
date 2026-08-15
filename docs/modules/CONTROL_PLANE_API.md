@@ -58,11 +58,13 @@ contract, asset, and immutable release window are runtime admission settings.
 |---|---|---|---|
 | `GET` | `/health` | public, non-sensitive | Control-plane and Base authorization state |
 | `POST` | `/v1/sites/session` | Sites server exchange credential plus exact membership | Short-lived organization-bound read session |
+| `GET` | `/v1/session` | authenticated bearer credential | Safe principal, role, read-only, and step-up-expiry claims |
 | `POST` | `/v1/intents` | agent scope `intents:create` or authorized human | Durable command plus policy record |
 | `POST` | `/v1/intents/{requestID}/authorization` | agent scope `authorizations:issue` or authorized human | Exact signed FlowOps authorization envelope |
 | `GET` | `/v1/approvals` | human organization member | Tenant-filtered pending approvals |
 | `POST` | `/v1/approvals/{requestID}/decision` | Approver, Finance, Admin, or Owner plus step-up | Exact-digest approval decision |
 | `POST` | `/v1/agents/{agentID}/pause` | Admin or Owner plus step-up | Durable pause and audit record |
+| `POST` | `/v1/organization/pause` | Admin or Owner plus step-up | Persistent organization authorization stop plus command and audit IDs |
 | `GET` | `/v1/commands/{commandID}` | organization member; agents see only their commands | Authoritative command outcome |
 | `GET` | `/v1/dashboard/snapshot` | human organization member | Live tenant-scoped agents, approvals, and chain state |
 | `POST` | `/v1/signer/broadcasts` | customer signer receipt signature | Authorization-bound expected execution awaiting Base reconciliation |
@@ -91,6 +93,12 @@ Migration `0002_sites_memberships.sql` adds project-specific exchange-token
 digests and Sites identity memberships. It stores only a site-bound user hash
 and normalized email digest. Session authentication compares every signed claim
 to the current ACTIVE row so revocation takes effect immediately.
+
+Migration `0004_organization_authorization_pause.sql` adds the persistent
+organization authorization gate. Authorization issuance holds a shared lock on
+the organization row before it locks the agent row; organization pause takes an
+exclusive organization lock. A pause therefore waits for already-running
+issuance to finish and every later issuance fails closed before its agent lock.
 
 Authorization issuance holds the governed agent row lock from the final ACTIVE
 check through the durable authorization append. A concurrent pause therefore

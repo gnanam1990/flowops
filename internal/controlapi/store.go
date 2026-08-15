@@ -12,6 +12,7 @@ type Store interface {
 	Agent(ctx context.Context, organizationID, agentID string) (Agent, error)
 	ListAgents(ctx context.Context, organizationID string) ([]Agent, error)
 	SetAgentStatus(ctx context.Context, organizationID, agentID string, status AgentStatus, actorID, auditID string) (Agent, error)
+	PauseOrganization(ctx context.Context, organizationID, actorID, auditID string) (Organization, error)
 	WithActiveAgentLock(ctx context.Context, organizationID, agentID string, operation func() error) error
 	BeginCommand(ctx context.Context, command Command) (stored Command, created bool, err error)
 	CompleteCommand(ctx context.Context, organizationID, commandID string, state CommandState, result json.RawMessage, errorCode string) (Command, error)
