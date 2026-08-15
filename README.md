@@ -13,6 +13,10 @@ and can never become the production release. See
 deployment record and `docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md`
 for the immutable anchored proposal.
 
+For a reviewer-ready overview of the public proof, current product boundary,
+and controlled-pilot plan, see
+[`docs/proposals/FLOWOPS_BASE_PROPOSAL_SUBMISSION_PACKAGE_V1.md`](docs/proposals/FLOWOPS_BASE_PROPOSAL_SUBMISSION_PACKAGE_V1.md).
+
 ## Product boundary
 
 FlowOps owns policy, authorization, approvals, evidence, and reconciliation. Customers own their signing keys. A valid FlowOps authorization is necessary but never sufficient for a payment: the customer signer independently enforces its local trust root, limits, nonce, freeze, and chain-liveness rules.
