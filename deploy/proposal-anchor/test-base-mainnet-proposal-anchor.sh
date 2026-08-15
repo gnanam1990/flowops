@@ -19,7 +19,11 @@ expect_rejected() {
 }
 
 "${validator}" >/dev/null
+expect_rejected blocked-status-restored '.status = "blocked-no-deployment"'
 expect_rejected deployed-status '.status = "experimental-deployed"'
+expect_rejected proposal-digest-drift '.proposalDigest = ("0x" + ("1" * 64))'
+expect_rejected source-commit-drift '.sourceCommit = ("1" * 40)'
+expect_rejected designated-deployer-drift '.designatedDeployer = "0x1111111111111111111111111111111111111111"'
 expect_rejected contract-address '.contractAddress = "0x1111111111111111111111111111111111111111"'
 expect_rejected transaction-hash '.transactionHash = ("0x" + ("1" * 64))'
 expect_rejected source-verified '.sourceVerified = true'
@@ -36,5 +40,14 @@ expect_rejected candidate-latest-nonce '.candidateDeployer.observedLatestNonce =
 expect_rejected candidate-pending-nonce '.candidateDeployer.observedPendingNonce = 1'
 expect_rejected candidate-address-drift '.candidateDeployer.expectedCreateAddressAtObservedNonce = "0x1111111111111111111111111111111111111111"'
 expect_rejected candidate-observer-collapsed '.candidateDeployer.observers = ["mainnet.base.org", "mainnet.base.org"]'
+expect_rejected package-approval-removed 'del(.promotionPackageApproval)'
+expect_rejected package-approval-scope-broadened '.promotionPackageApproval.scope = "broadcast"'
+expect_rejected expected-nonce-drift '.ceremony.expectedDeployerNonce = 1'
+expect_rejected expected-contract-drift '.ceremony.expectedContractAddress = "0x1111111111111111111111111111111111111111"'
+expect_rejected initcode-hash-drift '.ceremony.initCodeHash = ("0x" + ("1" * 64))'
+expect_rejected runtime-hash-drift '.ceremony.expectedRuntimeCodeHash = ("0x" + ("1" * 64))'
+expect_rejected gas-limit-raised '.ceremony.maxGasLimit = 250001'
+expect_rejected max-fee-raised '.ceremony.maxFeePerGasWei = "20000001"'
+expect_rejected max-spend-raised '.ceremony.maxGasSpendWei = "5000000000001"'
 
-printf 'proposal anchor validator rejected all unsafe deployment-record mutations\n'
+printf 'proposal anchor package validator rejected all unsafe mutations; broadcast remains blocked\n'

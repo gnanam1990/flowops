@@ -3,11 +3,11 @@
   "kind": "flowops-proposal-anchor",
   "network": "base-mainnet",
   "chainId": 8453,
-  "status": "blocked-no-deployment",
+  "status": "promotion-package-approved-no-deployment",
   "proposalDocument": "docs/proposals/FLOWOPS_BASE_MAINNET_EXPERIMENTAL_ANCHOR_V1.md",
-  "proposalDigest": null,
-  "sourceCommit": null,
-  "designatedDeployer": null,
+  "proposalDigest": "0x35476d70f7c33d19bb8fc1fa3484e289f0a42aac43e2beca7f941f5340132362",
+  "sourceCommit": "bd9292d0f916b1e3d828443b41e31a8e635b2b3e",
+  "designatedDeployer": "0xEEC526F6555dD43536F712D5c978CbC13CB4517f",
   "candidateDeployer": {
     "address": "0xEEC526F6555dD43536F712D5c978CbC13CB4517f",
     "signerClass": "software-eoa-proposal-only",
@@ -15,13 +15,30 @@
     "observedCode": "0x",
     "observedLatestNonce": 0,
     "observedPendingNonce": 0,
-    "observedBalanceWei": "0",
+    "observedBalanceWei": "159318862860265",
     "expectedCreateAddressAtObservedNonce": "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250",
-    "observedAt": "2026-08-15T13:36:28Z",
+    "observedAt": "2026-08-15T13:56:10Z",
     "observers": [
       "mainnet.base.org",
       "base-rpc.publicnode.com"
     ]
+  },
+  "promotionPackageApproval": {
+    "utterance": "APPROVE FLOWOPS PROPOSAL ANCHOR PROMOTION PACKAGE",
+    "digestAlgorithm": "sha256-utf8-no-newline",
+    "digest": "0xbfc1cd20d1f05885029683100e8c0a5387948597db5de68ea13eb1043223a726",
+    "approvedAt": "2026-08-15T13:55:35Z",
+    "scope": "promotion-package-only-no-broadcast"
+  },
+  "ceremony": {
+    "expectedDeployerNonce": 0,
+    "expectedContractAddress": "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250",
+    "initCodeHash": "0x41d3a9c08503394daca600ba7520c6818d7f373c08ecff3c916e2eceef93d35e",
+    "expectedRuntimeCodeHash": "0xe5b5b63f37bfd5b6627f48cedd8c0fdcc841f130fd1d5259058374e7a543ed86",
+    "estimatedGas": 188437,
+    "maxGasLimit": 250000,
+    "maxFeePerGasWei": "20000000",
+    "maxGasSpendWei": "5000000000000"
   },
   "deploymentApprovalDigest": null,
   "contractAddress": null,
