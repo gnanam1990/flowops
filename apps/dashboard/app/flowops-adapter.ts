@@ -1,6 +1,5 @@
 import type { ChatGPTUser } from "./chatgpt-auth";
 import {
-  dashboardSnapshot,
   type Activity,
   type Agent,
   type Approval,
@@ -23,6 +22,20 @@ export type SessionResponse = {
   organizationId: string;
   principalId: string;
   role: string;
+};
+
+type PublicHealth = {
+  controlPlane: string;
+  chainState: DashboardSnapshot["chain"]["state"];
+  authorizationsPaused: boolean;
+  requiredObservers: number;
+  respondingObservers: number;
+  lastObservationAt: string;
+  readyForManualResume: boolean;
+  lastTrusted?: {
+    blockNumber: number;
+    observedAt: string;
+  };
 };
 
 type ControlSnapshot = {
@@ -109,10 +122,15 @@ export async function dashboardForUser(
   config = loadAdapterConfig(),
   request: typeof fetch = fetch,
 ): Promise<DashboardSnapshot> {
-  if (!user) return preview("Sign in with ChatGPT to check FlowOps membership.");
+  const controlApiUrl = config?.controlApiUrl ?? loadControlApiUrl();
+  if (!user) return publicDashboard(controlApiUrl, request);
   if (!config) {
     console.warn("[flowops-adapter] runtime configuration is unavailable");
-    return preview("Live data is not configured for this deployment.");
+    return publicDashboard(
+      controlApiUrl,
+      request,
+      "Member data is not configured for this deployment. Public operational status remains available.",
+    );
   }
 
   try {
@@ -139,7 +157,11 @@ export async function dashboardForUser(
     return mapControlSnapshot(snapshot, session.organizationId);
   } catch (error) {
     console.warn("[flowops-adapter] live snapshot unavailable", safeErrorMessage(error));
-    return preview("Membership or control-plane data is unavailable. No live state is shown.");
+    return publicDashboard(
+      controlApiUrl,
+      request,
+      "Membership could not be authorized. No organization data is shown.",
+    );
   }
 }
 
@@ -173,11 +195,17 @@ function safeErrorMessage(error: unknown): string {
 }
 
 export function loadAdapterConfig(): AdapterConfig | null {
-  const controlApiUrl = process.env.FLOWOPS_CONTROL_API_URL?.trim();
+  const controlApiUrl = loadControlApiUrl();
   const siteProjectId = process.env.FLOWOPS_SITES_PROJECT_ID?.trim();
   const exchangeToken = process.env.FLOWOPS_SITES_EXCHANGE_TOKEN?.trim();
   if (!controlApiUrl || !siteProjectId || !exchangeToken) return null;
   if (!isIdentifier(siteProjectId) || exchangeToken.length < 32 || exchangeToken.length > 512) return null;
+  return { controlApiUrl, siteProjectId, exchangeToken };
+}
+
+export function loadControlApiUrl(): string | null {
+  const controlApiUrl = process.env.FLOWOPS_CONTROL_API_URL?.trim();
+  if (!controlApiUrl) return null;
   let url: URL;
   try {
     url = new URL(controlApiUrl);
@@ -188,7 +216,7 @@ export function loadAdapterConfig(): AdapterConfig | null {
   if ((url.protocol !== "https:" && !(local && url.protocol === "http:")) || url.username || url.password || url.search || url.hash) {
     return null;
   }
-  return { controlApiUrl: url.href.replace(/\/$/, ""), siteProjectId, exchangeToken };
+  return url.href.replace(/\/$/, "");
 }
 
 export async function deriveSiteUserKey(siteProjectId: string, siteUserId: string): Promise<string> {
@@ -442,10 +470,140 @@ function validUnsignedAtomic(value: unknown): value is string {
 	return typeof value === "string" && /^(?:0|[1-9][0-9]{0,77})$/.test(value);
 }
 
-function preview(detail: string): DashboardSnapshot {
+async function publicDashboard(
+  controlApiUrl: string | null,
+  request: typeof fetch,
+  detail = "Live, non-sensitive control-plane health. Sign in to view an authorized organization.",
+): Promise<DashboardSnapshot> {
+  if (!controlApiUrl) return publicUnavailable("Public operational status is not configured.");
+  try {
+    const health = await requestJSON<PublicHealth>(request, `${controlApiUrl}/health`, {});
+    if (
+      health?.controlPlane !== "AVAILABLE" ||
+      !isChainState(health.chainState) ||
+      typeof health.authorizationsPaused !== "boolean" ||
+      !Number.isSafeInteger(health.requiredObservers) ||
+      health.requiredObservers < 2 ||
+      health.requiredObservers > 5 ||
+      !Number.isSafeInteger(health.respondingObservers) ||
+      health.respondingObservers < 0 ||
+      health.respondingObservers > 5 ||
+      health.respondingObservers > health.requiredObservers ||
+      typeof health.readyForManualResume !== "boolean"
+    ) throw new Error("invalid public health response");
+    const observedAt = parseDate(health.lastObservationAt);
+    const trusted = health.lastTrusted;
+    if (trusted && (!Number.isSafeInteger(trusted.blockNumber) || trusted.blockNumber < 0)) {
+      throw new Error("invalid public checkpoint");
+    }
+    const trustedAt = trusted ? parseDate(trusted.observedAt) : null;
+    const observerProgress = `${health.respondingObservers} / ${health.requiredObservers}`;
+    const risks: Risk[] = [];
+    if (health.authorizationsPaused) {
+      risks.push({
+        id: "public-authorization-pause",
+        severity: "critical",
+        title: "New authorizations are paused",
+        detail: "The public control-plane status reports that the authorization boundary is fail-closed.",
+        time: age(observedAt, new Date()),
+      });
+    }
+    if (health.chainState !== "HEALTHY") {
+      risks.push({
+        id: "public-chain-state",
+        severity: health.chainState === "HALTED" ? "critical" : "warning",
+        title: `Base state is ${health.chainState.toLowerCase().replaceAll("_", " ")}`,
+        detail: "FlowOps does not represent new autonomous authorization capacity while canonical chain evidence is restricted.",
+        time: age(observedAt, new Date()),
+      });
+    }
+    return {
+      mode: "public",
+      connection: { label: "Live public status", detail },
+      generatedAt: age(observedAt, new Date()),
+      organization: {
+        name: "FlowOps",
+        plan: "Public operational status",
+        authorizationsPaused: health.authorizationsPaused,
+      },
+      chain: {
+        network: "Base observer",
+        state: health.chainState,
+        observers: health.chainState === "HEALTHY" && health.respondingObservers === health.requiredObservers
+          ? `${observerProgress} agree`
+          : `${observerProgress} reporting`,
+        lastTrustedBlock: trusted ? trusted.blockNumber.toLocaleString("en-US") : "Unavailable",
+        lastTrustedAt: trustedAt ? age(trustedAt, new Date()) : "Unavailable",
+      },
+      money: privateMoney(),
+      approvals: [],
+      agents: [],
+      activity: [],
+      risks,
+      reconciliation: unavailableReconciliation(),
+    };
+  } catch (error) {
+    console.warn("[flowops-adapter] public health unavailable", safeErrorMessage(error));
+    return publicUnavailable("The live control-plane status endpoint is temporarily unavailable. No organization data is shown.");
+  }
+}
+
+function publicUnavailable(detail: string): DashboardSnapshot {
   return {
-    ...dashboardSnapshot,
-    connection: { label: "Preview data", detail },
+    mode: "public",
+    connection: { label: "Status unavailable", detail },
+    generatedAt: "Unavailable",
+    organization: { name: "FlowOps", plan: "Public operational status", authorizationsPaused: true },
+    chain: {
+      network: "Base observer",
+      state: "RECOVERING",
+      observers: "Unavailable",
+      lastTrustedBlock: "Unavailable",
+      lastTrustedAt: "Unavailable",
+    },
+    money: privateMoney(),
+    approvals: [],
+    agents: [],
+    activity: [],
+    risks: [{
+      id: "public-status-unavailable",
+      severity: "critical",
+      title: "Public status is unavailable",
+      detail: "FlowOps refuses to infer chain health or authorization availability from missing evidence.",
+      time: "Current request",
+    }],
+    reconciliation: unavailableReconciliation(),
+  };
+}
+
+function privateMoney(): DashboardSnapshot["money"] {
+  return {
+    asset: "Member-only",
+    total: "Private",
+    available: "Private",
+    reserved: "Private",
+    pending: "Private",
+    unresolved: "Private",
+    spentToday: "Private",
+    monthlySpent: "Private",
+    monthlyBudget: "Private",
+    monthlySpentPercent: null,
+  };
+}
+
+function unavailableReconciliation(): DashboardSnapshot["reconciliation"] {
+  return {
+    available: false,
+    checkpointBlock: "Unavailable",
+    observedThroughBlock: "Unavailable",
+    resolvedCandidates: 0,
+    totalCandidates: 0,
+    unresolvedOutcomes: 0,
+    quarantinedOutcomes: 0,
+    pendingFinality: 0,
+    readyForManualResume: false,
+    complete: false,
+    unclassifiedLedgerTransactions: 0,
   };
 }
 

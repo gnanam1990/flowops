@@ -129,7 +129,7 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
   assert.deepEqual(await recovered.json(), { commandId: "cmd_live_1", state: "SUCCEEDED", kind: "approval.decide", errorCode: "", auditId: "" });
 });
 
-test("renders the FlowOps economic control room", async () => {
+test("renders a fail-closed public control room without illustrative organization data", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
@@ -148,16 +148,62 @@ test("renders the FlowOps economic control room", async () => {
     html,
     /<meta name="twitter:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i,
   );
-  assert.match(html, /Treasury command/);
-  assert.match(html, /Review (?:<!-- -->)?3(?:<!-- -->)? approvals/);
-  assert.match(html, /Base Sepolia/);
-  assert.match(html, /Preview data/);
+  assert.match(html, /Live Base operations/);
+  assert.match(html, /Status unavailable/);
+  assert.match(html, /Base observer/);
+  assert.match(html, /Sign in to control room/);
   assert.match(html, /Pending chain evidence/);
   assert.match(html, /Non-custodial/);
   assert.match(html, /Observer quorum/);
-  assert.match(html, /Preview records are illustrative and cannot move funds/);
-  assert.match(html, /Emergency pause/);
+  assert.match(html, /real public health data/);
+  assert.match(html, /Organization controls locked/);
   assert.match(html, /Economic activity/);
+  assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
+});
+
+test("renders validated live public health without exposing organization records", async (t) => {
+  const observedAt = new Date().toISOString();
+  let respondingObservers = 2;
+  const upstream = createServer((request, response) => {
+    if (request.url !== "/health") return response.writeHead(404).end();
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      controlPlane: "AVAILABLE",
+      chainState: "RECOVERING",
+      authorizationsPaused: true,
+      requiredObservers: 2,
+      respondingObservers,
+      lastObservationAt: observedAt,
+      readyForManualResume: true,
+      lastTrusted: { blockNumber: 45511958, observedAt },
+    }));
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => upstream.close(resolve)));
+  const address = upstream.address();
+  assert.ok(address && typeof address !== "string");
+
+  const response = await render({
+    env: { FLOWOPS_CONTROL_API_URL: `http://127.0.0.1:${address.port}` },
+  });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Live public status/);
+  assert.match(html, /45,511,958/);
+  assert.match(html, /2 \/ 2 reporting/);
+  assert.match(html, /New authorizations are paused/);
+  assert.match(html, /Base state is recovering/);
+  assert.match(html, /Organization economic data/);
+  assert.match(html, /Private by default/);
+  assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
+
+  respondingObservers = 3;
+  const invalid = await render({
+    env: { FLOWOPS_CONTROL_API_URL: `http://127.0.0.1:${address.port}` },
+  });
+  const invalidHtml = await invalid.text();
+  assert.match(invalidHtml, /Status unavailable/);
+  assert.doesNotMatch(invalidHtml, /45,511,958|Live public status/);
 });
 
 test("exchanges Sites identity server-side and renders only authorized live fields", async (t) => {
@@ -293,7 +339,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
     env: configuredEnvironment(`http://127.0.0.1:${address.port}`, exchangeCredential),
   });
   const substitutedHtml = await substituted.text();
-  assert.match(substitutedHtml, /Preview data/);
+  assert.match(substitutedHtml, /Status unavailable/);
   assert.doesNotMatch(substitutedHtml, /Acme Operators|Live control plane/);
 
   const missingBindings = await render({
@@ -303,7 +349,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
     },
   });
   const missingBindingsHtml = await missingBindings.text();
-  assert.match(missingBindingsHtml, /Live data is not configured for this deployment/);
+  assert.match(missingBindingsHtml, /Public operational status is not configured/);
   assert.doesNotMatch(missingBindingsHtml, /Acme Operators|Live control plane/);
 });
 
@@ -341,11 +387,11 @@ test("does not replay the Sites exchange credential across an upstream redirect"
 	},
   });
   const html = await response.text();
-  assert.match(html, /Preview data/);
+  assert.match(html, /Status unavailable/);
   assert.equal(redirectedRequests, 0);
 });
 
-test("removes starter content and never claims preview controls executed", async () => {
+test("removes starter content and never claims public controls executed", async () => {
   const response = await render();
   const html = await response.text();
   assert.doesNotMatch(html, /Your site is taking shape|Building your site|codex-preview/);
