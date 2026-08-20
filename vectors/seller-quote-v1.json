@@ -1,0 +1,31 @@
+{
+  "typeString": "SellerQuote(bytes32 purchaseSpecHash,bytes32 sellerId,bytes32 resourceId,uint64 directoryVersion,uint16 schemeVersion,uint256 chainId,address asset,uint256 amountBaseUnits,address payTo,address ackAuthority,bytes32 verificationSpecHash,uint64 declaredWorkTime,uint64 verificationBudgetSeconds,uint64 quoteExpiresAt,bytes32 quoteNonce)",
+  "domain": {
+    "name": "ASCP",
+    "version": "4",
+    "chainId": "84532",
+    "verifyingContract": "0x1111111111111111111111111111111111111111",
+    "separator": "0x38fc76dc6879cd78bd1138e65f61e972f99be7612cd3661abc5d194886acc722"
+  },
+  "quote": {
+    "purchaseSpecHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "sellerId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "resourceId": "0x0000000000000000000000000000000000000000000000000000000000000003",
+    "directoryVersion": 9,
+    "schemeVersion": 1,
+    "chainId": "84532",
+    "asset": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+    "amountBaseUnits": "42",
+    "payTo": "0x3333333333333333333333333333333333333333",
+    "ackAuthority": "0x4444444444444444444444444444444444444444",
+    "verificationSpecHash": "0x0000000000000000000000000000000000000000000000000000000000000004",
+    "declaredWorkTime": 30,
+    "verificationBudgetSeconds": 10,
+    "quoteExpiresAt": 1900000000,
+    "quoteNonce": "0x0000000000000000000000000000000000000000000000000000000000000005"
+  },
+  "structHash": "0x0152a523033e8ad13633a303e819b0c359174ac12574a86fec9ac22f9301462b",
+  "digest": "0x8617e94d747d3126b442bd4911992ef5418109ee0b3f127fc031a49c6fbd141a",
+  "signature": "0xdbd5bc4c91ee830d56f40129d836df7977a133f17399d3c680633409e4b49e88325a2f03dc9e298b5458393fae9ae1e1c3fa37a4356d3e7e02b0ccba43174a2e01",
+  "recoveredSigner": "0xd41c057fd1c78805aac12b0a94a405c0461a6fbb"
+}
