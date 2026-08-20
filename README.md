@@ -35,6 +35,7 @@ pkg/envelope/          signed authorization envelope and canonical digest
 pkg/referencesigner/   customer verifier and one-way execution engine
 internal/policy/       deterministic allow, deny, or approval decision engine
 internal/controlapi/   authenticated tenant, command, and PostgreSQL boundary
+internal/mcp/          authenticated ASCP MCP façade over the control-plane API
 cmd/control-plane-api/ authenticated HTTP control-plane service
 services/              x402, evidence, and reconciliation services
 contracts/             Base escrow and related contracts

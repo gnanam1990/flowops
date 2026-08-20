@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "tools": [
+    {
+      "name": "ascp.intent.create",
+      "title": "Create spend intent",
+      "description": "Submit one bounded payment intent through the same policy and approval path as REST. This never signs or broadcasts a payment.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["intent", "idempotencyKey"],
+        "properties": {
+          "intent": {"type": "object", "description": "The canonical FlowOps PaymentIntent accepted by POST /v1/intents."},
+          "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    },
+    {
+      "name": "ascp.intent.get",
+      "title": "Get spend intent",
+      "description": "Read the redacted lifecycle state of an intent owned by the authenticated agent or organization.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId"],
+        "properties": {"requestId": {"type": "string", "minLength": 1, "maxLength": 128}}
+      }
+    },
+    {
+      "name": "ascp.approval.list",
+      "title": "List pending approvals",
+      "description": "List pending approvals for an authenticated human principal. Agent credentials cannot use this tool.",
+      "inputSchema": {"type": "object", "additionalProperties": false}
+    },
+    {
+      "name": "ascp.approval.get",
+      "title": "Get approval",
+      "description": "Read one organization-scoped approval record. Agent credentials cannot use this tool.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId"],
+        "properties": {"requestId": {"type": "string", "minLength": 1, "maxLength": 128}}
+      }
+    },
+    {
+      "name": "ascp.approval.decide",
+      "title": "Decide approval",
+      "description": "Approve or reject an exact pending-approval snapshot. The control plane still requires the human role, fresh step-up authentication, request digest, and idempotency key.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requestId", "requestDigest", "action", "idempotencyKey"],
+        "properties": {
+          "requestId": {"type": "string", "minLength": 1, "maxLength": 128},
+          "requestDigest": {"type": "string", "minLength": 1, "maxLength": 128},
+          "action": {"type": "string", "enum": ["APPROVE", "REJECT"]},
+          "note": {"type": "string", "maxLength": 2048},
+          "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    }
+  ]
+}

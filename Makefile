@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable
+.PHONY: test check fmt-check solidity-fmt-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -72,6 +72,9 @@ smoke-x402-builder-experiment:
 
 smoke-evidence-fetch:
 	go test -race -run '^TestHandlerSmoke$$' ./internal/evidencefetch
+
+smoke-mcp:
+	go test -race ./internal/mcp ./internal/controlapi ./cmd/control-plane-api
 
 smoke-reconciliation:
 	go test -race -run '^(TestHaltDrillPreservesAmbiguousExecutionAndRecoversOnce|TestCanonicalReorgReversesLedgerAndRequiresFreshOutcome|TestWorkerFinalizesCanonicalReceiptExactlyOnce|TestWorkerPersistsPositiveFinalityAndDoesNotPollItAgain|TestWorkerReorgAtomicallyReversesSettlement|TestSmokeChainHaltStopsBothAuthorizationBoundaries)$$' ./internal/reconciliation ./internal/controlplane
