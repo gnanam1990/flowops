@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowops.example/schemas/seller-quote-v1.json",
+  "title": "ASCP SellerQuote v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["purchaseSpecHash", "sellerId", "resourceId", "directoryVersion", "schemeVersion", "chainId", "asset", "amountBaseUnits", "payTo", "ackAuthority", "verificationSpecHash", "declaredWorkTime", "verificationBudgetSeconds", "quoteExpiresAt", "quoteNonce"],
+  "properties": {
+    "purchaseSpecHash": { "$ref": "#/$defs/hash" },
+    "sellerId": { "$ref": "#/$defs/hash" },
+    "resourceId": { "$ref": "#/$defs/hash" },
+    "directoryVersion": { "type": "integer", "minimum": 1, "maximum": 18446744073709551615 },
+    "schemeVersion": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "chainId": { "$ref": "#/$defs/uint256" },
+    "asset": { "$ref": "#/$defs/address" },
+    "amountBaseUnits": { "$ref": "#/$defs/positiveUint256" },
+    "payTo": { "$ref": "#/$defs/address" },
+    "ackAuthority": { "$ref": "#/$defs/address" },
+    "verificationSpecHash": { "$ref": "#/$defs/hash" },
+    "declaredWorkTime": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615 },
+    "verificationBudgetSeconds": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615 },
+    "quoteExpiresAt": { "type": "integer", "minimum": 1, "maximum": 18446744073709551615 },
+    "quoteNonce": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+    "address": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" },
+    "uint256": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+    "positiveUint256": { "type": "string", "pattern": "^[1-9][0-9]*$" }
+  }
+}
