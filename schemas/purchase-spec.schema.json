@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowops.example/schemas/purchase-spec-v1.json",
+  "title": "ASCP PurchaseSpec v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["orgId", "agentId", "taskId", "method", "canonicalURL", "requestBodyHash", "headerBindings", "responseContract", "category"],
+  "properties": {
+    "orgId": { "$ref": "#/$defs/text" },
+    "agentId": { "$ref": "#/$defs/text" },
+    "taskId": { "$ref": "#/$defs/text" },
+    "method": { "type": "string", "pattern": "^[A-Z!#$%&'*+\\-.^_`|~0-9A-Z]+$" },
+    "canonicalURL": { "type": "string", "pattern": "^https://" },
+    "requestBodyHash": { "oneOf": [{ "const": "" }, { "$ref": "#/$defs/hash" }] },
+    "headerBindings": { "type": "array", "items": { "$ref": "#/$defs/headerBinding" } },
+    "responseContract": { "$ref": "#/$defs/responseContract" },
+    "category": { "$ref": "#/$defs/text" },
+    "reasonRef": { "$ref": "#/$defs/reasonRef" }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+    "headerBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lowercaseName", "valueHash"],
+      "properties": { "lowercaseName": { "type": "string", "pattern": "^[!#$%&'*+\\-.^_`|~0-9a-z]+$" }, "valueHash": { "$ref": "#/$defs/hash" } }
+    },
+    "responseContract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contentType", "schemaRef"],
+      "properties": { "contentType": { "$ref": "#/$defs/text" }, "schemaRef": { "$ref": "#/$defs/text" } }
+    },
+    "reasonRef": {
+      "type": "object", "additionalProperties": false,
+      "required": ["blobRef", "contentHash"],
+      "properties": { "blobRef": { "$ref": "#/$defs/text" }, "contentHash": { "$ref": "#/$defs/hash" } }
+    }
+  }
+}

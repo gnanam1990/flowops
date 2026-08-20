@@ -1,0 +1,5 @@
+{
+  "domainTag": "ASCP_PURCHASE_SPEC_V1",
+  "canonicalJSON": "{\"orgId\":\"org_1\",\"agentId\":\"agent_1\",\"taskId\":\"task_1\",\"method\":\"POST\",\"canonicalURL\":\"https://xn--exmple-cua.com/a/c/~?a=1&a=~&b=2\",\"requestBodyHash\":\"0x249a5e4bc4b0e6f0e331d79be8d3ecf838873594d09bc9b2debdb09ebeabec8d\",\"headerBindings\":[{\"lowercaseName\":\"content-type\",\"valueHash\":\"0x82e6a468c95da6cfe399f69ee0782fd009e354a8030ea5636ea9c7db0edcf7f5\"},{\"lowercaseName\":\"x-request-id\",\"valueHash\":\"0x5521a70e306e4cf143fc3b54739d4053a40cc9765dbc2f1d2c86a2ea55e5dfe0\"}],\"responseContract\":{\"contentType\":\"application/json\",\"schemaRef\":\"schema:result-v1\"},\"category\":\"research\",\"reasonRef\":{\"blobRef\":\"blob://reasons/1\",\"contentHash\":\"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}",
+  "purchaseSpecHash": "0x27edff0b7e17cf874b69f6b98838dc4f2b556232b1a73461ccb3ad753b0e7d7a"
+}
