@@ -39,6 +39,7 @@ internal/mcp/          authenticated ASCP MCP façade over the control-plane API
 cmd/control-plane-api/ authenticated HTTP control-plane service
 services/              x402, evidence, and reconciliation services
 contracts/             Base escrow and related contracts
+                       (including the unaudited governed ServiceDirectory)
 apps/dashboard/        operator and customer UI
 docs/product/           revisioned product definition
 docs/evidence/          immutable Phase 0 evidence
