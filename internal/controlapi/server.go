@@ -106,8 +106,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("POST /v1/sites/session", s.handleSiteSessionExchange)
 	mux.Handle("GET /v1/session", s.authenticate(http.HandlerFunc(s.handleSession)))
 	mux.Handle("POST /v1/intents", s.authenticate(http.HandlerFunc(s.handleCreateIntent)))
+	mux.Handle("GET /v1/intents/{requestID}", s.authenticate(http.HandlerFunc(s.handleIntent)))
 	mux.Handle("POST /v1/intents/{requestID}/authorization", s.authenticate(http.HandlerFunc(s.handleIssueAuthorization)))
 	mux.Handle("GET /v1/approvals", s.authenticate(http.HandlerFunc(s.handleApprovals)))
+	mux.Handle("GET /v1/approvals/{requestID}", s.authenticate(http.HandlerFunc(s.handleApproval)))
 	mux.Handle("POST /v1/approvals/{requestID}/decision", s.authenticate(http.HandlerFunc(s.handleApprovalDecision)))
 	mux.Handle("POST /v1/agents/{agentID}/pause", s.authenticate(http.HandlerFunc(s.handlePauseAgent)))
 	mux.Handle("POST /v1/organization/pause", s.authenticate(http.HandlerFunc(s.handlePauseOrganization)))
@@ -561,6 +563,20 @@ func (s *Server) handleCreateIntent(w http.ResponseWriter, r *http.Request) {
 	s.succeedCommand(w, r, command, record, http.StatusCreated)
 }
 
+func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if !s.authorize(w, principal, PermissionRead, "intents:read") || !s.sweepExpired(w, r) {
+		return
+	}
+	record, exists := s.lifecycle.Get(r.PathValue("requestID"))
+	if !exists || record.Intent.OrganizationID != principal.OrganizationID ||
+		(principal.Kind == PrincipalAgent && record.Intent.AgentID != principal.AgentID) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"intent": record})
+}
+
 func (s *Server) handleIssueAuthorization(w http.ResponseWriter, r *http.Request) {
 	principal := principalFrom(r.Context())
 	if !s.authorize(w, principal, PermissionIssue, "authorizations:issue") {
@@ -616,6 +632,23 @@ func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"approvals": filtered})
+}
+
+func (s *Server) handleApproval(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if principal.Kind != PrincipalHuman {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", ErrForbidden, false, "")
+		return
+	}
+	if !s.authorize(w, principal, PermissionRead, "records:read") || !s.sweepExpired(w, r) {
+		return
+	}
+	record, exists := s.lifecycle.Get(r.PathValue("requestID"))
+	if !exists || record.Intent.OrganizationID != principal.OrganizationID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approval": record})
 }
 
 type approvalDecisionRequest struct {

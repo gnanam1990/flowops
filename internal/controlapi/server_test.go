@@ -549,7 +549,7 @@ func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *
 	stepUp := now.Add(10 * time.Minute)
 	store.principals[TokenDigest(agentTokenA)] = Principal{
 		ID: "credential_agent_a", OrganizationID: "org_a", Kind: PrincipalAgent, Role: RoleAgent, AgentID: "agent_a",
-		Scopes: []string{"intents:create", "authorizations:issue", "commands:read"},
+		Scopes: []string{"intents:create", "intents:read", "authorizations:issue", "commands:read"},
 	}
 	store.principals[TokenDigest(ownerTokenA)] = Principal{ID: "owner_a", OrganizationID: "org_a", Kind: PrincipalHuman, Role: RoleOwner, StepUpUntil: stepUp}
 	store.principals[TokenDigest(approverToken)] = Principal{ID: "approver_a", OrganizationID: "org_a", Kind: PrincipalHuman, Role: RoleApprover, StepUpUntil: stepUp}
@@ -844,6 +844,42 @@ func TestServerExactIntentIsolationIdempotencyApprovalPauseAndHalt(t *testing.T)
 	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/commands/"+commandID, viewerTokenB, "", nil)
 	if status != http.StatusNotFound {
 		t.Fatalf("cross-tenant command status = %d", status)
+	}
+}
+
+func TestLifecycleReadEndpointsAreTenantAndPrincipalBound(t *testing.T) {
+	server, _, _, _, journal, _ := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	client := server.Client()
+
+	pending := intent("intent_readable", "org_a", "agent_a", "150")
+	status, created := doRequest(t, client, http.MethodPost, server.URL+"/v1/intents", agentTokenA, "intent_readable", pending)
+	if status != http.StatusCreated {
+		t.Fatalf("create readable intent = %d %+v", status, created)
+	}
+	requestID := created["result"].(map[string]any)["requestId"].(string)
+
+	status, got := doRequest(t, client, http.MethodGet, server.URL+"/v1/intents/"+requestID, agentTokenA, "", nil)
+	if status != http.StatusOK || got["intent"].(map[string]any)["requestId"] != requestID {
+		t.Fatalf("agent intent read = %d %+v", status, got)
+	}
+	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/intents/"+requestID, viewerTokenB, "", nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("cross-tenant intent read = %d", status)
+	}
+
+	status, approval := doRequest(t, client, http.MethodGet, server.URL+"/v1/approvals/"+requestID, ownerTokenA, "", nil)
+	if status != http.StatusOK || approval["approval"].(map[string]any)["requestId"] != requestID {
+		t.Fatalf("owner approval read = %d %+v", status, approval)
+	}
+	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/approvals/"+requestID, agentTokenA, "", nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("agent approval read = %d", status)
+	}
+	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/approvals/"+requestID, viewerTokenB, "", nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("cross-tenant approval read = %d", status)
 	}
 }
 
