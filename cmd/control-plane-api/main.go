@@ -22,6 +22,7 @@ import (
 
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/gnanam1990/flowops/internal/controlplane"
+	"github.com/gnanam1990/flowops/internal/mcp"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -41,6 +42,7 @@ type startupConfig struct {
 	trustProxy             bool
 	applyMigrations        bool
 	operatorKey            []byte
+	mcpAllowedOrigins      []string
 	observerRPCs           []reconciliation.RPCProvider
 	observerConfig         reconciliation.Config
 	observerInterval       time.Duration
@@ -169,8 +171,12 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	mcpServer, err := mcp.NewServer(mcp.Config{Delegate: api, AllowedOrigins: cfg.mcpAllowedOrigins})
+	if err != nil {
+		return fmt.Errorf("create MCP server: %w", err)
+	}
 	httpServer := &http.Server{
-		Addr: cfg.address, Handler: enforceTransportSecurity(api, cfg.trustProxy),
+		Addr: cfg.address, Handler: enforceTransportSecurity(publicHandler(api, mcpServer), cfg.trustProxy),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 32 * 1024,
 	}
@@ -253,7 +259,8 @@ func loadConfig() (startupConfig, error) {
 		address: strings.TrimSpace(os.Getenv("FLOWOPS_CONTROL_ADDR")), databaseURL: strings.TrimSpace(os.Getenv("FLOWOPS_DATABASE_URL")),
 		envelopeKeyID: strings.TrimSpace(os.Getenv("FLOWOPS_ENVELOPE_KEY_ID")),
 		envelopeKey:   key, siteSessionKey: siteSessionKey,
-		reconciliation: strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
+		reconciliation:    strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
+		mcpAllowedOrigins: splitMCPOrigins(os.Getenv("FLOWOPS_MCP_ALLOWED_ORIGINS")),
 	}
 	operatorKey, err := decodeSymmetricKey("FLOWOPS_OPERATOR_CONTROL_KEY_B64", os.Getenv("FLOWOPS_OPERATOR_CONTROL_KEY_B64"))
 	if err != nil {
@@ -317,6 +324,24 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, errors.New("database, signing, session, operator-control, observer, and reconciliation configuration are required")
 	}
 	return cfg, nil
+}
+
+func splitMCPOrigins(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	values := strings.Split(value, ",")
+	for index := range values {
+		values[index] = strings.TrimSpace(values[index])
+	}
+	return values
+}
+
+func publicHandler(api, mcpServer http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", mcpServer)
+	mux.Handle("/", api)
+	return mux
 }
 
 func decodeSymmetricKey(name, value string) ([]byte, error) {

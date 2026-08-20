@@ -114,6 +114,28 @@ func TestProxyTransportBoundaryRejectsUntrustedPlaintext(t *testing.T) {
 	}
 }
 
+func TestPublicHandlerSeparatesMCPFromREST(t *testing.T) {
+	api := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { _, _ = writer.Write([]byte("api")) })
+	mcpServer := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { _, _ = writer.Write([]byte("mcp")) })
+	handler := publicHandler(api, mcpServer)
+	for path, want := range map[string]string{"/mcp": "mcp", "/v1/session": "api", "/mcp/other": "api"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := recorder.Body.String(); got != want {
+			t.Errorf("path %s response %q want %q", path, got, want)
+		}
+	}
+}
+
+func TestSplitMCPOrigins(t *testing.T) {
+	if got := splitMCPOrigins(" https://one.example,https://two.example "); len(got) != 2 || got[0] != "https://one.example" || got[1] != "https://two.example" {
+		t.Fatalf("origins = %#v", got)
+	}
+	if got := splitMCPOrigins(" "); got != nil {
+		t.Fatalf("empty origins = %#v", got)
+	}
+}
+
 func TestLoadConfigUsesPlatformPortOnlyWithExplicitProxyTrust(t *testing.T) {
 	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("p", ed25519.SeedSize)))
 	setObserverRuntime(t)
