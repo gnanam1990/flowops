@@ -20,7 +20,10 @@ import (
 	"golang.org/x/net/idna"
 )
 
-const DomainTag = "ASCP_PURCHASE_SPEC_V1"
+const (
+	DomainTag           = "ASCP_PURCHASE_SPEC_V1"
+	MaxRequestBodyBytes = 8 << 20
+)
 
 var (
 	ErrInvalidSpec = errors.New("invalid purchase specification")
@@ -99,6 +102,9 @@ type Result struct {
 // rails-generated transport headers, produces RFC 8785-compatible JSON for
 // this no-floating-point schema, and returns a Keccak-256 purchaseSpecHash.
 func Build(input Input) (Result, error) {
+	if len(input.Body) > MaxRequestBodyBytes {
+		return Result{}, fmt.Errorf("%w: request body exceeds %d bytes", ErrInvalidSpec, MaxRequestBodyBytes)
+	}
 	for name, value := range map[string]string{"orgId": input.OrgID, "agentId": input.AgentID, "taskId": input.TaskID, "category": input.Category} {
 		if strings.TrimSpace(value) == "" || !jcsSafe(value) || len(value) > 1024 {
 			return Result{}, fmt.Errorf("%w: %s is empty, invalid UTF-8, or too long", ErrInvalidSpec, name)
@@ -143,6 +149,27 @@ func Build(input Input) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Spec: spec, CanonicalJSON: canonical, PurchaseSpecHash: keccakHex(canonical), StrippedTransportHeader: stripped}, nil
+}
+
+// ValidatePersisted proves that canonicalJSON is the one allowed serialization
+// of a PurchaseSpec and that body is exactly the bytes bound by that spec.
+// It is used by durable intake before storing an accepted operation.
+func ValidatePersisted(canonicalJSON, body []byte) (Spec, error) {
+	if len(canonicalJSON) == 0 || len(canonicalJSON) > 32<<20 || len(body) > MaxRequestBodyBytes {
+		return Spec{}, fmt.Errorf("%w: persisted payload size is invalid", ErrInvalidSpec)
+	}
+	var spec Spec
+	if err := json.Unmarshal(canonicalJSON, &spec); err != nil {
+		return Spec{}, fmt.Errorf("%w: persisted JSON does not parse", ErrInvalidSpec)
+	}
+	if err := validateSpec(spec, body); err != nil {
+		return Spec{}, err
+	}
+	reencoded, err := canonicalJSONFor(spec)
+	if err != nil || !bytes.Equal(reencoded, canonicalJSON) {
+		return Spec{}, fmt.Errorf("%w: persisted JSON is not canonical", ErrInvalidSpec)
+	}
+	return spec, nil
 }
 
 // CanonicalURL implements the ASCP URL rules: HTTPS only, lowercase scheme and
@@ -242,7 +269,9 @@ func canonicalReason(reason *ReasonRef) (*ReasonRef, error) {
 	return &ReasonRef{BlobRef: reason.BlobRef, ContentHash: reason.ContentHash}, nil
 }
 
-func canonicalJSON(spec Spec) ([]byte, error) {
+func canonicalJSON(spec Spec) ([]byte, error) { return canonicalJSONFor(spec) }
+
+func canonicalJSONFor(spec Spec) ([]byte, error) {
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(false)
@@ -250,6 +279,42 @@ func canonicalJSON(spec Spec) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimSuffix(output.Bytes(), []byte{'\n'}), nil
+}
+
+func validateSpec(spec Spec, body []byte) error {
+	for name, value := range map[string]string{"orgId": spec.OrgID, "agentId": spec.AgentID, "taskId": spec.TaskID, "category": spec.Category} {
+		if strings.TrimSpace(value) == "" || !jcsSafe(value) || len(value) > 1024 {
+			return fmt.Errorf("%w: %s is invalid", ErrInvalidSpec, name)
+		}
+	}
+	if spec.Method == "" || len(spec.Method) > 16 || !isToken(spec.Method) || spec.Method != strings.ToUpper(spec.Method) {
+		return fmt.Errorf("%w: method is invalid", ErrInvalidSpec)
+	}
+	canonicalURL, err := CanonicalURL(spec.CanonicalURL)
+	if err != nil || canonicalURL != spec.CanonicalURL {
+		return fmt.Errorf("%w: canonical URL is invalid", ErrInvalidSpec)
+	}
+	if strings.TrimSpace(spec.Response.ContentType) == "" || strings.TrimSpace(spec.Response.SchemaRef) == "" || !jcsSafe(spec.Response.ContentType) || !jcsSafe(spec.Response.SchemaRef) || len(spec.Response.ContentType) > 256 || len(spec.Response.SchemaRef) > 2048 {
+		return fmt.Errorf("%w: response contract is invalid", ErrInvalidSpec)
+	}
+	if _, err := canonicalReason(spec.ReasonRef); err != nil {
+		return err
+	}
+	previous := ""
+	for _, binding := range spec.HeaderBindings {
+		if !isHeaderName(binding.LowercaseName) || binding.LowercaseName <= previous || !isHash(binding.ValueHash) {
+			return fmt.Errorf("%w: header bindings are invalid or unsorted", ErrInvalidSpec)
+		}
+		previous = binding.LowercaseName
+	}
+	if spec.Method == "GET" {
+		if len(body) != 0 || spec.RequestBodyHash != "" {
+			return fmt.Errorf("%w: GET body binding is invalid", ErrInvalidSpec)
+		}
+	} else if !isHash(spec.RequestBodyHash) || spec.RequestBodyHash != keccakHex(body) {
+		return fmt.Errorf("%w: request body hash does not bind persisted bytes", ErrInvalidSpec)
+	}
+	return nil
 }
 
 func normalizedPath(raw string) (string, error) {
@@ -430,6 +495,10 @@ func isURLLiteral(value byte) bool {
 	return isUnreserved(value) || strings.ContainsRune("!$&'()*+,/:;=@?[]", rune(value))
 }
 func keccakHex(value []byte) string { return crypto.Keccak256Hash(value).Hex() }
+
+// Hash returns the exact lowercase Keccak-256 representation used for every
+// PurchaseSpec and request-body binding.
+func Hash(value []byte) string { return keccakHex(value) }
 func sha256Hex(value []byte) string {
 	sum := sha256.Sum256(value)
 	return hex.EncodeToString(sum[:])

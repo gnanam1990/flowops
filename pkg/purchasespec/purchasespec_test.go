@@ -84,6 +84,23 @@ func TestPublishedVector(t *testing.T) {
 	}
 }
 
+func TestValidatePersistedRejectsByteAndCanonicalizationDrift(t *testing.T) {
+	input := testInput()
+	result, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidatePersisted(result.CanonicalJSON, input.Body); err != nil {
+		t.Fatalf("valid persisted spec error = %v", err)
+	}
+	if _, err := ValidatePersisted(result.CanonicalJSON, []byte(`{"query":"changed"}`)); !errors.Is(err, ErrInvalidSpec) {
+		t.Fatalf("changed persisted body error = %v", err)
+	}
+	if _, err := ValidatePersisted(append([]byte(" "), result.CanonicalJSON...), input.Body); !errors.Is(err, ErrInvalidSpec) {
+		t.Fatalf("noncanonical persisted JSON error = %v", err)
+	}
+}
+
 func TestBuildRejectsAgentHeaderAndBindsExactBody(t *testing.T) {
 	input := testInput()
 	input.Headers = append(input.Headers, Header{Name: "Authorization", Value: "credential-must-never-reach-seller"})
