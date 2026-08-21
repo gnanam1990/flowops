@@ -129,7 +129,8 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO ascp_intents`).WithArgs(
 		input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, input.IdempotencyKey, input.CanonicalInputHash,
-		input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(input.Operation.DirectoryVersion), input.Operation.DirectoryContract, input.Operation.SellerSigner, input.QuoteJSON, input.PurchaseSpecJSON, input.RequestBody, input.Operation.CreatedAt,
+		input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(input.Operation.DirectoryVersion), input.Operation.DirectoryContract, input.Operation.SellerSigner,
+		input.QuoteJSON, input.PurchaseSpecJSON, input.PurchaseSpecJSON, input.RequestBody, input.Operation.CreatedAt,
 	).WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 	mock.ExpectCommit()
 	created, replayed, err := store.Create(context.Background(), input)

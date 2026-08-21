@@ -4,6 +4,9 @@
 package policy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -11,6 +14,20 @@ import (
 
 	"github.com/gnanam1990/flowops/pkg/envelope"
 )
+
+// ConfigHash binds approval and execution snapshots to the exact immutable
+// policy configuration rather than to a caller-asserted version label alone.
+func ConfigHash(cfg Config) (string, error) {
+	if _, err := Compile(cfg); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		return "", fmt.Errorf("encode policy configuration: %w", err)
+	}
+	digest := sha256.Sum256(append([]byte("ASCP_POLICY_CONFIG_V1\n"), encoded...))
+	return "0x" + hex.EncodeToString(digest[:]), nil
+}
 
 type Outcome string
 
@@ -41,18 +58,21 @@ const (
 )
 
 type Config struct {
-	Version                    string          `json:"version"`
-	Enabled                    bool            `json:"enabled"`
-	AllowedChainIDs            []uint64        `json:"allowedChainIds"`
-	AllowedRails               []envelope.Rail `json:"allowedRails"`
-	AllowedAssets              []string        `json:"allowedAssets"`
-	AllowedRecipients          []string        `json:"allowedRecipients"`
-	BlockedCategories          []string        `json:"blockedCategories"`
-	ApprovalRequiredRails      []envelope.Rail `json:"approvalRequiredRails"`
-	PerActionLimitAtomic       string          `json:"perActionLimitAtomic"`
-	AutoApproveThresholdAtomic string          `json:"autoApproveThresholdAtomic"`
-	TaskBudgetAtomic           string          `json:"taskBudgetAtomic"`
-	DailyBudgetAtomic          string          `json:"dailyBudgetAtomic"`
+	Version                       string          `json:"version"`
+	Enabled                       bool            `json:"enabled"`
+	AllowedChainIDs               []uint64        `json:"allowedChainIds"`
+	AllowedRails                  []envelope.Rail `json:"allowedRails"`
+	AllowedAssets                 []string        `json:"allowedAssets"`
+	AllowedRecipients             []string        `json:"allowedRecipients"`
+	BlockedCategories             []string        `json:"blockedCategories"`
+	ApprovalRequiredRails         []envelope.Rail `json:"approvalRequiredRails"`
+	PerActionLimitAtomic          string          `json:"perActionLimitAtomic"`
+	AutoApproveThresholdAtomic    string          `json:"autoApproveThresholdAtomic"`
+	TaskBudgetAtomic              string          `json:"taskBudgetAtomic"`
+	DailyBudgetAtomic             string          `json:"dailyBudgetAtomic"`
+	CategoryDailyBudgetAtomic     string          `json:"categoryDailyBudgetAtomic,omitempty"`
+	LifetimeBudgetAtomic          string          `json:"lifetimeBudgetAtomic,omitempty"`
+	OrganizationDailyBudgetAtomic string          `json:"organizationDailyBudgetAtomic,omitempty"`
 }
 
 type Intent struct {
@@ -126,6 +146,22 @@ func Compile(cfg Config) (*Engine, error) {
 	}
 	if taskBudget.Cmp(dailyBudget) > 0 {
 		return nil, errors.New("task budget cannot exceed daily budget")
+	}
+	for name, value := range map[string]string{
+		"category daily budget":     cfg.CategoryDailyBudgetAtomic,
+		"lifetime budget":           cfg.LifetimeBudgetAtomic,
+		"organization daily budget": cfg.OrganizationDailyBudgetAtomic,
+	} {
+		if value == "" {
+			continue
+		}
+		limit, err := parsePositive(name, value)
+		if err != nil {
+			return nil, err
+		}
+		if perAction.Cmp(limit) > 0 {
+			return nil, fmt.Errorf("per-action limit cannot exceed %s", name)
+		}
 	}
 
 	e := &Engine{

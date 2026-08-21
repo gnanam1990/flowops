@@ -10,9 +10,10 @@ verification spec, protection, chain, and asset.
 outcomes are never rewritten, and a withdrawal/suspension can only cancel a
 still-pending approval. Expiry is evaluated atomically during decision/cancel.
 
-Before turning `APPROVED` into an execution authorization, a later module must
-revalidate current policy/directory/seller conditions and reserve budget in its
-same database transaction. This package does no signing, reservation, or payment.
+Before turning `APPROVED` into an execution authorization, `ascpexecauth`
+reconstructs and verifies the exact approved review hash, revalidates current
+policy/directory/seller conditions, and reserves budget in the same database
+transaction. This package itself does no signing, reservation, or payment.
 
 `PostgresStore` implements create/replay and all terminal transitions using
 conditional SQL updates; the in-memory store exists solely for focused tests.

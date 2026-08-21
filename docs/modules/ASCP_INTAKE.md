@@ -26,4 +26,6 @@ budget, issues a signature, calls a contract, or recognizes payment.
 Use `PostgresStore`; `MemoryStore` is only for tests. The Store transaction
 inserts the operation and unique quote nonce together. A future REST/MCP
 adapter must derive organization and actor only from credentials and persist
-the normalized PurchaseSpec/body before calling this service.
+the exact canonical PurchaseSpec bytes, JSONB query projection, and body before
+calling this service. Execution authorization never reconstructs canonical
+bytes from JSONB normalization.

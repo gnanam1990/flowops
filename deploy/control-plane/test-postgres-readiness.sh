@@ -12,7 +12,9 @@ for required in \
     'REVOKE CREATE ON SCHEMA public FROM PUBLIC' \
     'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public' \
     'GRANT SELECT, INSERT, UPDATE ON commands' \
-    'GRANT SELECT, INSERT ON audit_events, control_events'
+    'GRANT SELECT, INSERT ON audit_events, control_events' \
+    'GRANT SELECT, INSERT ON ascp_intents, ascp_execution_authorizations' \
+    'GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations'
 do
     grep -F "$required" "$grant_file" >/dev/null
 done

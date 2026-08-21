@@ -11,6 +11,11 @@ expiry/invalidation path may transition it onward. Safe/finalized receipts and
 reorgs use distinct states so later accounting and reconciliation cannot
 collapse economic truth.
 
-The migration establishes the durable operation/state boundary. The next
-execution-authorization module will run current-policy revalidation and the
-reservation insert in one serializable SQL transaction.
+The execution-authorization module now performs current local revalidation,
+organization-scoped dimension accounting, and the reservation insert in one
+serializable SQL transaction. Pre-signature reservations cannot exceed the
+15-minute TTL. PostgreSQL race coverage proves that concurrent approvals cannot
+both claim the same final budget slot. Dimension IDs and limits are derived
+from trusted PurchaseSpec and active-policy values, never accepted as caller
+authority. Successful release consumes all dimensions; refund restores only
+the dimensions explicitly marked refundable.

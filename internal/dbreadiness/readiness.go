@@ -45,6 +45,15 @@ var runtimeTables = []tableContract{
 	{name: "sites_identity_providers", allowed: set("SELECT")},
 	{name: "sites_memberships", allowed: set("SELECT")},
 	{name: "flowops_schema_migrations", allowed: set("SELECT")},
+	{name: "ascp_intents", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_approvals", allowed: set("SELECT", "INSERT", "UPDATE")},
+	{name: "ascp_budget_reservations", allowed: set("SELECT", "INSERT", "UPDATE")},
+	{name: "ascp_budget_reservation_dimensions", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_execution_authorizations", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_bearer_handles", allowed: set("SELECT", "INSERT", "UPDATE")},
+	{name: "ascp_directory_snapshots", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_directory_quote_evidence", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_directory_heads", allowed: set("SELECT", "INSERT", "UPDATE")},
 }
 
 var tablePrivileges = []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
