@@ -1,0 +1,25 @@
+{
+  "typeString": "VerdictAttestation(bytes32 callId,bytes32 commitmentHash,address escrowContract,uint64 verifierEpoch,bytes32 verificationSpecHash,bytes32 verifierSoftwareHash,bytes32 deliveryHash,uint64 deliveredAt,bytes32 evidenceHash,uint8 verdict,uint256 verdictNonce,uint64 issuedAt,uint64 validUntil)",
+  "domain": {
+    "name": "ASCP",
+    "version": "4",
+    "chainId": "8453",
+    "verifyingContract": "0x1111111111111111111111111111111111111111"
+  },
+  "attestation": {
+    "callId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "commitmentHash": "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "escrowContract": "0x1111111111111111111111111111111111111111",
+    "verifierEpoch": 7,
+    "verificationSpecHash": "0x0000000000000000000000000000000000000000000000000000000000000003",
+    "verifierSoftwareHash": "0x0000000000000000000000000000000000000000000000000000000000000004",
+    "deliveryHash": "0x0000000000000000000000000000000000000000000000000000000000000005",
+    "deliveredAt": 1800000000,
+    "evidenceHash": "0x0000000000000000000000000000000000000000000000000000000000000006",
+    "verdict": 1,
+    "verdictNonce": "42",
+    "issuedAt": 1800000010,
+    "validUntil": 1800000610
+  },
+  "digest": "0xb5bd196d91f7d0069c355204391ebf4929c51064bb1fbac9213ea810ccbe56dc"
+}
