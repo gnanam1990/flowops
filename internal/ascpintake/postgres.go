@@ -32,12 +32,14 @@ func (s *PostgresStore) Create(ctx context.Context, input StoreInput) (Operation
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO ascp_intents
 			(operation_id, organization_id, actor_id, endpoint, idempotency_key, canonical_input_hash,
-			 quote_hash, purchase_spec_hash, quote_nonce, directory_version, directory_contract, seller_signer, quote_json, purchase_spec_json, request_body, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,to_timestamp($16))
+			 quote_hash, purchase_spec_hash, quote_nonce, directory_version, directory_contract, seller_signer,
+			 quote_json, purchase_spec_json, purchase_spec_bytes, request_body, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,to_timestamp($17))
 		ON CONFLICT (organization_id, actor_id, endpoint, idempotency_key) DO NOTHING
 		RETURNING created_at`,
 		operation.OperationID, operation.OrganizationID, operation.ActorID, Endpoint, input.IdempotencyKey, input.CanonicalInputHash,
-		operation.QuoteHash, operation.PurchaseSpecHash, operation.QuoteNonce, int64(operation.DirectoryVersion), operation.DirectoryContract, operation.SellerSigner, input.QuoteJSON, input.PurchaseSpecJSON, input.RequestBody, operation.CreatedAt,
+		operation.QuoteHash, operation.PurchaseSpecHash, operation.QuoteNonce, int64(operation.DirectoryVersion), operation.DirectoryContract, operation.SellerSigner,
+		input.QuoteJSON, input.PurchaseSpecJSON, input.PurchaseSpecJSON, input.RequestBody, operation.CreatedAt,
 	).Scan(&createdAt)
 	if err == nil {
 		if err := tx.Commit(); err != nil {

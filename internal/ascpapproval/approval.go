@@ -146,6 +146,10 @@ func reviewHash(review Review) (string, error) {
 	return "0x" + hex.EncodeToString(sum[:]), nil
 }
 
+// ReviewHash returns the exact digest persisted and echoed by approval and
+// execution-authorization boundaries.
+func ReviewHash(review Review) (string, error) { return reviewHash(review) }
+
 func idSource(random io.Reader) func() (string, error) {
 	return func() (string, error) {
 		b := make([]byte, 32)

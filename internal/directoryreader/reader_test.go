@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -15,9 +16,10 @@ import (
 
 func TestEvidenceForQuoteRequiresExactFinalizedQuorum(t *testing.T) {
 	observation, quote := fixture(t)
-	reader := newReader(t, source{name: "alpha", observation: observation}, source{name: "bravo", observation: observation})
+	observedAt := time.Unix(1800000000, 0).UTC()
+	reader := newReaderAt(t, observedAt, source{name: "alpha", observation: observation}, source{name: "bravo", observation: observation})
 	result, err := reader.EvidenceForQuote(context.Background(), quote)
-	if err != nil || !result.Evidence.Verified || !result.Evidence.Active || len(result.Providers) != 2 || result.FinalizedBlockNumber != 100 || result.ObservationDigest == "" {
+	if err != nil || !result.Evidence.Verified || !result.Evidence.Active || len(result.Providers) != 2 || result.FinalizedBlockNumber != 100 || result.ObservationDigest == "" || !result.ObservedAt.Equal(observedAt) {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }
@@ -126,9 +128,13 @@ func (s source) ReadFinalized(context.Context) (FinalizedObservation, error) {
 }
 
 func newReader(t *testing.T, sources ...Source) *Reader {
+	return newReaderAt(t, time.Now(), sources...)
+}
+
+func newReaderAt(t *testing.T, observedAt time.Time, sources ...Source) *Reader {
 	t.Helper()
 	observation, _ := fixture(t)
-	reader, err := New(Config{ChainID: 84532, Directory: observation.DirectoryContract, DirectoryCodeHash: observation.DirectoryCodeHash, Sources: sources, Quorum: 2})
+	reader, err := New(Config{ChainID: 84532, Directory: observation.DirectoryContract, DirectoryCodeHash: observation.DirectoryCodeHash, Sources: sources, Quorum: 2}, func() time.Time { return observedAt })
 	if err != nil {
 		t.Fatal(err)
 	}

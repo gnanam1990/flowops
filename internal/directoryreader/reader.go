@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gnanam1990/flowops/pkg/directoryproof"
@@ -61,6 +62,7 @@ type Reader struct {
 	directoryCodeHash string
 	sources           []Source
 	quorum            int
+	clock             func() time.Time
 }
 
 // Result carries the evidence only after all included observers agree on the
@@ -68,17 +70,22 @@ type Reader struct {
 // operational diagnostics; no evidence is returned on an error.
 type Result struct {
 	Evidence             sellerquote.DirectoryEvidence
+	ChainID              uint64
+	DirectoryContract    string
 	FinalizedBlockNumber uint64
 	FinalizedBlockHash   string
 	DirectoryVersion     uint64
 	DirectoryRoot        string
 	ObservationDigest    string
+	ObservedAt           time.Time
 	Providers            []string
 	Failures             map[string]string
+	verified             bool
+	seal                 [32]byte
 }
 
-func New(cfg Config) (*Reader, error) {
-	if cfg.ChainID != 8453 && cfg.ChainID != 84532 || !address(cfg.Directory) || !hash(cfg.DirectoryCodeHash) || len(cfg.Sources) < 2 || len(cfg.Sources) > 5 || cfg.Quorum < 2 || cfg.Quorum > len(cfg.Sources) {
+func New(cfg Config, clocks ...func() time.Time) (*Reader, error) {
+	if cfg.ChainID != 8453 && cfg.ChainID != 84532 || !address(cfg.Directory) || !hash(cfg.DirectoryCodeHash) || len(cfg.Sources) < 2 || len(cfg.Sources) > 5 || cfg.Quorum < 2 || cfg.Quorum > len(cfg.Sources) || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
 		return nil, ErrInvalidConfiguration
 	}
 	names := make(map[string]struct{}, len(cfg.Sources))
@@ -92,7 +99,11 @@ func New(cfg Config) (*Reader, error) {
 		}
 		names[name] = struct{}{}
 	}
-	return &Reader{chainID: cfg.ChainID, directory: cfg.Directory, directoryCodeHash: cfg.DirectoryCodeHash, sources: append([]Source(nil), cfg.Sources...), quorum: cfg.Quorum}, nil
+	clock := time.Now
+	if len(clocks) == 1 {
+		clock = clocks[0]
+	}
+	return &Reader{chainID: cfg.ChainID, directory: cfg.Directory, directoryCodeHash: cfg.DirectoryCodeHash, sources: append([]Source(nil), cfg.Sources...), quorum: cfg.Quorum, clock: clock}, nil
 }
 
 // EvidenceForQuote queries all sources concurrently. A source failure cannot
@@ -168,13 +179,26 @@ func (r *Reader) EvidenceForQuote(ctx context.Context, quote sellerquote.Quote) 
 		result.Failures = nil
 	}
 	result.Evidence = evidence
+	result.ChainID = first.ChainID
+	result.DirectoryContract = first.DirectoryContract
 	result.FinalizedBlockNumber = first.FinalizedBlockNumber
 	result.FinalizedBlockHash = first.FinalizedBlockHash
 	result.DirectoryVersion = first.Directory.Version
 	result.DirectoryRoot = first.Directory.Root
 	result.ObservationDigest = chosenDigest
+	// This time belongs to the completed quorum read, not to a later database
+	// write. Including it in the integrity seal prevents a held result from
+	// being made fresh merely by recording it later.
+	result.ObservedAt = r.clock().UTC()
 	result.Providers = providers
+	result.verified = true
+	result.seal = resultSeal(result)
 	return result, nil
+}
+
+func resultSeal(result Result) [32]byte {
+	encoded, _ := json.Marshal(result)
+	return sha256.Sum256(append([]byte("ASCP_DIRECTORY_RESULT_V1\n"), encoded...))
 }
 
 func (r *Reader) validate(sourceName string, observation FinalizedObservation) error {

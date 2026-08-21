@@ -115,6 +115,7 @@ func TestCompileRejectsUnsafeConfiguration(t *testing.T) {
 		"auto approve above action cap": func(c *Config) { c.AutoApproveThresholdAtomic = "1000001" },
 		"action cap above task budget":  func(c *Config) { c.PerActionLimitAtomic = "5000001" },
 		"task above daily budget":       func(c *Config) { c.TaskBudgetAtomic = "10000001" },
+		"action above lifetime budget":  func(c *Config) { c.LifetimeBudgetAtomic = "99999" },
 		"empty allowlist":               func(c *Config) { c.AllowedRecipients = nil },
 	}
 	for name, mutate := range tests {
@@ -137,5 +138,25 @@ func TestCompileCopiesConfiguration(t *testing.T) {
 	cfg.AllowedRecipients[0] = "0x2222222222222222222222222222222222222222"
 	if got := engine.Evaluate(testIntent(), emptySpend()); got.Outcome != AutoApprove {
 		t.Fatalf("caller mutation changed compiled policy: %+v", got)
+	}
+}
+
+func TestConfigHashRejectsInvalidAndChangesWithEconomicPolicy(t *testing.T) {
+	config := testConfig()
+	first, err := ConfigHash(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.DailyBudgetAtomic = "10000001"
+	second, err := ConfigHash(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("economic policy mutation preserved config hash")
+	}
+	config.Version = ""
+	if _, err := ConfigHash(config); err == nil {
+		t.Fatal("invalid policy configuration was hashed")
 	}
 }

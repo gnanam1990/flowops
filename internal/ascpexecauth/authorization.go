@@ -8,6 +8,10 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/gnanam1990/flowops/internal/ascpapproval"
+	"github.com/gnanam1990/flowops/internal/ascpreservation"
 )
 
 type State string
@@ -20,11 +24,22 @@ const (
 
 var (
 	ErrApprovalNotApproved = errors.New("approval is not approved")
+	ErrApprovalExpired     = errors.New("approval is expired")
+	ErrApprovalSnapshot    = errors.New("approval snapshot does not match")
 	ErrAlreadyEvaluated    = errors.New("execution authorization is already evaluated")
+	ErrRevalidationFailed  = errors.New("execution authorization revalidation failed")
 	ErrInvalidInput        = errors.New("execution authorization input is invalid")
 )
 
-type Input struct{ AuthorizationID, ApprovalID, IntentID, ExecutionSnapshotHash, ReservationID string }
+type Input struct {
+	AuthorizationID       string
+	ApprovalID            string
+	ApprovalSnapshotHash  string
+	IntentID              string
+	ExecutionSnapshotHash string
+	Review                ascpapproval.Review
+	Reservation           ascpreservation.Request
+}
 type Authorization struct {
 	Input
 	State              State
@@ -84,8 +99,19 @@ func (s *Service) Evaluate(ctx context.Context, input Input, approved bool) (Aut
 }
 
 func validInput(input Input) bool {
-	return hash(input.AuthorizationID) && hash(input.IntentID) && hash(input.ExecutionSnapshotHash) && hash(input.ReservationID) &&
-		((input.ApprovalID != "" && hash(input.ApprovalID)) || input.ApprovalID == "")
+	reviewHash, reviewErr := ascpapproval.ReviewHash(input.Review)
+	return hash(input.AuthorizationID) && hash(input.IntentID) && hash(input.ExecutionSnapshotHash) &&
+		input.Reservation.OperationID == input.IntentID && hash(input.Reservation.ReservationID) &&
+		!input.Reservation.ExpiresAt.IsZero() &&
+		((input.ApprovalID != "" && hash(input.ApprovalID) && hash(input.ApprovalSnapshotHash) &&
+			reviewErr == nil && reviewHash == input.ApprovalSnapshotHash) ||
+			(input.ApprovalID == "" && input.ApprovalSnapshotHash == ""))
+}
+
+func reservationID(input Input) string { return input.Reservation.ReservationID }
+
+func reservationExpiresAfter(input Input, now time.Time) bool {
+	return input.Reservation.ExpiresAt.After(now)
 }
 
 func hash(value string) bool {

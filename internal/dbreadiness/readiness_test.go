@@ -102,16 +102,25 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool) (
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT name, checksum FROM flowops_schema_migrations ORDER BY name")).WillReturnRows(migrationRows)
 	contracts := map[string]map[string]bool{
-		"organizations":             {"SELECT": true, "UPDATE": true},
-		"agents":                    {"SELECT": true, "UPDATE": true},
-		"credentials":               {"SELECT": true},
-		"policies":                  {"SELECT": true},
-		"commands":                  {"SELECT": true, "INSERT": true, "UPDATE": true},
-		"audit_events":              {"SELECT": true, "INSERT": true},
-		"control_events":            {"SELECT": true, "INSERT": true},
-		"sites_identity_providers":  {"SELECT": true},
-		"sites_memberships":         {"SELECT": true},
-		"flowops_schema_migrations": {"SELECT": true},
+		"organizations":                      {"SELECT": true, "UPDATE": true},
+		"agents":                             {"SELECT": true, "UPDATE": true},
+		"credentials":                        {"SELECT": true},
+		"policies":                           {"SELECT": true},
+		"commands":                           {"SELECT": true, "INSERT": true, "UPDATE": true},
+		"audit_events":                       {"SELECT": true, "INSERT": true},
+		"control_events":                     {"SELECT": true, "INSERT": true},
+		"sites_identity_providers":           {"SELECT": true},
+		"sites_memberships":                  {"SELECT": true},
+		"flowops_schema_migrations":          {"SELECT": true},
+		"ascp_intents":                       {"SELECT": true, "INSERT": true},
+		"ascp_approvals":                     {"SELECT": true, "INSERT": true, "UPDATE": true},
+		"ascp_budget_reservations":           {"SELECT": true, "INSERT": true, "UPDATE": true},
+		"ascp_budget_reservation_dimensions": {"SELECT": true, "INSERT": true},
+		"ascp_execution_authorizations":      {"SELECT": true, "INSERT": true},
+		"ascp_bearer_handles":                {"SELECT": true, "INSERT": true, "UPDATE": true},
+		"ascp_directory_snapshots":           {"SELECT": true, "INSERT": true},
+		"ascp_directory_quote_evidence":      {"SELECT": true, "INSERT": true},
+		"ascp_directory_heads":               {"SELECT": true, "INSERT": true, "UPDATE": true},
 	}
 	for _, table := range runtimeTables {
 		for _, privilege := range tablePrivileges {

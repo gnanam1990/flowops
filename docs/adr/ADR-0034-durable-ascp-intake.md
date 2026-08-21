@@ -15,8 +15,8 @@ the stored operation while a changed input returns a conflict.
 agent. The canonical input excludes that generated value, so retries cannot
 mint another economic operation. The table persists the quote binding,
 directory version/contract, signer, quote audit snapshot, canonical
-PurchaseSpec JSON, and exact request body before any policy, reservation,
-signer, network, or fund action occurs.
+PurchaseSpec bytes plus a JSONB query projection, and exact request body before
+any policy, reservation, signer, network, or fund action occurs.
 
 ## Production boundary
 
