@@ -25,6 +25,16 @@ GRANT SELECT, INSERT ON ascp_intents, ascp_execution_authorizations,
     ascp_budget_reservation_dimensions, ascp_directory_snapshots,
     ascp_directory_quote_evidence TO :"runtime_role";
 GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations,
-    ascp_bearer_handles, ascp_directory_heads TO :"runtime_role";
+    ascp_directory_heads TO :"runtime_role";
+GRANT SELECT, INSERT ON ascp_bearer_handles, ascp_sign_requests,
+    ascp_bearer_registry, ascp_signer_outbox TO :"runtime_role";
+GRANT UPDATE (state) ON ascp_bearer_handles TO :"runtime_role";
+GRANT UPDATE (prepared_handle, state, prepared_at, activated_at,
+    primary_mirror_digest, mirrored_at, acknowledged_at)
+    ON ascp_sign_requests TO :"runtime_role";
+GRANT UPDATE (primary_mirror_digest, outcome)
+    ON ascp_bearer_registry TO :"runtime_role";
+GRANT UPDATE (state, attempts, delivered_at)
+    ON ascp_signer_outbox TO :"runtime_role";
 
 COMMIT;

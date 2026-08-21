@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func TestVerifyRuntimeSQLAcceptsExactLeastPrivilegeContract(t *testing.T) {
-	db, mock := readinessDB(t, true, nil)
+	db, mock := readinessDB(t, true, nil, nil)
 	report, err := VerifyRuntimeSQL(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +27,7 @@ func TestVerifyRuntimeSQLAcceptsExactLeastPrivilegeContract(t *testing.T) {
 }
 
 func TestVerifyRuntimeSQLFailsClosedWhenSessionIsNotTLS(t *testing.T) {
-	db, mock := readinessDB(t, false, nil)
+	db, mock := readinessDB(t, false, nil, nil)
 	report, err := VerifyRuntimeSQL(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
@@ -40,13 +41,27 @@ func TestVerifyRuntimeSQLFailsClosedWhenSessionIsNotTLS(t *testing.T) {
 }
 
 func TestVerifyRuntimeSQLRejectsSurplusDeletePrivilege(t *testing.T) {
-	db, mock := readinessDB(t, true, map[string]map[string]bool{"commands": {"DELETE": true}})
+	db, mock := readinessDB(t, true, map[string]map[string]bool{"commands": {"DELETE": true}}, nil)
 	report, err := VerifyRuntimeSQL(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Ready {
 		t.Fatal("surplus DELETE privilege was marked ready")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyRuntimeSQLRejectsSurplusSignerColumnUpdatePrivilege(t *testing.T) {
+	db, mock := readinessDB(t, true, nil, map[string][]string{"ascp_sign_requests": {"canonical_payload"}})
+	report, err := VerifyRuntimeSQL(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Ready {
+		t.Fatal("surplus signer payload UPDATE privilege was marked ready")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -72,7 +87,7 @@ func TestValidateRuntimeURLRequiresVerifiedTLS(t *testing.T) {
 	}
 }
 
-func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool) (*sql.DB, sqlmock.Sqlmock) {
+func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, columnExtras map[string][]string) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
@@ -117,7 +132,10 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool) (
 		"ascp_budget_reservations":           {"SELECT": true, "INSERT": true, "UPDATE": true},
 		"ascp_budget_reservation_dimensions": {"SELECT": true, "INSERT": true},
 		"ascp_execution_authorizations":      {"SELECT": true, "INSERT": true},
-		"ascp_bearer_handles":                {"SELECT": true, "INSERT": true, "UPDATE": true},
+		"ascp_bearer_handles":                {"SELECT": true, "INSERT": true},
+		"ascp_sign_requests":                 {"SELECT": true, "INSERT": true},
+		"ascp_bearer_registry":               {"SELECT": true, "INSERT": true},
+		"ascp_signer_outbox":                 {"SELECT": true, "INSERT": true},
 		"ascp_directory_snapshots":           {"SELECT": true, "INSERT": true},
 		"ascp_directory_quote_evidence":      {"SELECT": true, "INSERT": true},
 		"ascp_directory_heads":               {"SELECT": true, "INSERT": true, "UPDATE": true},
@@ -134,6 +152,20 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool) (
 				WithArgs(table.name, privilege).
 				WillReturnRows(sqlmock.NewRows([]string{"granted"}).AddRow(granted))
 		}
+	}
+	for _, contract := range runtimeColumnUpdates {
+		rows := sqlmock.NewRows([]string{"column_name"})
+		columns := make([]string, 0, len(contract.columns))
+		for column := range contract.columns {
+			columns = append(columns, column)
+		}
+		sort.Strings(columns)
+		columns = append(columns, columnExtras[contract.table]...)
+		for _, column := range columns {
+			rows.AddRow(column)
+		}
+		mock.ExpectQuery(`(?s)SELECT column_name.*information_schema\.columns`).
+			WithArgs(contract.table).WillReturnRows(rows)
 	}
 	return db, mock
 }

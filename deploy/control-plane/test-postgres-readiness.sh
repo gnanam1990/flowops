@@ -14,7 +14,12 @@ for required in \
     'GRANT SELECT, INSERT, UPDATE ON commands' \
     'GRANT SELECT, INSERT ON audit_events, control_events' \
     'GRANT SELECT, INSERT ON ascp_intents, ascp_execution_authorizations' \
-    'GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations'
+	'GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations' \
+	'GRANT SELECT, INSERT ON ascp_bearer_handles, ascp_sign_requests' \
+	'GRANT UPDATE (state) ON ascp_bearer_handles' \
+	'GRANT UPDATE (prepared_handle, state, prepared_at, activated_at' \
+	'GRANT UPDATE (primary_mirror_digest, outcome)' \
+	'GRANT UPDATE (state, attempts, delivered_at)'
 do
     grep -F "$required" "$grant_file" >/dev/null
 done

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpapproval"
+	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascpreservation"
 	"github.com/gnanam1990/flowops/internal/policy"
@@ -221,12 +222,131 @@ func TestASCPMigrationBackfillsDimensionsWithoutInventingLegacyCanonicalBytes(t 
 	}
 }
 
+func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveAtomically(t *testing.T) {
+	db := ascpIntegrationDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	operationID := ascpIntegrationHash(2001)
+	approvalID := ascpIntegrationHash(2002)
+	reservationID := ascpIntegrationHash(2003)
+	authorizationID := ascpIntegrationHash(2004)
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO organizations (id, name) VALUES ('org_sign_it', 'Signer Integration')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_intents
+			(operation_id, organization_id, actor_id, endpoint, idempotency_key, canonical_input_hash,
+			 quote_hash, purchase_spec_hash, quote_nonce, directory_version, directory_contract,
+			 seller_signer, quote_json, purchase_spec_json, purchase_spec_bytes, request_body, created_at)
+		VALUES ($1,'org_sign_it','agent_sign_it','ascp.intent.create','sign_it',$2,$3,$4,$5,9,$6,$7,
+		        '{}'::jsonb,'{}'::jsonb,'{}'::bytea,''::bytea,$8)`, operationID,
+		fmt.Sprintf("%064x", 2005), ascpIntegrationHash(2006), ascpIntegrationHash(2007),
+		ascpIntegrationHash(2008), ascpIntegrationDirectory, ascpIntegrationSigner, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_approvals
+			(approval_id, organization_id, intent_id, state, review_snapshot_hash, requested_at,
+			 expires_at, decided_at, decided_by)
+		VALUES ($1,'org_sign_it',$2,'APPROVED',$3,$4,$5,$4,'owner_sign_it')`, approvalID,
+		operationID, ascpIntegrationHash(2009), now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_budget_reservations
+			(reservation_id, operation_id, amount_base_units, state, dimensions, created_at, expires_at)
+		VALUES ($1,$2,'10','RESERVED','[]'::jsonb,$3,$4)`, reservationID, operationID, now, now.Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_execution_authorizations
+			(authorization_id, approval_id, intent_id, state, execution_snapshot_hash,
+			 reservation_id, created_at, evaluated_at)
+		VALUES ($1,$2,$3,'VALIDATED_AND_RESERVED',$4,$5,$6,$6)`, authorizationID, approvalID,
+		operationID, ascpIntegrationHash(2010), reservationID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := ascpbearer.NewActivationStore(db, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalPayload := []byte(`{"module":"lock","amount":"10","safe":"0x8888888888888888888888888888888888888888"}`)
+	evidenceBundle := []byte(`{"policyVersion":3,"directoryVersion":9,"chainHead":"0x00000000000000000000000000000000000000000000000000000000000007db"}`)
+	input := ascpbearer.ActivationInput{
+		RequestID: ascpIntegrationHash(2011), AuthorizationID: authorizationID, OperationID: operationID,
+		ReservationID: reservationID, ActionID: "lock-action-sign-it", CanonicalPayload: canonicalPayload,
+		CanonicalPayloadHash: ascpbearer.CanonicalPayloadHash(canonicalPayload), EvidenceBundle: evidenceBundle,
+		EvidenceBundleHash: ascpbearer.EvidenceBundleHash(evidenceBundle),
+		Digest:             ascpIntegrationHash(2013), Nonce: ascpIntegrationHash(2014),
+		InstrumentType: ascpbearer.InstrumentLockAuthorization, SignerKeyID: "spend-authorizer-1",
+		KeyEpoch: 1, ModuleAddress: ascpIntegrationModule, SafeAddress: ascpIntegrationSafe,
+		KeeperID: "keeper-primary", ValidAfter: now, ValidUntil: now.Add(9 * time.Minute),
+	}
+	request, replayed, err := store.Request(ctx, input)
+	if err != nil || replayed || request.State != ascpbearer.SignRequested {
+		t.Fatalf("request=%+v replayed=%t err=%v", request, replayed, err)
+	}
+	retry := input
+	retry.RequestID = ascpIntegrationHash(2015)
+	if replay, wasReplay, err := store.Request(ctx, retry); err != nil || !wasReplay || replay.RequestID != input.RequestID {
+		t.Fatalf("replay=%+v wasReplay=%t err=%v", replay, wasReplay, err)
+	}
+
+	handle := "opaque-prepared-handle-0123456789abcdef"
+	if request, err = store.RecordPrepared(ctx, input.RequestID, handle); err != nil || request.State != ascpbearer.HandlePrepared {
+		t.Fatalf("prepared request=%+v err=%v", request, err)
+	}
+	entry, err := store.Activate(ctx, input.RequestID)
+	if err != nil || entry.SignatureRef != handle || entry.Outcome != "LIVE" {
+		t.Fatalf("entry=%+v err=%v", entry, err)
+	}
+	var reservationState, handleState string
+	var encryptedArtifact []byte
+	if err := db.QueryRowContext(ctx, `SELECT state FROM ascp_budget_reservations WHERE reservation_id=$1`, reservationID).Scan(&reservationState); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT state, encrypted_artifact FROM ascp_bearer_handles WHERE handle_id=$1`, handle).Scan(&handleState, &encryptedArtifact); err != nil {
+		t.Fatal(err)
+	}
+	if reservationState != "AUTHORIZATION_LIVE" || handleState != "ACTIVE" || encryptedArtifact != nil {
+		t.Fatalf("reservation=%s handle=%s artifact=%x", reservationState, handleState, encryptedArtifact)
+	}
+
+	mirrorDigest, err := ascpbearer.RegistryMirrorDigest(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkPrimaryMirrored(ctx, input.RequestID, ascpIntegrationHash(2099)); !errors.Is(err, ascpbearer.ErrActivationBinding) {
+		t.Fatalf("wrong mirror digest error=%v", err)
+	}
+	request, err = store.MarkPrimaryMirrored(ctx, input.RequestID, mirrorDigest)
+	if err != nil || request.State != ascpbearer.ActiveMirrored {
+		t.Fatalf("mirrored request=%+v err=%v", request, err)
+	}
+	request, err = store.MarkAcknowledged(ctx, input.RequestID, handle)
+	if err != nil || request.State != ascpbearer.ActivationAcknowledged {
+		t.Fatalf("acknowledged request=%+v err=%v", request, err)
+	}
+	var outboxEvents int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM ascp_signer_outbox WHERE request_id=$1`, input.RequestID).Scan(&outboxEvents); err != nil {
+		t.Fatal(err)
+	}
+	if outboxEvents != 4 {
+		t.Fatalf("outbox events=%d", outboxEvents)
+	}
+}
+
 const (
 	ascpIntegrationUSDC      = "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
 	ascpIntegrationPayee     = "0x3333333333333333333333333333333333333333"
 	ascpIntegrationAck       = "0x4444444444444444444444444444444444444444"
 	ascpIntegrationSigner    = "0x5555555555555555555555555555555555555555"
 	ascpIntegrationDirectory = "0x6666666666666666666666666666666666666666"
+	ascpIntegrationModule    = "0x7777777777777777777777777777777777777777"
+	ascpIntegrationSafe      = "0x8888888888888888888888888888888888888888"
 )
 
 func ascpIntegrationInput(t *testing.T, db *sql.DB, config policy.Config, observationDigest string, now time.Time, sequence uint64) ascpexecauth.Input {
