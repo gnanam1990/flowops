@@ -102,6 +102,9 @@ claimed safe. A chain reorg observed after the durable `SENDING` fence cannot
 recall in-flight network bytes, so seller-side escrow validation remains a
 required second authorization boundary. A leadership implementation that only
 performs a point-in-time read does not satisfy `LeadershipGate.Fence`.
+`internal/ascpleadership.Postgres` is the production adapter: it shares an
+organization-scoped transaction advisory lock with drain and advance, and the
+rails role has read-only access to its epoch table.
 
 ## Observability and operations
 

@@ -23,6 +23,7 @@ for required in \
 	'GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts' \
 	'GRANT SELECT, INSERT ON ascp_keeper_jobs' \
 	'GRANT SELECT ON ascp_seller_jobs, ascp_seller_responses' \
+	'GRANT SELECT ON ascp_leadership_epochs' \
 	'GRANT INSERT (job_id,operation_id,organization_id,chain_id,leadership_epoch,deliver_by,method,request_url' \
 	'GRANT SELECT, INSERT ON ascp_events' \
 	'GRANT SELECT ON ascp_event_checkpoints' \
@@ -58,7 +59,8 @@ for required in \
     'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
 	'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
     'GRANT SELECT ON ascp_seller_jobs, ascp_seller_attempts, ascp_seller_responses' \
-    'GRANT SELECT ON ascp_payment_operations' \
+	'GRANT SELECT ON ascp_payment_operations' \
+	'GRANT SELECT ON ascp_leadership_epochs' \
     'GRANT INSERT ON ascp_seller_attempts, ascp_seller_responses' \
     'GRANT UPDATE (state,eligible_after,lease_owner,lease_token,lease_expires_at,attempt_count' \
     'GRANT UPDATE (state,completed_at,result_code) ON ascp_seller_attempts'
@@ -106,6 +108,58 @@ if printf '%s\n' 'GRANT SELECT,UPDATE ON ascp_seller_jobs TO role;' | rails_gran
 	exit 1
 fi
 printf '%s\n' 'GRANT UPDATE (state) ON ascp_seller_jobs TO role;' | rails_grants_are_safe
+
+leadership_grant_file=deploy/control-plane/configure-leadership-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT' \
+    'leadership_role must exist and have LOGIN' \
+    'leadership_role must not participate in role memberships' \
+    'leadership_role must not own database objects' \
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public' \
+    'GRANT SELECT ON ascp_leadership_epochs, ascp_leadership_events' \
+    'GRANT INSERT (organization_id,epoch,state,evidence_digest,actor,updated_at)' \
+    'GRANT INSERT (organization_id,previous_epoch,new_epoch,previous_state,new_state,evidence_digest,actor,created_at)' \
+    'GRANT UPDATE (epoch,state,evidence_digest,actor,updated_at)' \
+    'GRANT USAGE, SELECT ON SEQUENCE ascp_leadership_events_event_id_seq'
+do
+    grep -F "$required" "$leadership_grant_file" >/dev/null
+done
+
+leadership_grants_are_safe() {
+    awk 'BEGIN { RS=";" }
+    {
+        statement=toupper($0)
+        if (statement !~ /GRANT/ || statement ~ /GRANT USAGE, SELECT ON SEQUENCE/) next
+        gsub(/[[:space:]]+/, " ", statement)
+        sub(/^.*GRANT /, "", statement)
+        split(statement, parts, " ON ")
+        privileges=parts[1]
+        gsub(/[ ]*,[ ]*/, ",", privileges)
+        if (privileges ~ /(^|,)(ALL([ ]+PRIVILEGES)?|DELETE|TRUNCATE|TRIGGER|REFERENCES)(,|$)/) exit 1
+        if (privileges ~ /(^|,)INSERT(,|$)/) exit 1
+        if (privileges ~ /(^|,)UPDATE(,|$)/) exit 1
+    }' "$@"
+}
+
+if ! leadership_grants_are_safe "$leadership_grant_file"; then
+    echo "leadership grant script contains a forbidden broad privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT SELECT, DELETE ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe; then
+    echo "leadership grant checker failed to reject DELETE" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT UPDATE ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe; then
+    echo "leadership grant checker failed to reject table-wide UPDATE" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT INSERT ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe; then
+    echo "leadership grant checker failed to reject table-wide INSERT" >&2
+    exit 1
+fi
+printf '%s\n' 'GRANT INSERT (organization_id) ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe
+printf '%s\n' 'GRANT UPDATE (state) ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe
 
 checkpointer_grant_file=deploy/control-plane/configure-checkpointer-role.sql
 for required in \

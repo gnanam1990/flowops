@@ -136,6 +136,28 @@ or run owner bootstrap commands.
    `FLOWOPS_DB_EVIDENCE_FILE` are present; otherwise it prints `NOT RUN` and the
    deployment gate stays open.
 
+Seller egress and other controlled effects use two additional credentials.
+Apply `configure-leadership-role.sql` to the isolated leadership-controller
+role; it alone may bootstrap, drain, and advance epochs. Apply
+`configure-rails-role.sql` to the seller-egress worker role. The rails and API
+roles can only read the active epoch, while the controller receives only the
+column updates, event inserts, and event sequence access required by the
+state machine:
+
+```sh
+psql "$FLOWOPS_DATABASE_ADMIN_URL" \
+  --set=leadership_role=flowops_leadership \
+  --file=deploy/control-plane/configure-leadership-role.sql
+psql "$FLOWOPS_DATABASE_ADMIN_URL" \
+  --set=rails_role=flowops_rails \
+  --file=deploy/control-plane/configure-rails-role.sql
+```
+
+Do not share the leadership credential with the API, seller worker, signer,
+keeper, or reconciliation services. A cutover is an operator workflow:
+`BeginDrain(expectedEpoch)`, wait for it to return (which proves prior fenced
+effects have exited), stop old-epoch work, then `Advance(expectedEpoch)`.
+
 SQL cannot prove provider backup retention, PITR, encryption at rest, or
 monitoring. A signed operator record is tamper evidence and an accountable
 snapshot, not an independent provider attestation. Before pilot admission,
