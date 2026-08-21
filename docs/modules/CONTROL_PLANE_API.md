@@ -199,6 +199,12 @@ agent; they are not shared process-wide environment variables.
 `FLOWOPS_SITE_SESSION_KEY_B64` must encode exactly 32 random bytes and must be
 stored separately from the FlowOps envelope key.
 
+`FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64` is a separate 32-byte credential for
+`POST /v1/ascp/settlement-attempts`. The request may bind only an operation,
+action, transaction hash, and release-only delivery/evidence hashes. It has no
+field or authority for success, finality, release, refund, or ledger state;
+those outcomes require independent Base receipt quorum.
+
 `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` is optional. When present it is a strict
 array of `organizationId`, `customerId`, `keyId`, and `publicKeyB64`; the last
 field must contain exactly one 32-byte Ed25519 public key. Private-key-shaped

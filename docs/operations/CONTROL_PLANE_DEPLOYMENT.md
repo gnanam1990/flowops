@@ -59,6 +59,7 @@ The API service requires:
 | `FLOWOPS_BASE_OBSERVATION_MAX_AGE` | Maximum trusted observer-heartbeat age |
 | `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` | Maximum tolerated future timestamp skew |
 | `FLOWOPS_OPERATOR_CONTROL_KEY_B64` | Exactly 32 random bytes, base64; global halt/resume authority |
+| `FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64` | Exactly 32 random bytes, base64; distinct from operator/session secrets; may register ASCP transaction identity only |
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
 | `FLOWOPS_ASCP_DIRECTORY_CONTRACT` | Optional canonical lowercase ServiceDirectory address. When unset, durable agent intake remains mounted but returns a fail-closed 503 |
 | `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |

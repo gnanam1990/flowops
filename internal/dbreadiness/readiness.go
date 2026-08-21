@@ -58,6 +58,11 @@ var runtimeTables = []tableContract{
 	{name: "ascp_directory_snapshots", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_directory_quote_evidence", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_directory_heads", allowed: set("SELECT", "INSERT", "UPDATE")},
+	{name: "ascp_payment_operations", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_payment_attempts", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_chain_observations", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_ledger_transactions", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_ledger_postings", allowed: set("SELECT", "INSERT")},
 }
 
 var tablePrivileges = []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
@@ -72,6 +77,8 @@ var runtimeColumnUpdates = []columnUpdateContract{
 	{table: "ascp_sign_requests", columns: set("prepared_handle", "state", "prepared_at", "activated_at", "primary_mirror_digest", "mirrored_at", "acknowledged_at")},
 	{table: "ascp_bearer_registry", columns: set("primary_mirror_digest", "outcome")},
 	{table: "ascp_signer_outbox", columns: set("state", "attempts", "delivered_at")},
+	{table: "ascp_payment_operations", columns: set("state", "locked_transaction_hash", "locked_block_number", "locked_block_hash", "terminal_action", "terminal_transaction_hash", "terminal_block_number", "terminal_block_hash", "updated_at")},
+	{table: "ascp_payment_attempts", columns: set("state", "resolved_at", "block_number", "block_hash", "evidence_digest", "canonical_checked_at")},
 }
 
 func set(values ...string) map[string]bool {

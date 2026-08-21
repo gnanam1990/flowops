@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/pkg/executioncommitment"
 )
 
 const (
@@ -304,6 +306,9 @@ func (s *ActivationStore) Activate(ctx context.Context, requestID string) (Regis
 		entry.ModuleAddress, entry.SafeAddress, entry.CreatedAt); err != nil {
 		return RegistryEntry{}, fmt.Errorf("create bearer registry entry: %w", err)
 	}
+	if err := insertPaymentOperation(ctx, tx, entry, now); err != nil {
+		return RegistryEntry{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO ascp_bearer_handles
 			(handle_id, operation_id, payload_hash, digest, nonce, encrypted_artifact, state, valid_until, created_at)
@@ -322,6 +327,62 @@ func (s *ActivationStore) Activate(ctx context.Context, requestID string) (Regis
 		return RegistryEntry{}, fmt.Errorf("commit signer activation: %w", err)
 	}
 	return entry, nil
+}
+
+func insertPaymentOperation(ctx context.Context, tx *sql.Tx, entry RegistryEntry, now time.Time) error {
+	var organizationID, agentID, commitmentHash, reservationAmount string
+	var commitmentJSON []byte
+	err := tx.QueryRowContext(ctx, `
+		SELECT d.organization_id, d.agent_id, d.commitment_hash, d.commitment_json, r.amount_base_units
+		FROM ascp_policy_decisions d
+		JOIN ascp_execution_authorizations a ON a.intent_id=d.operation_id
+		JOIN ascp_budget_reservations r ON r.reservation_id=a.reservation_id
+		WHERE d.operation_id=$1 AND a.authorization_id=$2 AND r.reservation_id=$3
+		FOR SHARE OF d, a, r`, entry.OperationID, entry.AuthorizationID, entry.ReservationID).
+		Scan(&organizationID, &agentID, &commitmentHash, &commitmentJSON, &reservationAmount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrActivationBinding
+	}
+	if err != nil {
+		return fmt.Errorf("read payment operation commitment: %w", err)
+	}
+	var commitment executioncommitment.Commitment
+	if err := json.Unmarshal(commitmentJSON, &commitment); err != nil {
+		return fmt.Errorf("decode payment operation commitment: %w", err)
+	}
+	digest, err := commitment.Digest(commitment.EscrowContract, commitment.ChainID)
+	nowUnix := now.Unix()
+	if err != nil || digest.Hex() != commitmentHash || commitment.OperationID != entry.OperationID ||
+		commitment.Amount != reservationAmount || commitment.AcceptBy == 0 || commitment.SettleBy <= commitment.AcceptBy ||
+		nowUnix < 0 || uint64(nowUnix) >= commitment.AcceptBy || entry.ValidUntil.Unix() < 0 || uint64(entry.ValidUntil.Unix()) > commitment.AcceptBy {
+		return ErrActivationBinding
+	}
+	chainID, err := strconv.ParseUint(commitment.ChainID, 10, 64)
+	if err != nil || chainID != 8453 && chainID != 84532 || commitment.SettleBy > uint64(1<<63-1) {
+		return ErrActivationBinding
+	}
+	callID := crypto.Keccak256Hash(digest.Bytes()).Hex()
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO ascp_payment_operations
+			(operation_id, organization_id, agent_id, authorization_id, reservation_id, bearer_digest,
+			 commitment_hash, call_id, chain_id, escrow_contract, asset, buyer, pay_to,
+			 amount_base_units, settle_by, state, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,to_timestamp($15),'AUTH_SIGNED',$16,$16)
+		ON CONFLICT (operation_id) DO NOTHING`, entry.OperationID, organizationID, agentID,
+		entry.AuthorizationID, entry.ReservationID, entry.Digest, commitmentHash, callID, chainID,
+		commitment.EscrowContract, commitment.Asset, entry.SafeAddress, commitment.PayTo,
+		commitment.Amount, commitment.SettleBy, now)
+	if err != nil {
+		return fmt.Errorf("create ASCP payment operation: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read ASCP payment operation insert result: %w", err)
+	}
+	if inserted != 1 {
+		return ErrActivationBinding
+	}
+	return nil
 }
 
 func (s *ActivationStore) MarkPrimaryMirrored(ctx context.Context, requestID, mirrorDigest string) (ActivationRequest, error) {

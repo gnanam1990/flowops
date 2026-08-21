@@ -28,6 +28,8 @@ GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations,
     ascp_directory_heads TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_bearer_handles, ascp_sign_requests,
     ascp_bearer_registry, ascp_signer_outbox TO :"runtime_role";
+GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts,
+    ascp_chain_observations, ascp_ledger_transactions, ascp_ledger_postings TO :"runtime_role";
 GRANT UPDATE (state) ON ascp_bearer_handles TO :"runtime_role";
 GRANT UPDATE (prepared_handle, state, prepared_at, activated_at,
     primary_mirror_digest, mirrored_at, acknowledged_at)
@@ -36,5 +38,10 @@ GRANT UPDATE (primary_mirror_digest, outcome)
     ON ascp_bearer_registry TO :"runtime_role";
 GRANT UPDATE (state, attempts, delivered_at)
     ON ascp_signer_outbox TO :"runtime_role";
+GRANT UPDATE (state, locked_transaction_hash, locked_block_number, locked_block_hash,
+    terminal_action, terminal_transaction_hash, terminal_block_number, terminal_block_hash, updated_at)
+    ON ascp_payment_operations TO :"runtime_role";
+GRANT UPDATE (state, resolved_at, block_number, block_hash, evidence_digest, canonical_checked_at)
+    ON ascp_payment_attempts TO :"runtime_role";
 
 COMMIT;

@@ -60,6 +60,32 @@ type ASCPFlowService interface {
 	Authorization(context.Context, ascporchestration.Identity, string) (ascporchestration.Authorization, error)
 }
 
+type ASCPSettlementAttemptRequest struct {
+	OperationID     string `json:"operationId"`
+	Action          string `json:"action"`
+	TransactionHash string `json:"transactionHash"`
+	DeliveryHash    string `json:"deliveryHash,omitempty"`
+	EvidenceHash    string `json:"evidenceHash,omitempty"`
+}
+
+type ASCPSettlementAttempt struct {
+	ASCPSettlementAttemptRequest
+	State        string    `json:"state"`
+	RegisteredAt time.Time `json:"registeredAt"`
+	Replayed     bool      `json:"replayed"`
+}
+
+var (
+	ErrASCPSettlementAttemptInvalid  = errors.New("ASCP settlement attempt is invalid")
+	ErrASCPSettlementAttemptConflict = errors.New("ASCP settlement attempt conflicts with durable state")
+)
+
+// ASCPSettlementRegistrar records keeper-submitted transaction identity only.
+// It cannot declare success, finality, or accounting outcomes.
+type ASCPSettlementRegistrar interface {
+	Register(context.Context, ASCPSettlementAttemptRequest) (ASCPSettlementAttempt, error)
+}
+
 type ServerConfig struct {
 	Store                    Store
 	Lifecycle                *controlplane.Lifecycle
@@ -75,6 +101,8 @@ type ServerConfig struct {
 	Reconciliation           ReconciliationReader
 	ASCPAgent                ASCPAgentService
 	ASCPFlow                 ASCPFlowService
+	ASCPSettlement           ASCPSettlementRegistrar
+	KeeperCallbackKey        []byte
 }
 
 type Server struct {
@@ -92,6 +120,8 @@ type Server struct {
 	reconciliation           ReconciliationReader
 	ascpAgent                ASCPAgentService
 	ascpFlow                 ASCPFlowService
+	ascpSettlement           ASCPSettlementRegistrar
+	keeperCallbackKey        []byte
 	handler                  http.Handler
 }
 
@@ -123,9 +153,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		reconciliation:         cfg.Reconciliation,
 		ascpAgent:              cfg.ASCPAgent,
 		ascpFlow:               cfg.ASCPFlow,
+		ascpSettlement:         cfg.ASCPSettlement,
+		keeperCallbackKey:      append([]byte(nil), cfg.KeeperCallbackKey...),
 	}
 	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
 		return nil, errors.New("operator control key must contain exactly 32 bytes")
+	}
+	if len(s.keeperCallbackKey) != 0 && len(s.keeperCallbackKey) != 32 {
+		return nil, errors.New("keeper callback key must contain exactly 32 bytes")
+	}
+	if len(s.operatorControlKey) == 32 && len(s.keeperCallbackKey) == 32 && subtle.ConstantTimeCompare(s.operatorControlKey, s.keeperCallbackKey) == 1 {
+		return nil, errors.New("keeper callback key must be distinct from operator control key")
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
@@ -162,20 +200,50 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		mux.Handle("GET /v1/operator/reconciliation", s.authenticateOperator(http.HandlerFunc(s.handleOperatorReconciliation)))
 		mux.Handle("POST /v1/operator/executions/{executionID}/quarantine", s.authenticateOperator(http.HandlerFunc(s.handleOperatorQuarantine)))
 	}
+	if s.ascpSettlement != nil && len(s.keeperCallbackKey) == 32 {
+		mux.Handle("POST /v1/ascp/settlement-attempts", s.authenticateStaticKey(s.keeperCallbackKey, http.HandlerFunc(s.handleASCPSettlementAttempt)))
+	}
 	s.handler = securityHeaders(s.withAgentCorrelation(mux))
 	return s, nil
 }
 
 func (s *Server) authenticateOperator(next http.Handler) http.Handler {
+	return s.authenticateStaticKey(s.operatorControlKey, next)
+}
+
+func (s *Server) authenticateStaticKey(key []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearerToken(r.Header.Get("Authorization"))
 		decoded, err := base64.StdEncoding.DecodeString(token)
-		if !ok || err != nil || len(decoded) != len(s.operatorControlKey) || subtle.ConstantTimeCompare(decoded, s.operatorControlKey) != 1 {
+		if !ok || err != nil || len(decoded) != len(key) || subtle.ConstantTimeCompare(decoded, key) != 1 {
 			writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", ErrUnauthenticated, false, "")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) handleASCPSettlementAttempt(w http.ResponseWriter, r *http.Request) {
+	var request ASCPSettlementAttemptRequest
+	if decodeJSON(w, r, &request) != nil {
+		return
+	}
+	attempt, err := s.ascpSettlement.Register(r.Context(), request)
+	if err != nil {
+		status, code := http.StatusInternalServerError, "ASCP_SETTLEMENT_ATTEMPT_FAILED"
+		if errors.Is(err, ErrASCPSettlementAttemptInvalid) {
+			status, code = http.StatusBadRequest, "INVALID_ASCP_SETTLEMENT_ATTEMPT"
+		} else if errors.Is(err, ErrASCPSettlementAttemptConflict) {
+			status, code = http.StatusConflict, "ASCP_SETTLEMENT_ATTEMPT_CONFLICT"
+		}
+		writeError(w, status, code, err, false, "")
+		return
+	}
+	status := http.StatusCreated
+	if attempt.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, attempt)
 }
 
 func (s *Server) withAgentCorrelation(next http.Handler) http.Handler {

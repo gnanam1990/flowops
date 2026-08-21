@@ -19,7 +19,10 @@ for required in \
 	'GRANT UPDATE (state) ON ascp_bearer_handles' \
 	'GRANT UPDATE (prepared_handle, state, prepared_at, activated_at' \
 	'GRANT UPDATE (primary_mirror_digest, outcome)' \
-	'GRANT UPDATE (state, attempts, delivered_at)'
+	'GRANT UPDATE (state, attempts, delivered_at)' \
+	'GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts' \
+	'GRANT UPDATE (state, locked_transaction_hash, locked_block_number, locked_block_hash' \
+	'GRANT UPDATE (state, resolved_at, block_number, block_hash, evidence_digest, canonical_checked_at)'
 do
     grep -F "$required" "$grant_file" >/dev/null
 done

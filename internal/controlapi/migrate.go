@@ -15,6 +15,13 @@ var migrationFiles embed.FS
 
 const migrationLock = int64(703247667732)
 
+// This exact checksum shipped with the unscoped pg_constraint lookup in 0011.
+// Rerunning the now schema-scoped, idempotent script upgrades only that known
+// release; every other checksum mismatch remains a hard failure.
+var repairableMigrationChecksums = map[string]string{
+	"0011_ascp_policy_decisions.sql": "8f6b589d79331504cdcafa6e54476783d4d6919998020062dc47644b3a333fb9",
+}
+
 // Migration describes one migration embedded in this exact binary. The
 // checksum is part of the deployment contract: applied migration bytes must
 // never be edited in place.
@@ -80,7 +87,16 @@ func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 		err = tx.QueryRowContext(ctx, `SELECT checksum FROM flowops_schema_migrations WHERE name = $1`, migration.Name).Scan(&storedChecksum)
 		if err == nil {
 			if storedChecksum != migration.Checksum {
-				return fmt.Errorf("migration %s checksum changed after application", migration.Name)
+				if repairableMigrationChecksums[migration.Name] != storedChecksum {
+					return fmt.Errorf("migration %s checksum changed after application", migration.Name)
+				}
+				if _, err := tx.ExecContext(ctx, string(script)); err != nil {
+					return fmt.Errorf("repair migration %s: %w", migration.Name, err)
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE flowops_schema_migrations SET checksum=$2 WHERE name=$1 AND checksum=$3`,
+					migration.Name, migration.Checksum, storedChecksum); err != nil {
+					return fmt.Errorf("record repaired migration %s: %w", migration.Name, err)
+				}
 			}
 			continue
 		}
