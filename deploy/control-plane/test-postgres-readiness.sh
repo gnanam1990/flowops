@@ -248,13 +248,21 @@ do
 done
 
 recovery_grants_are_safe() {
-    if tr '\n' ' ' | grep -Eq 'GRANT[[:space:]]+([^;]*[[:space:],])?(ALL|INSERT|DELETE|UPDATE|TRUNCATE|TRIGGER|REFERENCES|EXECUTE)([[:space:],]|$)'; then
-        return 1
-    fi
-    return 0
+	awk 'BEGIN { RS=";" }
+	{
+		statement=toupper($0)
+		if (statement !~ /GRANT/) next
+		if (statement ~ /\/\*|--/) exit 1
+		gsub(/[[:space:]]+/, " ", statement)
+		sub(/^ /, "", statement)
+		sub(/ $/, "", statement)
+		if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"RECOVERY_ROLE\"") next
+		if (statement == "GRANT SELECT ON PUBLIC.ASCP_EVENTS, PUBLIC.ASCP_EVENT_CHECKPOINTS TO :\"RECOVERY_ROLE\"") next
+		exit 1
+	}' "$@"
 }
 
-if ! recovery_grants_are_safe <"$recovery_grant_file"; then
+if ! recovery_grants_are_safe "$recovery_grant_file"; then
     echo "recovery grant script contains a forbidden write or execution privilege" >&2
     exit 1
 fi
@@ -262,7 +270,16 @@ if printf '%s\n' 'GRANT SELECT,' '    INSERT ON public.ascp_events TO :"recovery
     echo "recovery grant checker failed to reject a multiline write privilege" >&2
     exit 1
 fi
-printf '%s\n' 'GRANT SELECT ON public.ascp_events TO :"recovery_role";' | recovery_grants_are_safe
+if printf '%s\n' 'grant select, delete on public.ascp_events to :"recovery_role";' | recovery_grants_are_safe; then
+    echo "recovery grant checker failed to reject a lowercase write privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT SELECT/*hidden*/, INSERT ON public.ascp_events TO :"recovery_role";' | recovery_grants_are_safe; then
+    echo "recovery grant checker failed to reject a comment-obfuscated privilege" >&2
+    exit 1
+fi
+printf '%s\n' 'GRANT USAGE ON SCHEMA public TO :"recovery_role";' \
+    'GRANT SELECT ON public.ascp_events, public.ascp_event_checkpoints TO :"recovery_role";' | recovery_grants_are_safe
 
 if [ -n "${FLOWOPS_DATABASE_URL:-}" ]; then
     go run ./cmd/postgres-readiness sql

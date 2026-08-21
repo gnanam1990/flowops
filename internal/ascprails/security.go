@@ -47,9 +47,11 @@ func NewRestrictedTransport() (http.RoundTripper, error) {
 // the shared no-proxy, no-redirect, DNS-rebinding-resistant client contract.
 func NewRestrictedHTTPSClient(rawURL string, timeout time.Duration) (*url.URL, *http.Client, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" ||
-		parsed.RawQuery != "" || parsed.Opaque != "" || (parsed.Port() != "" && parsed.Port() != "443") ||
-		timeout < time.Second || timeout > 30*time.Second {
+	if err != nil || parsed.Hostname() == "" || timeout < time.Second || timeout > 30*time.Second {
+		return nil, nil, ErrInvalidConfig
+	}
+	if parsed.Scheme != "https" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" ||
+		parsed.Opaque != "" || (parsed.Port() != "" && parsed.Port() != "443") {
 		return nil, nil, ErrUnsafeDestination
 	}
 	if err := ValidateRestrictedURLShape(parsed.String()); err != nil {

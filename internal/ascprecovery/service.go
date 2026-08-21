@@ -111,7 +111,10 @@ func (s *Service) Latest(ctx context.Context) (ascprails.IntegrityAttestation, e
 	defer cancel()
 	status, err := s.source.Verify(verifyCtx)
 	if err != nil {
-		if ctx.Err() == nil {
+		// Cache dependency failures so a burst does not serialize repeated full
+		// recovery scans. Do not cache cancellation caused by either the caller
+		// or this verifier's own budget: a fresh request gets a fresh budget.
+		if ctx.Err() == nil && verifyCtx.Err() == nil {
 			s.cacheResult(ascprails.IntegrityAttestation{}, err, s.clock().UTC())
 		}
 		return ascprails.IntegrityAttestation{}, err

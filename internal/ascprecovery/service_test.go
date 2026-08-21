@@ -173,6 +173,24 @@ func TestServiceBoundsEachVerification(t *testing.T) {
 	}
 }
 
+func TestServiceDoesNotCacheItsVerificationDeadline(t *testing.T) {
+	_, privateKey, _ := ed25519.GenerateKey(nil)
+	source := &deadlineThenRecoverySource{status: verifiedStatus(9, strings.Repeat("d", 64))}
+	service, err := NewService(source,
+		Config{KeyID: "recovery-key-1", PrivateKey: privateKey, ProofTTL: time.Minute,
+			CacheTTL: 5 * time.Second, VerifyTimeout: time.Second, Clock: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Latest(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first verification error=%v", err)
+	}
+	attestation, err := service.Latest(t.Context())
+	if err != nil || attestation.LocalSequence != 9 || source.calls.Load() != 2 {
+		t.Fatalf("retry attestation=%+v calls=%d error=%v", attestation, source.calls.Load(), err)
+	}
+}
+
 func TestNewEventRecoverySourceValidatesDependenciesAndKeyEpochs(t *testing.T) {
 	store := stubCheckpointStore{}
 	worm := &stubWORMReader{}
@@ -241,6 +259,19 @@ func (s deadlineRecoverySource) Verify(ctx context.Context) (ascpevents.Recovery
 	}
 	<-ctx.Done()
 	return ascpevents.RecoveryStatus{}, ctx.Err()
+}
+
+type deadlineThenRecoverySource struct {
+	status ascpevents.RecoveryStatus
+	calls  atomic.Int64
+}
+
+func (s *deadlineThenRecoverySource) Verify(ctx context.Context) (ascpevents.RecoveryStatus, error) {
+	if s.calls.Add(1) == 1 {
+		<-ctx.Done()
+		return ascpevents.RecoveryStatus{}, ctx.Err()
+	}
+	return s.status, nil
 }
 
 type staticHead struct{ head ascpevents.Head }
