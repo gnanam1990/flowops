@@ -18,6 +18,19 @@ import (
 
 const verifierDecisionLockSeed = int64(604221973)
 
+type verifierTransactionContextKey struct{}
+
+type postgresQueryRower interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func verifierQueryRower(ctx context.Context, fallback *sql.DB) postgresQueryRower {
+	if tx, ok := ctx.Value(verifierTransactionContextKey{}).(*sql.Tx); ok && tx != nil {
+		return tx
+	}
+	return fallback
+}
+
 // DecisionJournal serializes one decision per call across retries. Execute
 // must return the stored result for an identical fingerprint and reject a
 // different fingerprint without invoking compute.
@@ -107,7 +120,7 @@ func (j *PostgresDecisionJournal) Execute(ctx context.Context, callID, chainID, 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return SignedDecision{}, fmt.Errorf("%w: read verifier decision: %v", ErrStateUnavailable, err)
 	}
-	decision, err := compute(ctx)
+	decision, err := compute(context.WithValue(ctx, verifierTransactionContextKey{}, tx))
 	if err != nil {
 		return SignedDecision{}, err
 	}
@@ -147,7 +160,7 @@ func NewPostgresNonceSource(db *sql.DB) (*PostgresNonceSource, error) {
 
 func (s *PostgresNonceSource) Next(ctx context.Context) (*big.Int, error) {
 	var raw string
-	if err := s.db.QueryRowContext(ctx, `SELECT nextval('public.ascp_verdict_nonce_seq')::numeric::text`).Scan(&raw); err != nil {
+	if err := verifierQueryRower(ctx, s.db).QueryRowContext(ctx, `SELECT nextval('public.ascp_verdict_nonce_seq')::numeric::text`).Scan(&raw); err != nil {
 		return nil, fmt.Errorf("%w: allocate verdict nonce: %v", ErrStateUnavailable, err)
 	}
 	nonce, ok := new(big.Int).SetString(raw, 10)

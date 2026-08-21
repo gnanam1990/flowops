@@ -9,18 +9,35 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gnanam1990/flowops/internal/ascpverifier"
 )
 
 type staticVerifier struct {
 	decision ascpverifier.SignedDecision
 	err      error
+}
+
+type blockingVerifier struct {
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (v blockingVerifier) VerifyAndSign(ctx context.Context, _ ascpverifier.Input) (ascpverifier.SignedDecision, error) {
+	v.started <- struct{}{}
+	select {
+	case <-v.release:
+		return ascpverifier.SignedDecision{}, nil
+	case <-ctx.Done():
+		return ascpverifier.SignedDecision{}, ctx.Err()
+	}
 }
 
 func (s staticVerifier) VerifyAndSign(context.Context, ascpverifier.Input) (ascpverifier.SignedDecision, error) {
@@ -126,6 +143,109 @@ func TestHandlerRejectsBadMACDuplicateKeysAndUnavailableReplayState(t *testing.T
 	if unavailableResponse.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unavailable status=%d", unavailableResponse.Code)
 	}
+	for label, signedAt := range map[string]time.Time{"stale": now.Add(-31 * time.Second), "future": now.Add(31 * time.Second)} {
+		response := httptest.NewRecorder()
+		newHandler(&memoryReplayGuard{seen: map[string]struct{}{}}).ServeHTTP(response,
+			signedRequest(t, signedAt, key, "nonce_for_verifier_time_"+label, []byte(`{"requestId":"verifier-request-1","input":{}}`)))
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s timestamp status=%d", label, response.Code)
+		}
+	}
+}
+
+func TestHandlerBindsMACToKeyIDAndRejectsExcessiveJSONDepth(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	key := []byte(strings.Repeat("k", 32))
+	handler, err := NewHandler(HandlerConfig{
+		Verifier: staticVerifier{}, ReplayGuard: &memoryReplayGuard{seen: map[string]struct{}{}},
+		Keys: map[string][]byte{"delivery-key-1": key, "delivery-key-2": key}, Clock: func() time.Time { return now },
+		MaxSkew: 30 * time.Second, ChainID: "8453", EscrowContract: "0x1111111111111111111111111111111111111111",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"requestId":"verifier-request-1","input":{}}`)
+	crossKey := signedRequest(t, now, key, "nonce_for_cross_key_0001", body)
+	crossKey.Header.Set("X-FlowOps-Verifier-Key-Id", "delivery-key-2")
+	crossKeyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(crossKeyResponse, crossKey)
+	if crossKeyResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("cross-key replay status=%d", crossKeyResponse.Code)
+	}
+
+	deepBody := []byte(`{"nested":` + strings.Repeat("[", maxJSONDepth+1) + `0` + strings.Repeat("]", maxJSONDepth+1) + `}`)
+	deepResponse := httptest.NewRecorder()
+	handler.ServeHTTP(deepResponse, signedRequest(t, now, key, "nonce_for_deep_json_0001", deepBody))
+	if deepResponse.Code != http.StatusBadRequest {
+		t.Fatalf("deep JSON status=%d body=%s", deepResponse.Code, deepResponse.Body.String())
+	}
+}
+
+func TestPostgresReplayGuardUsesReviewedPruneRoutine(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT public.prune_ascp_verifier_intake_replays()")).
+		WillReturnRows(sqlmock.NewRows([]string{"deleted"}).AddRow(int64(3)))
+	guard, err := NewPostgresReplayGuard(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := guard.PruneExpired(t.Context())
+	if err != nil || deleted != 3 {
+		t.Fatalf("deleted=%d err=%v", deleted, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHandlerBoundsConcurrentVerificationWork(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	key := []byte(strings.Repeat("k", 32))
+	started := make(chan struct{}, maxConcurrent)
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	handler, err := NewHandler(HandlerConfig{
+		Verifier: blockingVerifier{started: started, release: release}, ReplayGuard: &memoryReplayGuard{seen: map[string]struct{}{}},
+		Keys: map[string][]byte{"delivery-key-1": key}, Clock: func() time.Time { return now }, MaxSkew: 30 * time.Second,
+		ChainID: "8453", EscrowContract: "0x1111111111111111111111111111111111111111",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"requestId":"verifier-request-busy","input":{"commitment":{"chainId":"8453","escrowContract":"0x1111111111111111111111111111111111111111"}}}`)
+	var workers sync.WaitGroup
+	workers.Add(maxConcurrent)
+	for index := 0; index < maxConcurrent; index++ {
+		go func(index int) {
+			defer workers.Done()
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, signedRequest(t, now, key, "nonce_for_busy_worker_000"+strconv.Itoa(index), body))
+		}(index)
+	}
+	for index := 0; index < maxConcurrent; index++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("verification worker did not acquire its slot")
+		}
+	}
+	busyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(busyResponse, signedRequest(t, now, key, "nonce_for_busy_overflow_01", body))
+	if busyResponse.Code != http.StatusServiceUnavailable || !strings.Contains(busyResponse.Body.String(), `"error":"VERIFIER_BUSY"`) {
+		t.Fatalf("busy status=%d body=%s", busyResponse.Code, busyResponse.Body.String())
+	}
+	close(release)
+	workers.Wait()
 }
 
 func TestHandlerMapsDurableVerifierStateFailureToServiceUnavailable(t *testing.T) {
@@ -146,6 +266,20 @@ func TestHandlerMapsDurableVerifierStateFailureToServiceUnavailable(t *testing.T
 	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"error":"VERIFIER_STATE_UNAVAILABLE"`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
+	inactiveHandler, err := NewHandler(HandlerConfig{
+		Verifier:    staticVerifier{err: ascpverifier.ErrVerifierInactive},
+		ReplayGuard: &memoryReplayGuard{seen: map[string]struct{}{}}, Keys: map[string][]byte{"delivery-key-1": key},
+		Clock: func() time.Time { return now }, MaxSkew: 30 * time.Second, ChainID: "8453",
+		EscrowContract: "0x1111111111111111111111111111111111111111",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inactiveResponse := httptest.NewRecorder()
+	inactiveHandler.ServeHTTP(inactiveResponse, signedRequest(t, now, key, "nonce_for_verifier_inactive_1", body))
+	if inactiveResponse.Code != http.StatusServiceUnavailable || !strings.Contains(inactiveResponse.Body.String(), `"error":"VERIFIER_INACTIVE"`) {
+		t.Fatalf("inactive status=%d body=%s", inactiveResponse.Code, inactiveResponse.Body.String())
+	}
 }
 
 type replayGuardFunc func(context.Context, string, string, string, time.Time, time.Time) error
@@ -158,7 +292,7 @@ func signedRequest(t *testing.T, now time.Time, key []byte, nonce string, body [
 	t.Helper()
 	timestamp := strconv.FormatInt(now.Unix(), 10)
 	digest := sha256.Sum256(body)
-	message := "ASCP_VERIFIER_INTAKE_V1\n" + timestamp + "\n" + nonce + "\n" + hex.EncodeToString(digest[:])
+	message := "ASCP_VERIFIER_INTAKE_V2\ndelivery-key-1\nPOST\n/v1/verdicts\n" + timestamp + "\n" + nonce + "\n" + hex.EncodeToString(digest[:])
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte(message))
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost/v1/verdicts", bytes.NewReader(body))

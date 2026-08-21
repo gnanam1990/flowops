@@ -44,8 +44,10 @@ one Base chain and escrow, consumes HMAC-authenticated captured-delivery bodies
 with durable replay nonces, allocates PostgreSQL verdict nonces, serializes one
 append-only decision per call across replicas, revalidates stored signatures,
 and reads only fresh finalized verifier-key observations. Migration `0020` and
-`configure-verifier-role.sql` enforce the append-only and least-privilege DB
-contract. The process has no RPC writer or transaction broadcaster.
+`configure-verifier-role.sql` enforce the least-privilege DB contract. Verdict
+decisions and finalized key observations are permanently append-only; replay
+nonces are immutable for 24 hours and then pruned only through one reviewed
+routine. The process has no RPC writer or transaction broadcaster.
 
 The included private-file digest signer re-opens and validates its key before
 every signature. It is a local/test adapter, not an HSM claim. Production still

@@ -28,6 +28,8 @@ import (
 const (
 	maxRequestBytes = 24 << 20
 	requestTimeout  = 5*time.Minute + 5*time.Second
+	maxJSONDepth    = 64
+	maxConcurrent   = 4
 )
 
 var (
@@ -69,6 +71,17 @@ func (g *PostgresReplayGuard) Consume(ctx context.Context, keyID, nonce, digest 
 	return fmt.Errorf("record verifier intake replay: %w", err)
 }
 
+func (g *PostgresReplayGuard) PruneExpired(ctx context.Context) (int64, error) {
+	var deleted int64
+	if err := g.db.QueryRowContext(ctx, `SELECT public.prune_ascp_verifier_intake_replays()`).Scan(&deleted); err != nil {
+		return 0, fmt.Errorf("prune verifier intake replays: %w", err)
+	}
+	if deleted < 0 {
+		return 0, errors.New("prune verifier intake replays returned a negative count")
+	}
+	return deleted, nil
+}
+
 type HandlerConfig struct {
 	Verifier       Verifier
 	ReplayGuard    ReplayGuard
@@ -87,6 +100,7 @@ type Handler struct {
 	maxSkew  time.Duration
 	chainID  string
 	escrow   string
+	slots    chan struct{}
 }
 
 func NewHandler(config HandlerConfig) (*Handler, error) {
@@ -103,7 +117,7 @@ func NewHandler(config HandlerConfig) (*Handler, error) {
 		keys[keyID] = append([]byte(nil), key...)
 	}
 	return &Handler{verifier: config.Verifier, replays: config.ReplayGuard, keys: keys, clock: config.Clock,
-		maxSkew: config.MaxSkew, chainID: config.ChainID, escrow: config.EscrowContract}, nil
+		maxSkew: config.MaxSkew, chainID: config.ChainID, escrow: config.EscrowContract, slots: make(chan struct{}, maxConcurrent)}, nil
 }
 
 func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -112,6 +126,13 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	request = request.WithContext(requestContext)
 	if request.URL.Path != "/v1/verdicts" || request.URL.RawQuery != "" || request.Method != http.MethodPost {
 		writeError(response, http.StatusNotFound, "NOT_FOUND")
+		return
+	}
+	select {
+	case h.slots <- struct{}{}:
+		defer func() { <-h.slots }()
+	default:
+		writeError(response, http.StatusServiceUnavailable, "VERIFIER_BUSY")
 		return
 	}
 	if request.ContentLength < 0 || request.ContentLength > maxRequestBytes || request.Header.Get("Content-Encoding") != "" {
@@ -128,7 +149,7 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		writeError(response, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
-	if err := h.authenticate(request.Context(), request.Header, raw); err != nil {
+	if err := h.authenticate(request.Context(), request.Method, request.URL.Path, request.Header, raw); err != nil {
 		status := http.StatusUnauthorized
 		code := "UNAUTHENTICATED"
 		if errors.Is(err, ErrReplay) {
@@ -176,7 +197,7 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	}{envelope.RequestID, decision})
 }
 
-func (h *Handler) authenticate(ctx context.Context, headers http.Header, raw []byte) error {
+func (h *Handler) authenticate(ctx context.Context, method, path string, headers http.Header, raw []byte) error {
 	for _, name := range []string{"X-FlowOps-Verifier-Key-Id", "X-FlowOps-Verifier-Timestamp", "X-FlowOps-Verifier-Nonce", "X-FlowOps-Verifier-Signature"} {
 		if len(headers.Values(name)) != 1 {
 			return ErrUnauthenticated
@@ -197,7 +218,8 @@ func (h *Handler) authenticate(ctx context.Context, headers http.Header, raw []b
 		return ErrUnauthenticated
 	}
 	digest := sha256.Sum256(raw)
-	message := "ASCP_VERIFIER_INTAKE_V1\n" + timestamp + "\n" + nonce + "\n" + hex.EncodeToString(digest[:])
+	message := "ASCP_VERIFIER_INTAKE_V2\n" + keyID + "\n" + method + "\n" + path + "\n" +
+		timestamp + "\n" + nonce + "\n" + hex.EncodeToString(digest[:])
 	want := hmac.New(sha256.New, key)
 	_, _ = want.Write([]byte(message))
 	provided, err := hex.DecodeString(signature)
@@ -212,7 +234,7 @@ func (h *Handler) authenticate(ctx context.Context, headers http.Header, raw []b
 
 func rejectDuplicateKeys(raw []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if err := consumeJSONValue(decoder); err != nil {
+	if err := consumeJSONValue(decoder, 0); err != nil {
 		return err
 	}
 	if token, err := decoder.Token(); !errors.Is(err, io.EOF) || token != nil {
@@ -221,7 +243,7 @@ func rejectDuplicateKeys(raw []byte) error {
 	return nil
 }
 
-func consumeJSONValue(decoder *json.Decoder) error {
+func consumeJSONValue(decoder *json.Decoder, depth int) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -229,6 +251,9 @@ func consumeJSONValue(decoder *json.Decoder) error {
 	delimiter, ok := token.(json.Delim)
 	if !ok {
 		return nil
+	}
+	if depth >= maxJSONDepth {
+		return errors.New("JSON nesting limit exceeded")
 	}
 	switch delimiter {
 	case '{':
@@ -246,13 +271,13 @@ func consumeJSONValue(decoder *json.Decoder) error {
 				return errors.New("duplicate JSON key")
 			}
 			seen[key] = struct{}{}
-			if err := consumeJSONValue(decoder); err != nil {
+			if err := consumeJSONValue(decoder, depth+1); err != nil {
 				return err
 			}
 		}
 	case '[':
 		for decoder.More() {
-			if err := consumeJSONValue(decoder); err != nil {
+			if err := consumeJSONValue(decoder, depth+1); err != nil {
 				return err
 			}
 		}

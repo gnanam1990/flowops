@@ -74,21 +74,30 @@ func TestPostgresDecisionJournalPersistsAndReplaysWithoutComputingAgain(t *testi
 func TestStoredDecisionRejectsTamperingAndPostgresNonceIsPositive(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	service, _ := newTestService(t, now, &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}, nil)
-	decision, _ := service.VerifyAndSign(t.Context(), testInput(t, now))
+	decision, err := service.VerifyAndSign(t.Context(), testInput(t, now))
+	if err != nil {
+		t.Fatal(err)
+	}
 	decision.Signature = decision.Signature[:len(decision.Signature)-2] + "00"
 	raw, _ := json.Marshal(decision)
 	if _, err := decodeStoredDecision(raw, decision.Attestation.CallID, "8453"); err == nil {
 		t.Fatal("tampered stored signature accepted")
 	}
 	service, _ = newTestService(t, now, &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}, nil)
-	decision, _ = service.VerifyAndSign(t.Context(), testInput(t, now))
+	decision, err = service.VerifyAndSign(t.Context(), testInput(t, now))
+	if err != nil {
+		t.Fatal(err)
+	}
 	decision.Outcome = OutcomeRefund
 	raw, _ = json.Marshal(decision)
 	if _, err := decodeStoredDecision(raw, decision.Attestation.CallID, "8453"); err == nil {
 		t.Fatal("tampered unsigned outcome metadata accepted")
 	}
 
-	db, mock, _ := sqlmock.New()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = db.Close() })
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT nextval('public.ascp_verdict_nonce_seq')::numeric::text")).
 		WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow("42"))
@@ -96,6 +105,9 @@ func TestStoredDecisionRejectsTamperingAndPostgresNonceIsPositive(t *testing.T) 
 	nonce, err := source.Next(t.Context())
 	if err != nil || nonce.Cmp(big.NewInt(42)) != 0 {
 		t.Fatalf("nonce=%v err=%v", nonce, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -118,9 +130,82 @@ func TestPostgresVerifierKeyGateRequiresFreshFinalizedActiveObservation(t *testi
 		t.Fatalf("stale observation error=%v", err)
 	}
 	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex()), uint64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"active", "observed_at", "evidence_digest"}).AddRow(true, now.Add(time.Second), testHash(8)))
+	if err := gate.CheckActive(t.Context(), "8453", "0x1111111111111111111111111111111111111111", address, 7); !errors.Is(err, ErrVerifierInactive) {
+		t.Fatalf("future observation error=%v", err)
+	}
+	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex()), uint64(7)).
 		WillReturnError(errors.New("database unavailable"))
 	if err := gate.CheckActive(t.Context(), "8453", "0x1111111111111111111111111111111111111111", address, 7); !errors.Is(err, ErrStateUnavailable) {
 		t.Fatalf("database error=%v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresVerifierUsesOneConnectionInsideDecisionTransaction(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	db.SetMaxOpenConns(1)
+
+	key, err := crypto.HexToECDSA(strings.Repeat("11", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	journal, err := NewPostgresDecisionJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonces, err := NewPostgresNonceSource(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate, err := NewPostgresVerifierKeyGate(db, time.Minute, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(Config{
+		VerifierEpoch: 7, VerifierSoftwareHash: testHash(77), AttestationTTL: 10 * time.Minute,
+		Clock: func() time.Time { return now }, Engines: map[Class]Engine{ClassStructuredData: &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}},
+		Signer: &testSigner{key: key}, Nonces: nonces, VerifierKeyGate: gate, DecisionJournal: journal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.trackNonces {
+		t.Fatal("durable nonce source enabled the process-local nonce tracker")
+	}
+
+	gateQuery := regexp.QuoteMeta("SELECT active,observed_at,evidence_digest")
+	expectGate := func() {
+		mock.ExpectQuery(gateQuery).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex()), uint64(7)).
+			WillReturnRows(sqlmock.NewRows([]string{"active", "observed_at", "evidence_digest"}).AddRow(true, now.Add(-time.Second), testHash(8)))
+	}
+	expectGate()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtextextended($1,$2))")).
+		WithArgs(sqlmock.AnyArg(), verifierDecisionLockSeed).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT chain_id,input_fingerprint,decision_json FROM ascp_verdict_decisions WHERE call_id=$1")).
+		WithArgs(sqlmock.AnyArg()).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT nextval('public.ascp_verdict_nonce_seq')::numeric::text")).
+		WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow("42"))
+	expectGate()
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO ascp_verdict_decisions")).
+		WithArgs(sqlmock.AnyArg(), "8453", sqlmock.AnyArg(), "42", sqlmock.AnyArg(), sqlmock.AnyArg(), now).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	expectGate()
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := service.VerifyAndSign(ctx, testInput(t, now)); err != nil {
+		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

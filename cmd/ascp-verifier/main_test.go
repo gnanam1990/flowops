@@ -32,6 +32,10 @@ func TestLoadConfigPinsLoopbackChainEscrowAndSigner(t *testing.T) {
 	if err != nil || config.chainID != "84532" || config.signer.Address() != crypto.PubkeyToAddress(key.PublicKey) {
 		t.Fatalf("config=%+v err=%v", config, err)
 	}
+	t.Setenv("FLOWOPS_VERIFIER_SIGNER_ADDRESS", "0x2222222222222222222222222222222222222222")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("signer address substitution was accepted")
+	}
 }
 
 func TestVerifierConfigRejectsRemoteListenDuplicateKeysAndUnsafeKeyFile(t *testing.T) {
@@ -62,5 +66,16 @@ func TestVerifierConfigRejectsRemoteListenDuplicateKeysAndUnsafeKeyFile(t *testi
 	}
 	if _, _, err := readSignerKey(symlink); err == nil {
 		t.Fatal("symlink signer key accepted")
+	}
+	databaseURL := url.URL{Scheme: "postgres", User: url.User("verifier"), Host: "db.example", Path: "/flowops"}
+	if validateDatabaseURL(databaseURL.String()) == nil {
+		t.Fatal("database URL without verify-full TLS accepted")
+	}
+	for _, override := range []string{"search_path", "options"} {
+		query := url.Values{"sslmode": {"verify-full"}, override: {"unsafe"}}
+		databaseURL.RawQuery = query.Encode()
+		if validateDatabaseURL(databaseURL.String()) == nil {
+			t.Fatalf("database URL %s override accepted", override)
+		}
 	}
 }

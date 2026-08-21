@@ -399,7 +399,9 @@ tokens is not. Verify the old token fails exchange and the new token succeeds.
 
 Run `/flowops/ascp-verifier` as the dedicated `flowops` user in the same pod or
 host as its authenticated delivery producer. The listener rejects non-loopback
-addresses. Apply migration `0020_ascp_verifier_runtime.sql`, create a LOGIN role
+addresses. PostgreSQL 11 or newer is required for the call-scoped
+`hashtextextended` advisory lock. Apply migration
+`0020_ascp_verifier_runtime.sql`, create a LOGIN role
 with no memberships or owned objects, then apply:
 
 ```sh
@@ -433,7 +435,7 @@ Required runtime configuration:
 The intake MAC is lowercase hex HMAC-SHA256 over:
 
 ```text
-ASCP_VERIFIER_INTAKE_V1\n<unix-seconds>\n<nonce>\n<lowercase-sha256-body>
+ASCP_VERIFIER_INTAKE_V2\n<key-id>\nPOST\n/v1/verdicts\n<unix-seconds>\n<nonce>\n<lowercase-sha256-body>
 ```
 
 Send it with `X-FlowOps-Verifier-Key-Id`,
@@ -441,4 +443,8 @@ Send it with `X-FlowOps-Verifier-Key-Id`,
 `X-FlowOps-Verifier-Signature` to `POST /v1/verdicts`. Each retry uses a new
 authentication nonce; the ASCP call/input fingerprint supplies decision
 idempotency. Populate `ascp_verifier_key_observations` only from the finalized
-chain-observer role. Do not run the file signer for production funds.
+chain-observer role. The verifier role can execute only the reviewed replay
+prune routine in addition to its table/sequence allowlist. Intake replay rows
+are immutable for 24 hours and pruned at startup and hourly; alert on prune
+failure and database growth. Verdict decisions and finalized key observations
+are never pruned. Do not run the file signer for production funds.

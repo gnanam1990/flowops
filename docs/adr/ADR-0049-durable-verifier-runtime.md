@@ -16,7 +16,8 @@ process must not absorb this key boundary.
 Run `cmd/ascp-verifier` as a separate loopback-only process. It pins one Base
 chain, one escrow contract, one verifier address and one verifier epoch. Intake
 uses a 32-byte HMAC key epoch, a canonical Unix timestamp, a unique nonce and a
-SHA-256 body digest under `ASCP_VERIFIER_INTAKE_V1`. The nonce is durably
+SHA-256 body digest under `ASCP_VERIFIER_INTAKE_V2`. The MAC also binds the key
+ID, HTTP method, and exact route. The nonce is durably
 inserted before JSON processing; duplicate keys, trailing JSON, unknown fields,
 stale requests, invalid MACs, alternate chains and alternate escrows fail
 closed.
@@ -28,6 +29,13 @@ different decisions. Replays revalidate the stored attestation digest and
 signature before return. The finalized key gate reads the latest append-only
 observer record and requires an active, non-future, fresh observation both
 before evaluation and immediately before signing.
+
+Verdict decisions and finalized key observations are permanently append-only.
+Authenticated intake nonces are immutable for 24 hours, far beyond the maximum
+one-minute request skew, and are then pruned only through the reviewed
+`SECURITY DEFINER` routine. Startup verifies prune authority and the runtime
+repeats pruning hourly; direct replay-table deletion and all table truncation
+remain denied.
 
 The runtime has no RPC writer, keeper key or transaction broadcaster. Its role
 can insert verdicts and replay nonces, read finalized key observations, and use

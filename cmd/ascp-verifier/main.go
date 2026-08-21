@@ -115,6 +115,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if _, err := replays.PruneExpired(startupCtx); err != nil {
+		return err
+	}
 	handler, err := ascpverifierruntime.NewHandler(ascpverifierruntime.HandlerConfig{
 		Verifier: service, ReplayGuard: replays, Keys: config.intakeKeys, Clock: time.Now,
 		MaxSkew: config.requestSkew, ChainID: config.chainID, EscrowContract: config.escrowContract,
@@ -133,6 +136,7 @@ func run(ctx context.Context) error {
 		"escrowContract", config.escrowContract, "verifier", strings.ToLower(config.signer.address.Hex()), "epoch", config.verifierEpoch)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(listener) }()
+	go pruneVerifierReplays(ctx, replays)
 	select {
 	case <-ctx.Done():
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -143,6 +147,26 @@ func run(ctx context.Context) error {
 			return nil
 		}
 		return err
+	}
+}
+
+func pruneVerifierReplays(ctx context.Context, replays *ascpverifierruntime.PostgresReplayGuard) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pruneCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			deleted, err := replays.PruneExpired(pruneCtx)
+			cancel()
+			if err != nil {
+				slog.Error("ASCP verifier replay pruning failed", "error", err)
+				continue
+			}
+			slog.Info("ASCP verifier replay pruning completed", "deleted", deleted)
+		}
 	}
 }
 

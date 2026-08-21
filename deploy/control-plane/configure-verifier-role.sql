@@ -51,4 +51,5 @@ GRANT SELECT, INSERT ON public.ascp_verdict_decisions TO :"verifier_role";
 GRANT SELECT ON public.ascp_verifier_key_observations TO :"verifier_role";
 GRANT INSERT ON public.ascp_verifier_intake_replays TO :"verifier_role";
 GRANT USAGE, SELECT ON SEQUENCE public.ascp_verdict_nonce_seq TO :"verifier_role";
+GRANT EXECUTE ON FUNCTION public.prune_ascp_verifier_intake_replays() TO :"verifier_role";
 COMMIT;

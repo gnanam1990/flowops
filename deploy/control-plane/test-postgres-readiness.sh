@@ -287,7 +287,13 @@ for required in \
     'CREATE TABLE IF NOT EXISTS ascp_verdict_decisions' \
     'CREATE TABLE IF NOT EXISTS ascp_verifier_key_observations' \
     'CREATE TABLE IF NOT EXISTS ascp_verifier_intake_replays' \
-    'reject_ascp_verifier_immutable_mutation'
+    'reject_ascp_verifier_immutable_mutation' \
+    'reject_ascp_verifier_replay_mutation' \
+    'prune_ascp_verifier_intake_replays' \
+    'REVOKE ALL ON FUNCTION prune_ascp_verifier_intake_replays() FROM PUBLIC' \
+    'BEFORE TRUNCATE ON ascp_verdict_decisions' \
+    'BEFORE TRUNCATE ON ascp_verifier_key_observations' \
+    'BEFORE TRUNCATE ON ascp_verifier_intake_replays'
 do
     grep -F "$required" "$verifier_migration" >/dev/null
 done
@@ -303,10 +309,20 @@ for required in \
     'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"verifier_role"' \
     'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"verifier_role"' \
     'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
-    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"verifier_role"'
+    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"verifier_role"' \
+    'ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC'
 do
     grep -F "$required" "$verifier_grant_file" >/dev/null
 done
+
+verifier_default_privileges_are_safe() {
+    grep -F 'ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC' >/dev/null
+}
+verifier_default_privileges_are_safe <"$verifier_grant_file"
+if sed '/ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC/d' "$verifier_grant_file" | verifier_default_privileges_are_safe; then
+    echo "verifier role checker accepted missing future-routine protection" >&2
+    exit 1
+fi
 
 verifier_grants_are_safe() {
     awk 'BEGIN { RS=";" }
@@ -322,6 +338,7 @@ verifier_grants_are_safe() {
         if (statement == "GRANT SELECT ON PUBLIC.ASCP_VERIFIER_KEY_OBSERVATIONS TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT INSERT ON PUBLIC.ASCP_VERIFIER_INTAKE_REPLAYS TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT USAGE, SELECT ON SEQUENCE PUBLIC.ASCP_VERDICT_NONCE_SEQ TO :\"VERIFIER_ROLE\"") next
+        if (statement == "GRANT EXECUTE ON FUNCTION PUBLIC.PRUNE_ASCP_VERIFIER_INTAKE_REPLAYS() TO :\"VERIFIER_ROLE\"") next
         exit 1
     }' "$@"
 }
