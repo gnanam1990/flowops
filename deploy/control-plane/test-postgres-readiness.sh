@@ -39,19 +39,93 @@ if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$grant_file"; then
 fi
 
 keeper_grant_file=deploy/control-plane/configure-keeper-role.sql
-for required in \
-	'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
-    'GRANT SELECT, INSERT ON ascp_keeper_jobs, ascp_keeper_nonce_sequences' \
-    'GRANT UPDATE (lease_owner, lease_token, lease_expires_at, nonce, state' \
-    'GRANT UPDATE (next_nonce, updated_at)' \
-    'GRANT UPDATE (state, broadcast_at, last_error, evidence_digest, observed_at)'
-do
-    grep -F "$required" "$keeper_grant_file" >/dev/null
-done
 
-if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$keeper_grant_file"; then
-    echo "keeper grant script contains a forbidden broad privilege" >&2
-    exit 1
+keeper_contract_is_complete() {
+	awk 'BEGIN {
+		RS=";"
+		allowed["\\SET ON_ERROR_STOP ON \\IF :{?KEEPER_ROLE} \\ELSE \\ECHO \047KEEPER_ROLE PSQL VARIABLE IS REQUIRED\047 SELECT 1/0"]=1
+		allowed["\\ENDIF SELECT COALESCE((SELECT ROLCANLOGIN FROM PG_ROLES WHERE ROLNAME = :\047KEEPER_ROLE\047), FALSE) AS KEEPER_ROLE_CAN_LOGIN \\GSET \\IF :KEEPER_ROLE_CAN_LOGIN \\ELSE \\ECHO \047KEEPER_ROLE MUST EXIST AND HAVE LOGIN\047 SELECT 1/0"]=1
+		allowed["\\ENDIF SELECT EXISTS ( SELECT 1 FROM PG_AUTH_MEMBERS WHERE MEMBER = (SELECT OID FROM PG_ROLES WHERE ROLNAME = :\047KEEPER_ROLE\047) OR ROLEID = (SELECT OID FROM PG_ROLES WHERE ROLNAME = :\047KEEPER_ROLE\047) ) AS KEEPER_ROLE_HAS_MEMBERSHIP \\GSET \\IF :KEEPER_ROLE_HAS_MEMBERSHIP \\ECHO \047KEEPER_ROLE MUST NOT PARTICIPATE IN ROLE MEMBERSHIPS\047 SELECT 1/0"]=1
+		allowed["\\ENDIF SELECT EXISTS ( SELECT 1 FROM PG_SHDEPEND WHERE REFCLASSID = \047PG_AUTHID\047::REGCLASS AND REFOBJID = (SELECT OID FROM PG_ROLES WHERE ROLNAME = :\047KEEPER_ROLE\047) AND DEPTYPE = \047O\047 ) AS KEEPER_ROLE_OWNS_DATABASE_OBJECT \\GSET \\IF :KEEPER_ROLE_OWNS_DATABASE_OBJECT \\ECHO \047KEEPER_ROLE MUST NOT OWN DATABASE OBJECTS\047 SELECT 1/0"]=1
+		allowed["\\ENDIF BEGIN"]=1
+		allowed["ALTER ROLE :\"KEEPER_ROLE\" NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT"]=1
+		allowed["ALTER ROLE :\"KEEPER_ROLE\" SET SEARCH_PATH = PUBLIC"]=1
+		allowed["SELECT FORMAT(\047REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC\047, CURRENT_DATABASE()) \\GEXEC SELECT FORMAT(\047REVOKE TEMPORARY ON DATABASE %I FROM %I\047, CURRENT_DATABASE(), :\047KEEPER_ROLE\047) \\GEXEC REVOKE CREATE ON SCHEMA PUBLIC FROM PUBLIC"]=1
+		allowed["REVOKE CREATE ON SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
+		allowed["GRANT USAGE ON SCHEMA PUBLIC TO :\"KEEPER_ROLE\""]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA PUBLIC FROM PUBLIC"]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA PUBLIC FROM PUBLIC"]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA PUBLIC FROM PUBLIC"]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
+		allowed["ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC"]=1
+		allowed["GRANT SELECT, INSERT ON PUBLIC.ASCP_KEEPER_JOBS, PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES, PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT UPDATE (LEASE_OWNER, LEASE_TOKEN, LEASE_EXPIRES_AT, NONCE, STATE, ATTEMPT_COUNT, CURRENT_ATTEMPT, LAST_ERROR, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_JOBS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT UPDATE (NEXT_NONCE, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT UPDATE (STATE, BROADCAST_AT, LAST_ERROR, EVIDENCE_DIGEST, OBSERVED_AT) ON PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\""]=1
+		allowed["COMMIT"]=1
+		expected_count=23
+	}
+	function normalize(raw, lines, count, idx, line, result) {
+		count=split(raw, lines, "\n")
+		result=""
+		for (idx=1; idx<=count; idx++) {
+			line=lines[idx]
+			sub(/[[:space:]]*--.*/, "", line)
+			result=result " " line
+		}
+		result=toupper(result)
+		gsub(/[[:space:]]+/, " ", result)
+		sub(/^ /, "", result)
+		sub(/ $/, "", result)
+		return result
+	}
+	{
+		if ($0 ~ /\/\*|\*\//) { unsafe=1; next }
+		statement=normalize($0)
+		if (statement == "") next
+		if (!(statement in allowed) || ++seen[statement] != 1) unsafe=1
+		accepted++
+	}
+	END {
+		exit(unsafe || accepted != expected_count)
+	}' "$@"
+}
+
+if ! keeper_contract_is_complete "$keeper_grant_file"; then
+	echo "keeper role contract is missing, commented, or unsafe" >&2
+	exit 1
+fi
+
+if { cat "$keeper_grant_file"; printf '%s\n' 'ALTER ROLE :"keeper_role" SUPERUSER;'; } | keeper_contract_is_complete; then
+	echo "keeper role checker accepted an appended SUPERUSER statement" >&2
+	exit 1
+fi
+if sed 's/^GRANT SELECT ON public.ascp_leadership_epochs/GRANT SELECT, DELETE ON public.ascp_leadership_epochs/' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted a substituted DELETE grant" >&2
+	exit 1
+fi
+if sed 's/^GRANT UPDATE (next_nonce, updated_at)/GRANT UPDATE/' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted table-wide UPDATE" >&2
+	exit 1
+fi
+if sed 's/^GRANT USAGE ON SCHEMA public/GRANT EXECUTE ON FUNCTION public.dangerous()/' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted routine execution" >&2
+	exit 1
+fi
+if sed 's/^GRANT USAGE ON SCHEMA public/GRANT UPDATE\/\*hidden\*\//g' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted a block-comment mutation" >&2
+	exit 1
+fi
+if sed 's/^ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC;/-- &/' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted commented future-routine protection" >&2
+	exit 1
+fi
+if sed 's/^REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC;/-- &/' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted commented routine revocation" >&2
+	exit 1
 fi
 
 rails_grant_file=deploy/control-plane/configure-rails-role.sql

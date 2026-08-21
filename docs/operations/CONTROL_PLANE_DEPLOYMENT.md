@@ -21,7 +21,7 @@ production Base value as part of this procedure.
 The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/flowops-admin`, `/flowops/flowops-operator`,
 `/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`,
-`/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, and
+`/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`, and
 `/flowops/postgres-readiness`. `railway.json` selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
@@ -275,6 +275,49 @@ monitoring. A signed operator record is tamper evidence and an accountable
 snapshot, not an independent provider attestation. Before pilot admission,
 also execute one restore drill into an isolated database and one runtime-
 credential rotation drill; neither is inferred from the readiness report.
+
+Run `/flowops/ascp-keeper` as a separate supervised process with a dedicated
+LOGIN role. Apply migrations `0013` and `0022`, then apply
+`configure-keeper-role.sql`. The role has no
+membership or owned objects, can read only the active leadership epoch, and can
+mutate only reviewed keeper lifecycle columns. Apply the grant contract as
+every migration owner because it removes PostgreSQL's implicit future routine
+execution from `PUBLIC`.
+
+| Variable | Requirement |
+|---|---|
+| `FLOWOPS_KEEPER_DATABASE_URL` | Dedicated keeper-role PostgreSQL URL with exactly one `sslmode=verify-full`; effective schema must be `public` |
+| `FLOWOPS_KEEPER_ID` | Stable keeper deployment identifier |
+| `FLOWOPS_KEEPER_GAS_PAYER` | Canonical lowercase dedicated nonzero EOA address |
+| `FLOWOPS_KEEPER_CHAIN_ID` | Exact pinned Base chain, `8453` or `84532` |
+| `FLOWOPS_KEEPER_ARTIFACT_SOCKET` | Absolute Unix socket for activated signer release |
+| `FLOWOPS_KEEPER_ASSEMBLER_SOCKET` | Absolute Unix socket for deterministic transaction assembly |
+| `FLOWOPS_KEEPER_VERIFIER_SOCKET` | Absolute Unix socket for independent exact-call decoding and binding verification |
+| `FLOWOPS_KEEPER_WALLET_SOCKET` | Absolute Unix socket for the EOA HSM/wallet |
+| `FLOWOPS_KEEPER_SEALER_SOCKET` | Absolute Unix socket for KMS-backed durable raw-transaction sealing |
+| `FLOWOPS_KEEPER_BROADCAST_SOCKET` | Absolute Unix socket for write-only raw-transaction broadcast |
+| `FLOWOPS_KEEPER_CHAIN_SOCKET` | Absolute Unix socket for independently verified read-only Base nonce, fee, replacement, outcome and expiry evidence |
+| `FLOWOPS_KEEPER_MAX_FEE_PER_GAS_WEI` | Canonical positive decimal hard cap |
+| `FLOWOPS_KEEPER_MAX_PRIORITY_FEE_PER_GAS_WEI` | Canonical nonnegative decimal hard cap no greater than the max-fee cap |
+| `FLOWOPS_KEEPER_MAX_GAS_LIMIT` | Optional positive deployment cap, default `1000000`, maximum `30000000` |
+| `FLOWOPS_KEEPER_MAX_FEE_BUMPS` | Optional `0` through `3`, default `3` |
+| `FLOWOPS_KEEPER_BOUNDARY_TIMEOUT` | Optional per-sidecar timeout, default `3s`, maximum `10s` subject to the cycle and lease budgets |
+| `FLOWOPS_KEEPER_INTERVAL` | Optional cycle interval, default `1m`, maximum `5m` |
+| `FLOWOPS_KEEPER_CYCLE_TIMEOUT` | Optional whole-cycle timeout; 10% is reserved for observation, 10% for expiry proof, and 80% for relay; the relay share must include ten boundary timeouts plus five seconds and the total must remain below the interval |
+| `FLOWOPS_KEEPER_LEASE_DURATION` | Optional fenced lease; must include ten boundary timeouts plus five seconds, default `55s`, maximum `1m` |
+| `FLOWOPS_KEEPER_BATCH_SIZE` | Optional observation and relay limit per cycle, default `20`, maximum `100` |
+| `FLOWOPS_KEEPER_EXPIRY_LIMIT` | Optional independently proved expiry scan limit, default `100`, maximum `1000` |
+
+All seven socket paths and device/inode identities must be distinct. Mount them
+from separately reviewed sidecars into immediate directories owned by UID 10001
+or root and not writable by group or other users; each socket must be owned by
+UID 10001 or root and must not be world-writable. Sidecars must expose the exact
+`ASCP_KEEPER_BOUNDARY_V1` health identity documented in
+`ASCP_KEEPER_RELAY.md`. Process startup and passing fixture tests do not prove
+HSM custody, KMS durability, provider independence, funded gas availability or
+live transaction correctness. Keep the keeper EOA capped and alert on ambiguity,
+dead letters, gas floor, lease stalls, fee-bump exhaustion, chain disagreement,
+and expiry-to-broadcast lag.
 
 Signer receipt keys are public material but remain tenant-scoped security
 configuration. Each JSON item must contain exactly `organizationId`,

@@ -19,6 +19,12 @@ import (
 
 func TestPostgresKeeperDurableNonceAndBroadcastLifecycle(t *testing.T) {
 	db := keeperDatabase(t)
+	ctx := context.Background()
+	var runtimeIndexes int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname IN
+		('ascp_keeper_jobs_runtime_claim_idx','ascp_keeper_jobs_runtime_observation_idx')`).Scan(&runtimeIndexes); err != nil || runtimeIndexes != 2 {
+		t.Fatalf("keeper runtime indexes=%d err=%v", runtimeIndexes, err)
+	}
 	now := time.Unix(1_800_000_000, 0).UTC()
 	store, err := NewPostgresStore(db, func() time.Time { return now })
 	if err != nil {
@@ -44,7 +50,7 @@ func TestPostgresKeeperDurableNonceAndBroadcastLifecycle(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			lease, err := store.Claim(context.Background(), input.KeeperID, 20*time.Second)
+			lease, err := store.Claim(context.Background(), input.KeeperID, input.GasPayer, input.ChainID, 20*time.Second)
 			if err == nil {
 				successful.Add(1)
 				claimed <- lease
@@ -82,7 +88,7 @@ func TestPostgresKeeperDurableNonceAndBroadcastLifecycle(t *testing.T) {
 	if err := store.ReleaseLease(context.Background(), lease); err != nil {
 		t.Fatal(err)
 	}
-	observationLease, err := store.ClaimObservation(context.Background(), input.KeeperID, 20*time.Second)
+	observationLease, err := store.ClaimObservation(context.Background(), input.KeeperID, input.GasPayer, input.ChainID, 20*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +100,7 @@ func TestPostgresKeeperDurableNonceAndBroadcastLifecycle(t *testing.T) {
 	if err := store.ReleaseLease(context.Background(), observationLease); err != nil {
 		t.Fatal(err)
 	}
-	observationLease, err = store.ClaimObservation(context.Background(), input.KeeperID, 20*time.Second)
+	observationLease, err = store.ClaimObservation(context.Background(), input.KeeperID, input.GasPayer, input.ChainID, 20*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +130,7 @@ func TestPostgresKeeperDurableNonceAndBroadcastLifecycle(t *testing.T) {
 	if _, _, err := store.Enqueue(context.Background(), replacementInput); err != nil {
 		t.Fatal(err)
 	}
-	replacementLease, err := store.Claim(context.Background(), replacementInput.KeeperID, 20*time.Second)
+	replacementLease, err := store.Claim(context.Background(), replacementInput.KeeperID, replacementInput.GasPayer, replacementInput.ChainID, 20*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +152,7 @@ func TestPostgresKeeperDurableNonceAndBroadcastLifecycle(t *testing.T) {
 	if err := store.ReleaseLease(context.Background(), replacementLease); err != nil {
 		t.Fatal(err)
 	}
-	replacementLease, err = store.Claim(context.Background(), replacementInput.KeeperID, 20*time.Second)
+	replacementLease, err = store.Claim(context.Background(), replacementInput.KeeperID, replacementInput.GasPayer, replacementInput.ChainID, 20*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,6 +170,34 @@ func TestPostgresKeeperDurableNonceAndBroadcastLifecycle(t *testing.T) {
 	}
 	if err := store.ReleaseLease(context.Background(), replacementLease); err != nil {
 		t.Fatal(err)
+	}
+
+	foreign := signedInput(now)
+	foreign.JobID, foreign.OperationID = testHash(110), testHash(111)
+	foreign.AuthorizationDigest = testHash(112)
+	foreign.KeeperID = "keeper-foreign-scope"
+	foreign.GasPayer = "0x9999999999999999999999999999999999999999"
+	if _, _, err := store.Enqueue(context.Background(), foreign); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim(context.Background(), foreign.KeeperID, input.GasPayer, foreign.ChainID, 20*time.Second); !errors.Is(err, ErrNoWork) {
+		t.Fatalf("another gas payer poisoned the worker claim: %v", err)
+	}
+	if lease, err := store.Claim(context.Background(), foreign.KeeperID, foreign.GasPayer, foreign.ChainID, 20*time.Second); err != nil || lease.Job.JobID != foreign.JobID {
+		t.Fatalf("exact gas-payer worker did not claim its job: lease=%+v err=%v", lease, err)
+	}
+
+	crossChain := signedInput(now)
+	crossChain.JobID, crossChain.OperationID, crossChain.AuthorizationDigest = testHash(120), testHash(121), testHash(122)
+	crossChain.KeeperID, crossChain.ChainID = "keeper-chain-scope", 8453
+	if _, _, err := store.Enqueue(context.Background(), crossChain); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim(context.Background(), crossChain.KeeperID, crossChain.GasPayer, 84532, 20*time.Second); !errors.Is(err, ErrNoWork) {
+		t.Fatalf("another Base chain poisoned the worker claim: %v", err)
+	}
+	if lease, err := store.Claim(context.Background(), crossChain.KeeperID, crossChain.GasPayer, crossChain.ChainID, 20*time.Second); err != nil || lease.Job.JobID != crossChain.JobID {
+		t.Fatalf("exact-chain worker did not claim its job: lease=%+v err=%v", lease, err)
 	}
 }
 
