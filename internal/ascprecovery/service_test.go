@@ -79,6 +79,38 @@ func TestServiceCoalescesConcurrentVerificationAndExpiresCache(t *testing.T) {
 	}
 }
 
+func TestServiceCoalescesVerificationFailuresAndExpiresNegativeCache(t *testing.T) {
+	var unix atomic.Int64
+	unix.Store(1_800_000_000)
+	_, privateKey, _ := ed25519.GenerateKey(nil)
+	outage := errors.New("remote head unavailable")
+	source := &staticRecoverySource{err: outage, delay: 20 * time.Millisecond}
+	service, err := NewService(source, Config{KeyID: "recovery-key-1", PrivateKey: privateKey,
+		ProofTTL: time.Minute, CacheTTL: time.Second, VerifyTimeout: 5 * time.Second,
+		Clock: func() time.Time { return time.Unix(unix.Load(), 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait sync.WaitGroup
+	for index := 0; index < 20; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if _, err := service.Latest(context.Background()); !errors.Is(err, outage) {
+				t.Errorf("failure=%v", err)
+			}
+		}()
+	}
+	wait.Wait()
+	if calls := source.calls.Load(); calls != 1 {
+		t.Fatalf("failure verification calls=%d", calls)
+	}
+	unix.Add(2)
+	if _, err := service.Latest(t.Context()); !errors.Is(err, outage) || source.calls.Load() != 2 {
+		t.Fatalf("expired negative cache calls=%d err=%v", source.calls.Load(), err)
+	}
+}
+
 func TestServiceWaitHonorsContextCancellation(t *testing.T) {
 	_, privateKey, _ := ed25519.GenerateKey(nil)
 	source := &blockingRecoverySource{started: make(chan struct{}), release: make(chan struct{})}
@@ -120,22 +152,24 @@ func TestNewServiceRejectsUnsafeConfigurationAndTypedNil(t *testing.T) {
 		ProofTTL: time.Minute, CacheTTL: time.Second, VerifyTimeout: 5 * time.Second, Clock: time.Now}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("typed nil source error=%v", err)
 	}
+	malformedKey := append(ed25519.PrivateKey(nil), privateKey...)
+	malformedKey[len(malformedKey)-1] ^= 1
+	if _, err := NewService(validSource, Config{KeyID: "recovery-key-1", PrivateKey: malformedKey,
+		ProofTTL: time.Minute, CacheTTL: time.Second, VerifyTimeout: 5 * time.Second, Clock: time.Now}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("non-canonical private key error=%v", err)
+	}
 }
 
 func TestServiceBoundsEachVerification(t *testing.T) {
 	_, privateKey, _ := ed25519.GenerateKey(nil)
-	service, err := NewService(&staticRecoverySource{status: verifiedStatus(1, strings.Repeat("a", 64)), delay: 2 * time.Second},
+	service, err := NewService(deadlineRecoverySource{max: 1100 * time.Millisecond},
 		Config{KeyID: "recovery-key-1", PrivateKey: privateKey, ProofTTL: time.Minute,
 			CacheTTL: time.Second, VerifyTimeout: time.Second, Clock: time.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := time.Now()
 	if _, err := service.Latest(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("unbounded verification error=%v", err)
-	}
-	if elapsed := time.Since(started); elapsed < 900*time.Millisecond {
-		t.Fatalf("verification timeout elapsed=%s", elapsed)
 	}
 }
 
@@ -196,6 +230,17 @@ func (s *blockingRecoverySource) Verify(context.Context) (ascpevents.RecoverySta
 	close(s.started)
 	<-s.release
 	return ascpevents.RecoveryStatus{}, errors.New("stopped")
+}
+
+type deadlineRecoverySource struct{ max time.Duration }
+
+func (s deadlineRecoverySource) Verify(ctx context.Context) (ascpevents.RecoveryStatus, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > s.max {
+		return ascpevents.RecoveryStatus{}, errors.New("verification deadline exceeds configured bound")
+	}
+	<-ctx.Done()
+	return ascpevents.RecoveryStatus{}, ctx.Err()
 }
 
 type staticHead struct{ head ascpevents.Head }

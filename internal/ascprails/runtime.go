@@ -14,7 +14,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -157,6 +156,9 @@ func SignIntegrityAttestation(attestation IntegrityAttestation, privateKey ed255
 	if len(privateKey) != ed25519.PrivateKeySize || attestation.Signature != "" {
 		return IntegrityAttestation{}, ErrInvalidConfig
 	}
+	if derivedKey := ed25519.NewKeyFromSeed(privateKey[:ed25519.SeedSize]); !bytes.Equal(derivedKey, privateKey) {
+		return IntegrityAttestation{}, ErrInvalidConfig
+	}
 	payload, err := integrityAttestationPayload(attestation)
 	if err != nil {
 		return IntegrityAttestation{}, err
@@ -238,7 +240,7 @@ func (g *AttestedIntegrityGate) Check(ctx context.Context) error {
 	signature, decodeErr := base64.StdEncoding.DecodeString(attestation.Signature)
 	if attestation.State != "VERIFIED" || attestation.LocalSequence == 0 ||
 		attestation.LocalSequence != attestation.RemoteSequence || attestation.LocalSequence != attestation.CheckpointSequence ||
-		attestation.LocalEventHash != attestation.RemoteEventHash || !nonZeroRawHash(attestation.LocalEventHash) ||
+		attestation.LocalEventHash != attestation.RemoteEventHash || !ValidRawHash(attestation.LocalEventHash) ||
 		issuedAt.After(now.Add(5*time.Second)) || !expiresAt.After(now) || !expiresAt.After(issuedAt) || expiresAt.Sub(issuedAt) > g.maxTTL ||
 		decodeErr != nil || base64.StdEncoding.EncodeToString(signature) != attestation.Signature || len(key) != ed25519.PublicKeySize ||
 		len(signature) != ed25519.SignatureSize || !ed25519.Verify(key, payload, signature) {
@@ -270,7 +272,9 @@ func integrityAttestationPayload(attestation IntegrityAttestation) ([]byte, erro
 	return digest[:], nil
 }
 
-func nonZeroRawHash(value string) bool {
+// ValidRawHash accepts the canonical nonzero lowercase event-hash form shared
+// by recovery producers and consumers.
+func ValidRawHash(value string) bool {
 	return rawHashPattern.MatchString(value) && value != strings.Repeat("0", 64)
 }
 
@@ -283,20 +287,11 @@ type HTTPSIntegritySource struct {
 }
 
 func NewHTTPSIntegritySource(rawURL string, timeout time.Duration) (*HTTPSIntegritySource, error) {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" ||
-		parsed.RawQuery != "" || parsed.Port() != "" && parsed.Port() != "443" || timeout < time.Second || timeout > 30*time.Second {
-		return nil, ErrInvalidConfig
-	}
-	if err := ValidateRestrictedURLShape(parsed.String()); err != nil {
-		return nil, ErrInvalidConfig
-	}
-	transport, err := NewRestrictedTransport()
+	parsed, client, err := NewRestrictedHTTPSClient(rawURL, timeout)
 	if err != nil {
-		return nil, fmt.Errorf("create restricted event-integrity transport: %w", err)
+		return nil, ErrInvalidConfig
 	}
-	return &HTTPSIntegritySource{url: parsed.String(), client: &http.Client{Timeout: timeout, Transport: transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &HTTPSIntegritySource{url: parsed.String(), client: client}, nil
 }
 
 func (s *HTTPSIntegritySource) Latest(ctx context.Context) (IntegrityAttestation, error) {

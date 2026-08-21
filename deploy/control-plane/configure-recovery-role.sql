@@ -40,6 +40,10 @@ BEGIN;
 ALTER ROLE :"recovery_role"
     NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT;
 ALTER ROLE :"recovery_role" SET search_path = public;
+ALTER ROLE :"recovery_role" SET default_transaction_read_only = on;
+
+SELECT format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()) \gexec
+SELECT format('REVOKE TEMPORARY ON DATABASE %I FROM %I', current_database(), :'recovery_role') \gexec
 
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE CREATE ON SCHEMA public FROM :"recovery_role";
@@ -50,7 +54,10 @@ REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"recovery_role";
 REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"recovery_role";
+-- PostgreSQL cannot subtract the global PUBLIC routine default with a
+-- per-schema default ACL. Execute this contract as every migration owner.
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
 
-GRANT SELECT ON ascp_events, ascp_event_checkpoints TO :"recovery_role";
+GRANT SELECT ON public.ascp_events, public.ascp_event_checkpoints TO :"recovery_role";
 
 COMMIT;

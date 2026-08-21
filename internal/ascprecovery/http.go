@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpevents"
@@ -24,7 +23,6 @@ const (
 
 var (
 	wormReferencePattern = regexp.MustCompile(`^ascp/checkpoints/checkpoint_[0-9a-f]{64}\.json$`)
-	rawHashPattern       = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 type HTTPSWORMReader struct {
@@ -109,27 +107,17 @@ func (r *HTTPSRemoteHeadReader) Current(ctx context.Context) (ascpevents.Head, e
 	if err := decoder.Decode(&head); err != nil {
 		return ascpevents.Head{}, errors.New("remote event-head response is not strict JSON")
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) || head.Sequence == 0 || !rawHash(head.EventHash) {
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) || head.Sequence == 0 || !ascprails.ValidRawHash(head.EventHash) {
 		return ascpevents.Head{}, errors.New("remote event-head response is invalid")
 	}
 	return head, nil
 }
 
 func restrictedClient(rawURL string, timeout time.Duration) (*url.URL, *http.Client, error) {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" ||
-		parsed.RawQuery != "" || (parsed.Port() != "" && parsed.Port() != "443") || timeout < time.Second || timeout > 30*time.Second {
-		return nil, nil, ErrInvalidConfig
-	}
-	if err := ascprails.ValidateRestrictedURLShape(parsed.String()); err != nil {
-		return nil, nil, ErrInvalidConfig
-	}
-	transport, err := ascprails.NewRestrictedTransport()
+	parsed, client, err := ascprails.NewRestrictedHTTPSClient(rawURL, timeout)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, ErrInvalidConfig
 	}
-	client := &http.Client{Timeout: timeout, Transport: transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return parsed, client, nil
 }
 
@@ -161,10 +149,6 @@ func rejectHeadKeys(raw []byte) error {
 	}
 	_, err = decoder.Token()
 	return err
-}
-
-func rawHash(value string) bool {
-	return rawHashPattern.MatchString(value) && value != strings.Repeat("0", 64)
 }
 
 type AttestationSource interface {

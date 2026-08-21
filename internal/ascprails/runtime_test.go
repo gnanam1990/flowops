@@ -71,9 +71,15 @@ func TestAttestedIntegrityGateBindsSignatureExpiryAndLiveHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := strings.Repeat("a", 64)
-	attestation, err := SignIntegrityAttestation(IntegrityAttestation{SchemaVersion: 1, State: "VERIFIED",
+	unsigned := IntegrityAttestation{SchemaVersion: 1, State: "VERIFIED",
 		LocalSequence: 9, LocalEventHash: hash, RemoteSequence: 9, RemoteEventHash: hash,
-		CheckpointSequence: 9, IssuedAtUnix: now.Add(-time.Second).Unix(), ExpiresAtUnix: now.Add(time.Minute).Unix(), KeyID: "recovery-key-1"}, privateKey)
+		CheckpointSequence: 9, IssuedAtUnix: now.Add(-time.Second).Unix(), ExpiresAtUnix: now.Add(time.Minute).Unix(), KeyID: "recovery-key-1"}
+	malformedKey := append(ed25519.PrivateKey(nil), privateKey...)
+	malformedKey[len(malformedKey)-1] ^= 1
+	if _, err := SignIntegrityAttestation(unsigned, malformedKey); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("non-canonical private key error=%v", err)
+	}
+	attestation, err := SignIntegrityAttestation(unsigned, privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}

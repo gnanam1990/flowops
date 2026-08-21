@@ -3,6 +3,7 @@
 package ascprecovery
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -71,6 +72,7 @@ type Service struct {
 	gate          chan struct{}
 	mu            sync.RWMutex
 	cached        ascprails.IntegrityAttestation
+	cachedErr     error
 	cachedTill    time.Time
 }
 
@@ -83,13 +85,17 @@ func NewService(source RecoverySource, config Config) (*Service, error) {
 	if !keyIDPattern.MatchString(config.KeyID) {
 		return nil, ErrInvalidConfig
 	}
+	derivedKey := ed25519.NewKeyFromSeed(config.PrivateKey[:ed25519.SeedSize])
+	if !bytes.Equal(derivedKey, config.PrivateKey) {
+		return nil, ErrInvalidConfig
+	}
 	return &Service{source: source, keyID: config.KeyID, privateKey: append(ed25519.PrivateKey(nil), config.PrivateKey...),
 		proofTTL: config.ProofTTL, cacheTTL: config.CacheTTL, verifyTimeout: config.VerifyTimeout, clock: config.Clock, gate: make(chan struct{}, 1)}, nil
 }
 
 func (s *Service) Latest(ctx context.Context) (ascprails.IntegrityAttestation, error) {
-	if attestation, ok := s.cachedProof(s.clock().UTC()); ok {
-		return attestation, nil
+	if attestation, err, ok := s.cachedResult(s.clock().UTC()); ok {
+		return attestation, err
 	}
 	select {
 	case s.gate <- struct{}{}:
@@ -98,18 +104,22 @@ func (s *Service) Latest(ctx context.Context) (ascprails.IntegrityAttestation, e
 		return ascprails.IntegrityAttestation{}, ctx.Err()
 	}
 	now := s.clock().UTC()
-	if attestation, ok := s.cachedProof(now); ok {
-		return attestation, nil
+	if attestation, err, ok := s.cachedResult(now); ok {
+		return attestation, err
 	}
 	verifyCtx, cancel := context.WithTimeout(ctx, s.verifyTimeout)
 	defer cancel()
 	status, err := s.source.Verify(verifyCtx)
 	if err != nil {
+		if ctx.Err() == nil {
+			s.cacheResult(ascprails.IntegrityAttestation{}, err, s.clock().UTC())
+		}
 		return ascprails.IntegrityAttestation{}, err
 	}
 	if !status.ExternallyCheckpointed || status.LocalHead.Sequence == 0 ||
 		status.LocalHead != status.RemoteHead || status.CheckpointSequence != status.LocalHead.Sequence ||
-		!rawHash(status.LocalHead.EventHash) {
+		!ascprails.ValidRawHash(status.LocalHead.EventHash) {
+		s.cacheResult(ascprails.IntegrityAttestation{}, ErrRecoveryUnproved, s.clock().UTC())
 		return ascprails.IntegrityAttestation{}, ErrRecoveryUnproved
 	}
 	now = s.clock().UTC().Truncate(time.Second)
@@ -120,19 +130,26 @@ func (s *Service) Latest(ctx context.Context) (ascprails.IntegrityAttestation, e
 		IssuedAtUnix: now.Unix(), ExpiresAtUnix: now.Add(s.proofTTL).Unix(), KeyID: s.keyID,
 	}, s.privateKey)
 	if err != nil {
+		s.cacheResult(ascprails.IntegrityAttestation{}, err, s.clock().UTC())
 		return ascprails.IntegrityAttestation{}, err
 	}
-	s.mu.Lock()
-	s.cached = attestation
-	s.cachedTill = now.Add(s.cacheTTL)
-	s.mu.Unlock()
+	s.cacheResult(attestation, nil, now)
 	return attestation, nil
 }
 
-func (s *Service) cachedProof(now time.Time) (ascprails.IntegrityAttestation, bool) {
+func (s *Service) cacheResult(attestation ascprails.IntegrityAttestation, err error, now time.Time) {
+	s.mu.Lock()
+	s.cached = attestation
+	s.cachedErr = err
+	s.cachedTill = now.Add(s.cacheTTL)
+	s.mu.Unlock()
+}
+
+func (s *Service) cachedResult(now time.Time) (ascprails.IntegrityAttestation, error, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cached, s.cached.Signature != "" && now.Before(s.cachedTill)
+	valid := now.Before(s.cachedTill) && (s.cached.Signature != "" || s.cachedErr != nil)
+	return s.cached, s.cachedErr, valid
 }
 
 func cloneWriterKeys(input map[string][]byte) map[string][]byte {

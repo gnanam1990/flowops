@@ -240,6 +240,11 @@ psql "$FLOWOPS_DATABASE_ADMIN_URL" \
   --file=deploy/control-plane/configure-recovery-role.sql
 ```
 
+Run this contract as every role that applies migrations in `public`, so its
+default-routine privilege rule also covers future functions. The contract
+revokes `TEMPORARY` from `PUBLIC` on this dedicated database; explicitly grant
+it back only to reviewed roles that require temporary tables.
+
 The process requires:
 
 | Variable | Requirement |

@@ -21,7 +21,7 @@ func TestLoadConfigAcceptsIsolatedRecoveryRuntime(t *testing.T) {
 	}
 	if config.listenAddress != "0.0.0.0:8082" || len(config.writerKeys) != 1 || len(config.checkpointKeys) != 1 ||
 		config.attestationKeyID != "recovery-key-1" || len(config.attestationKey) != ed25519.PrivateKeySize ||
-		len(config.attestationPublic) != ed25519.PublicKeySize {
+		len(config.attestationPublic) != ed25519.PublicKeySize || config.wormReader == nil || config.remoteHeadReader == nil {
 		t.Fatalf("config=%+v", config)
 	}
 }
@@ -53,7 +53,12 @@ func TestLoadConfigRejectsUnsafeBoundaries(t *testing.T) {
 func TestPrivateKeyFileRequiresCanonicalBase64AndOwnerOnlyMode(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "key")
-	if err := os.WriteFile(path, []byte(keyB64(ed25519.PrivateKeySize, "k")), 0o644); err != nil {
+	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("k", ed25519.SeedSize)))
+	encodedKey := base64.StdEncoding.EncodeToString(privateKey)
+	if err := os.WriteFile(path, []byte(encodedKey), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readPrivateKeyFile(path); err == nil {
@@ -65,13 +70,21 @@ func TestPrivateKeyFileRequiresCanonicalBase64AndOwnerOnlyMode(t *testing.T) {
 	if _, err := readPrivateKeyFile(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(keyB64(ed25519.PrivateKeySize, "k")+"=="), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(encodedKey+"=="), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readPrivateKeyFile(path); err == nil {
 		t.Fatal("non-canonical base64 key accepted")
 	}
-	if err := os.WriteFile(path, []byte(keyB64(ed25519.PrivateKeySize, "k")), 0o600); err != nil {
+	malformedKey := append(ed25519.PrivateKey(nil), privateKey...)
+	malformedKey[len(malformedKey)-1] ^= 1
+	if err := os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(malformedKey)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPrivateKeyFile(path); err == nil {
+		t.Fatal("private key with a mismatched public half accepted")
+	}
+	if err := os.WriteFile(path, []byte(encodedKey), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	symlink := filepath.Join(directory, "key-link")

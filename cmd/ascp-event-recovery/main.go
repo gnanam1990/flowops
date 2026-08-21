@@ -33,6 +33,8 @@ type startupConfig struct {
 	listenAddress     string
 	wormURL           string
 	remoteHeadURL     string
+	wormReader        *ascprecovery.HTTPSWORMReader
+	remoteHeadReader  *ascprecovery.HTTPSRemoteHeadReader
 	writerKeys        map[string][]byte
 	checkpointKeys    map[string]ed25519.PublicKey
 	attestationKeyID  string
@@ -82,15 +84,8 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	worm, err := ascprecovery.NewHTTPSWORMReader(config.wormURL, config.externalTimeout)
-	if err != nil {
-		return fmt.Errorf("create immutable checkpoint reader: %w", err)
-	}
-	remote, err := ascprecovery.NewHTTPSRemoteHeadReader(config.remoteHeadURL, config.externalTimeout)
-	if err != nil {
-		return fmt.Errorf("create remote event-head reader: %w", err)
-	}
-	recoverySource, err := ascprecovery.NewEventRecoverySource(store, worm, remote, config.writerKeys, config.checkpointKeys)
+	recoverySource, err := ascprecovery.NewEventRecoverySource(store, config.wormReader, config.remoteHeadReader,
+		config.writerKeys, config.checkpointKeys)
 	if err != nil {
 		return err
 	}
@@ -192,10 +187,10 @@ func loadConfig() (startupConfig, error) {
 		config.cacheTTL > 5*time.Second || config.cacheTTL >= config.proofTTL {
 		return startupConfig{}, errors.New("event-recovery timing configuration is outside safe bounds")
 	}
-	if _, err := ascprecovery.NewHTTPSWORMReader(config.wormURL, config.externalTimeout); err != nil {
+	if config.wormReader, err = ascprecovery.NewHTTPSWORMReader(config.wormURL, config.externalTimeout); err != nil {
 		return startupConfig{}, errors.New("FLOWOPS_RECOVERY_WORM_URL is invalid")
 	}
-	if _, err := ascprecovery.NewHTTPSRemoteHeadReader(config.remoteHeadURL, config.externalTimeout); err != nil {
+	if config.remoteHeadReader, err = ascprecovery.NewHTTPSRemoteHeadReader(config.remoteHeadURL, config.externalTimeout); err != nil {
 		return startupConfig{}, errors.New("FLOWOPS_RECOVERY_REMOTE_HEAD_URL is invalid")
 	}
 	return config, nil
@@ -318,6 +313,10 @@ func readPrivateKeyFile(rawPath string) (ed25519.PrivateKey, error) {
 	encoded := strings.TrimSpace(string(raw))
 	key, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil || len(key) != ed25519.PrivateKeySize || base64.StdEncoding.EncodeToString(key) != encoded {
+		return nil, errors.New("event-recovery attestation key file is invalid")
+	}
+	derivedKey := ed25519.NewKeyFromSeed(key[:ed25519.SeedSize])
+	if !bytes.Equal(derivedKey, key) {
 		return nil, errors.New("event-recovery attestation key file is invalid")
 	}
 	return ed25519.PrivateKey(key), nil

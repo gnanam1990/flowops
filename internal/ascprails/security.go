@@ -43,6 +43,27 @@ func NewRestrictedTransport() (http.RoundTripper, error) {
 	return newRestrictedTransport(restrictedTransportConfig{})
 }
 
+// NewRestrictedHTTPSClient validates a fixed public HTTPS endpoint and returns
+// the shared no-proxy, no-redirect, DNS-rebinding-resistant client contract.
+func NewRestrictedHTTPSClient(rawURL string, timeout time.Duration) (*url.URL, *http.Client, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" ||
+		parsed.RawQuery != "" || parsed.Opaque != "" || (parsed.Port() != "" && parsed.Port() != "443") ||
+		timeout < time.Second || timeout > 30*time.Second {
+		return nil, nil, ErrUnsafeDestination
+	}
+	if err := ValidateRestrictedURLShape(parsed.String()); err != nil {
+		return nil, nil, err
+	}
+	transport, err := NewRestrictedTransport()
+	if err != nil {
+		return nil, nil, err
+	}
+	client := &http.Client{Timeout: timeout, Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return parsed, client, nil
+}
+
 func newRestrictedTransport(config restrictedTransportConfig) (http.RoundTripper, error) {
 	if config.Resolver == nil {
 		config.Resolver = net.DefaultResolver

@@ -23,7 +23,9 @@ state produces a short-lived `VERIFIED` attestation. A cache of at most five
 seconds coalesces concurrent verification; this does not authorize stale seller
 egress because the seller worker independently compares the proof to the live
 database head. Verification failures return a generic 503 and remain visible in
-private logs.
+private logs. Non-caller-cancellation failures are cached for the same bounded
+window so an upstream outage cannot turn queued requests into serial full-chain
+replays.
 
 The runtime follows immutable-object references only in the exact checkpoint
 namespace. Both external readers require HTTPS on port 443, refuse redirects,
