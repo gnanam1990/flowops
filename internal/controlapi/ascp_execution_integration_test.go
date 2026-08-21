@@ -16,6 +16,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascpreservation"
+	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
 	"github.com/gnanam1990/flowops/internal/policy"
 	"github.com/gnanam1990/flowops/pkg/envelope"
 	"github.com/gnanam1990/flowops/pkg/executioncommitment"
@@ -297,6 +298,18 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 		commitmentDigest.Hex(), commitmentJSON, ascpIntegrationHash(2009), approvalID, now); err != nil {
 		t.Fatal(err)
 	}
+	bindingStore, err := ascpsignerbinding.NewStore(db, 84532, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindingRequest := ascpsignerbinding.PutRequest{
+		ExpectedVersion: 0, SignerKeyID: "spend-authorizer-1", KeyEpoch: 1,
+		ModuleAddress: ascpIntegrationModule, SafeAddress: ascpIntegrationSafe,
+		KeeperID: "keeper-primary", Reason: "Initial integration signer binding",
+	}
+	if result, err := bindingStore.Put(ctx, "org_sign_it", "agent_sign_it", "owner_sign_it", "bind_sign_it_v1", bindingRequest); err != nil || result.Binding.Version != 1 {
+		t.Fatalf("initial signer binding=%+v err=%v", result, err)
+	}
 
 	store, err := ascpbearer.NewActivationStore(db, func() time.Time { return now })
 	if err != nil {
@@ -310,7 +323,7 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 		CanonicalPayloadHash: ascpbearer.CanonicalPayloadHash(canonicalPayload), EvidenceBundle: evidenceBundle,
 		EvidenceBundleHash: ascpbearer.EvidenceBundleHash(evidenceBundle),
 		Digest:             ascpIntegrationHash(2013), Nonce: ascpIntegrationHash(2014),
-		InstrumentType: ascpbearer.InstrumentLockAuthorization, SignerKeyID: "spend-authorizer-1",
+		InstrumentType: ascpbearer.InstrumentLockAuthorization, SignerBindingVersion: 1, SignerKeyID: "spend-authorizer-1",
 		KeyEpoch: 1, ModuleAddress: ascpIntegrationModule, SafeAddress: ascpIntegrationSafe,
 		KeeperID: "keeper-primary", ValidAfter: now, ValidUntil: now.Add(9 * time.Minute),
 	}
@@ -362,6 +375,14 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	}
 	if created != 1 {
 		t.Fatalf("concurrent activation creators=%d", created)
+	}
+	rotation := bindingRequest
+	rotation.ExpectedVersion = 1
+	rotation.SignerKeyID = "spend-authorizer-2"
+	rotation.KeyEpoch = 2
+	rotation.Reason = "Rotate integration signer binding"
+	if _, err := bindingStore.Put(ctx, "org_sign_it", "agent_sign_it", "owner_sign_it", "bind_sign_it_v2_pending", rotation); !errors.Is(err, ascpsignerbinding.ErrInUse) {
+		t.Fatalf("rotation with pending signer work error=%v", err)
 	}
 	input.RequestID = request.RequestID
 	byAuthorization, err := store.ForAuthorization(ctx, authorizationID)
@@ -463,6 +484,15 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	}
 	if outboxEvents != 4 {
 		t.Fatalf("outbox events=%d", outboxEvents)
+	}
+	if _, err := bindingStore.Put(ctx, "org_sign_it", "agent_sign_it", "owner_sign_it", "bind_sign_it_v2_live", rotation); !errors.Is(err, ascpsignerbinding.ErrInUse) {
+		t.Fatalf("rotation with live bearer error=%v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE ascp_bearer_registry SET outcome='CONSUMED' WHERE operation_id=$1`, operationID); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := bindingStore.Put(ctx, "org_sign_it", "agent_sign_it", "owner_sign_it", "bind_sign_it_v2_consumed", rotation); err != nil || result.Binding.Version != 2 || result.Binding.SignerKeyID != rotation.SignerKeyID {
+		t.Fatalf("rotation after bearer consumption=%+v err=%v", result, err)
 	}
 	now = input.ValidUntil.Add(time.Minute)
 	lateReplay := input

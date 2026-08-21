@@ -193,9 +193,7 @@ func TestDurableOperationToolsDelegateOnlyToAgentBoundary(t *testing.T) {
 		"actionId": "lock-action-1", "canonicalPayload": "Y2Fub25pY2Fs", "canonicalPayloadHash": "0x" + strings.Repeat("1", 64),
 		"evidenceBundle": "ZXZpZGVuY2U=", "evidenceBundleHash": "0x" + strings.Repeat("2", 64),
 		"digest": "0x" + strings.Repeat("3", 64), "nonce": "0x" + strings.Repeat("4", 64),
-		"instrumentType": "LOCK_AUTHORIZATION", "signerKeyId": "signer-key-1", "keyEpoch": 1,
-		"moduleAddress": "0x1111111111111111111111111111111111111111", "safeAddress": "0x2222222222222222222222222222222222222222",
-		"keeperId": "keeper-primary", "validAfter": "2033-01-01T00:00:00Z", "validUntil": "2033-01-01T00:09:00Z",
+		"instrumentType": "LOCK_AUTHORIZATION", "validAfter": "2033-01-01T00:00:00Z", "validUntil": "2033-01-01T00:09:00Z",
 	}
 	call = mcpRequest(t, 20, "tools/call", map[string]any{"name": "ascp.operation.activation.create", "arguments": map[string]any{"operationId": operationID, "request": activationRequest}}, testAuthorization())
 	recorder = httptest.NewRecorder()

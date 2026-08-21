@@ -11,6 +11,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpactivation"
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
+	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
 )
 
 type stubASCPActivation struct {
@@ -38,7 +39,7 @@ func (s *stubASCPActivation) Get(_ context.Context, identity ascporchestration.I
 func TestASCPActivationRoutesDeriveAgentScopeAndNeverExposeSignerMaterial(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	server, activation, token, operationID := activationRouteServer(t, now)
-	payload := `{"actionId":"lock-action-1","canonicalPayload":"Y2Fub25pY2Fs","canonicalPayloadHash":"0x` + repeatHex("1", 64) + `","evidenceBundle":"ZXZpZGVuY2U=","evidenceBundleHash":"0x` + repeatHex("2", 64) + `","digest":"0x` + repeatHex("3", 64) + `","nonce":"0x` + repeatHex("4", 64) + `","instrumentType":"LOCK_AUTHORIZATION","signerKeyId":"signer-key-1","keyEpoch":1,"moduleAddress":"0x1111111111111111111111111111111111111111","safeAddress":"0x2222222222222222222222222222222222222222","keeperId":"keeper-primary","validAfter":"2033-01-01T00:00:00Z","validUntil":"2033-01-01T00:09:00Z"}`
+	payload := `{"actionId":"lock-action-1","canonicalPayload":"Y2Fub25pY2Fs","canonicalPayloadHash":"0x` + repeatHex("1", 64) + `","evidenceBundle":"ZXZpZGVuY2U=","evidenceBundleHash":"0x` + repeatHex("2", 64) + `","digest":"0x` + repeatHex("3", 64) + `","nonce":"0x` + repeatHex("4", 64) + `","instrumentType":"LOCK_AUTHORIZATION","validAfter":"2033-01-01T00:00:00Z","validUntil":"2033-01-01T00:09:00Z"}`
 	request := httptest.NewRequest(http.MethodPost, "/agent/v1/intents/"+operationID+"/activation", bytes.NewBufferString(payload))
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
@@ -84,6 +85,14 @@ func TestASCPActivationRoutesRejectUnknownFieldsAndNonAgentPrincipal(t *testing.
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest || activation.creates != 0 {
 		t.Fatalf("unknown field status=%d calls=%d body=%s", recorder.Code, activation.creates, recorder.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, "/agent/v1/intents/"+operationID+"/activation", bytes.NewBufferString(`{"signerKeyId":"attacker-selected-key"}`))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || activation.creates != 0 {
+		t.Fatalf("caller-controlled signer route status=%d calls=%d body=%s", recorder.Code, activation.creates, recorder.Body.String())
 	}
 	oversized := append([]byte(`{"actionId":"`), bytes.Repeat([]byte{'a'}, maxActivationRequestBytes)...)
 	oversized = append(oversized, []byte(`"}`)...)
@@ -139,6 +148,15 @@ func TestASCPActivationRouteMapsBindingAndNotFoundErrors(t *testing.T) {
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("not-found status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	activation.err = ascpsignerbinding.ErrNotFound
+	request = httptest.NewRequest(http.MethodPost, "/agent/v1/intents/"+operationID+"/activation", bytes.NewBufferString(`{}`))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusConflict || !bytes.Contains(recorder.Body.Bytes(), []byte("SIGNER_BINDING_REQUIRED")) {
+		t.Fatalf("missing binding status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

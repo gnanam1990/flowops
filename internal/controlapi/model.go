@@ -50,6 +50,7 @@ const (
 	PermissionPause                    Permission = "PAUSE_AGENT"
 	PermissionReadCommand              Permission = "READ_COMMAND"
 	PermissionRegisterEscrowTransition Permission = "REGISTER_ESCROW_TRANSITION"
+	PermissionManageSignerBinding      Permission = "MANAGE_SIGNER_BINDING"
 )
 
 type Principal struct {
@@ -88,7 +89,7 @@ func (p Principal) Can(permission Permission) bool {
 	switch permission {
 	case PermissionRead, PermissionReadCommand:
 		return true
-	case PermissionCreateIntent, PermissionIssue, PermissionDecide, PermissionPause, PermissionRegisterEscrowTransition:
+	case PermissionCreateIntent, PermissionIssue, PermissionDecide, PermissionPause, PermissionRegisterEscrowTransition, PermissionManageSignerBinding:
 		if p.ReadOnly {
 			return false
 		}
@@ -101,6 +102,8 @@ func (p Principal) Can(permission Permission) bool {
 	case PermissionPause:
 		return p.Role == RoleAdmin || p.Role == RoleOwner
 	case PermissionRegisterEscrowTransition:
+		return p.Kind == PrincipalHuman && (p.Role == RoleAdmin || p.Role == RoleOwner)
+	case PermissionManageSignerBinding:
 		return p.Kind == PrincipalHuman && (p.Role == RoleAdmin || p.Role == RoleOwner)
 	default:
 		return false

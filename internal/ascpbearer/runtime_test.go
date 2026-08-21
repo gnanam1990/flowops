@@ -149,7 +149,7 @@ func runtimeRequest(now time.Time) ActivationRequest {
 	return ActivationRequest{ActivationInput: ActivationInput{
 		RequestID: bearerHash(70), AuthorizationID: bearerHash(71), OperationID: bearerHash(72),
 		ReservationID: bearerHash(73), ActionID: "runtime-action-1", Digest: bearerHash(74),
-		SignerKeyID: "signer-key-1", KeyEpoch: 1, KeeperID: "keeper-primary",
+		SignerBindingVersion: 1, SignerKeyID: "signer-key-1", KeyEpoch: 1, KeeperID: "keeper-primary",
 		ValidAfter: now.Add(-time.Minute), ValidUntil: now.Add(time.Minute),
 	}, InputHash: bearerHash(75), State: SignRequested, CreatedAt: now.Add(-time.Minute)}
 }

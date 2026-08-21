@@ -54,6 +54,7 @@ type ActivationInput struct {
 	Digest               string    `json:"digest"`
 	Nonce                string    `json:"nonce"`
 	InstrumentType       string    `json:"instrumentType"`
+	SignerBindingVersion uint64    `json:"signerBindingVersion,omitempty"`
 	SignerKeyID          string    `json:"signerKeyId"`
 	KeyEpoch             uint64    `json:"keyEpoch"`
 	ModuleAddress        string    `json:"moduleAddress"`
@@ -187,18 +188,21 @@ func (s *ActivationStore) requestOnce(ctx context.Context, input ActivationInput
 	if !hash(executionSnapshotHash) {
 		return ActivationRequest{}, false, ErrActivationBinding
 	}
+	if err := lockSignerBinding(ctx, tx, input); err != nil {
+		return ActivationRequest{}, false, err
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO ascp_sign_requests
 			(request_id, authorization_id, operation_id, reservation_id, input_hash,
 			 action_id, canonical_payload, canonical_payload_hash, evidence_bundle, evidence_bundle_hash,
-			 digest, nonce, instrument_type, signer_key_id, key_epoch, module_address, safe_address,
+			 digest, nonce, instrument_type, signer_binding_version, signer_key_id, key_epoch, module_address, safe_address,
 			 keeper_id, valid_after, valid_until, state, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'SIGN_REQUESTED',$21)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'SIGN_REQUESTED',$22)
 		ON CONFLICT (authorization_id) DO NOTHING`, input.RequestID, input.AuthorizationID, input.OperationID,
 		input.ReservationID, inputHash, input.ActionID, input.CanonicalPayload, input.CanonicalPayloadHash,
 		input.EvidenceBundle, input.EvidenceBundleHash, input.Digest, input.Nonce, input.InstrumentType,
-		input.SignerKeyID, input.KeyEpoch, input.ModuleAddress, input.SafeAddress, input.KeeperID,
+		input.SignerBindingVersion, input.SignerKeyID, input.KeyEpoch, input.ModuleAddress, input.SafeAddress, input.KeeperID,
 		input.ValidAfter, input.ValidUntil, now)
 	if err != nil {
 		if activationUniqueViolation(err) {
@@ -226,6 +230,31 @@ func (s *ActivationStore) requestOnce(ctx context.Context, input ActivationInput
 		return ActivationRequest{}, false, fmt.Errorf("commit sign request: %w", err)
 	}
 	return request, inserted == 0, nil
+}
+
+func lockSignerBinding(ctx context.Context, tx *sql.Tx, input ActivationInput) error {
+	var version, keyEpoch uint64
+	var signerKeyID, moduleAddress, safeAddress, keeperID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT b.version,b.signer_key_id,b.key_epoch,b.module_address,b.safe_address,b.keeper_id
+		FROM ascp_intents i
+		JOIN ascp_agent_signer_bindings b
+		  ON b.organization_id=i.organization_id AND b.agent_id=i.actor_id
+		WHERE i.operation_id=$1
+		FOR SHARE OF b`, input.OperationID).Scan(
+		&version, &signerKeyID, &keyEpoch, &moduleAddress, &safeAddress, &keeperID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrActivationBinding
+	}
+	if err != nil {
+		return fmt.Errorf("lock authoritative signer binding: %w", err)
+	}
+	if version != input.SignerBindingVersion || signerKeyID != input.SignerKeyID || keyEpoch != input.KeyEpoch ||
+		moduleAddress != input.ModuleAddress || safeAddress != input.SafeAddress || keeperID != input.KeeperID {
+		return ErrActivationBinding
+	}
+	return nil
 }
 
 func activationSerializationFailure(err error) bool {
@@ -609,7 +638,7 @@ func validateActivationInput(input ActivationInput, now time.Time) error {
 		len(input.CanonicalPayload) > 256*1024 || input.CanonicalPayloadHash != CanonicalPayloadHash(input.CanonicalPayload) ||
 		len(input.EvidenceBundle) == 0 || len(input.EvidenceBundle) > 1024*1024 || input.EvidenceBundleHash != EvidenceBundleHash(input.EvidenceBundle) ||
 		!hash(input.Digest) ||
-		!hash(input.Nonce) || input.InstrumentType != InstrumentLockAuthorization ||
+		!hash(input.Nonce) || input.InstrumentType != InstrumentLockAuthorization || input.SignerBindingVersion == 0 ||
 		!identifier(input.SignerKeyID) || input.KeyEpoch == 0 || !address(input.ModuleAddress) ||
 		!address(input.SafeAddress) || !identifier(input.KeeperID) || input.ValidAfter.IsZero() ||
 		input.ValidUntil.IsZero() || input.ValidAfter.Before(now.Add(-time.Minute)) || input.ValidAfter.After(now.Add(time.Minute)) ||
@@ -701,7 +730,7 @@ func markOutboxDelivered(ctx context.Context, tx *sql.Tx, requestID, kind string
 const activationColumns = `
 	request_id, authorization_id, operation_id, reservation_id, input_hash,
 	action_id, canonical_payload, canonical_payload_hash, evidence_bundle, evidence_bundle_hash,
-	digest, nonce, instrument_type, signer_key_id, key_epoch,
+	digest, nonce, instrument_type, signer_binding_version, signer_key_id, key_epoch,
 	module_address, safe_address, keeper_id, valid_after, valid_until, prepared_handle,
 	state, primary_mirror_digest, created_at, prepared_at, activated_at, mirrored_at, acknowledged_at`
 
@@ -713,7 +742,7 @@ func scanActivationRequest(row rowScanner, request *ActivationRequest) error {
 	err := row.Scan(&request.RequestID, &request.AuthorizationID, &request.OperationID, &request.ReservationID,
 		&request.InputHash, &request.ActionID, &request.CanonicalPayload, &request.CanonicalPayloadHash,
 		&request.EvidenceBundle, &request.EvidenceBundleHash, &request.Digest, &request.Nonce, &request.InstrumentType,
-		&request.SignerKeyID, &request.KeyEpoch, &request.ModuleAddress, &request.SafeAddress, &request.KeeperID,
+		&request.SignerBindingVersion, &request.SignerKeyID, &request.KeyEpoch, &request.ModuleAddress, &request.SafeAddress, &request.KeeperID,
 		&request.ValidAfter, &request.ValidUntil, &handle, &request.State, &mirror, &request.CreatedAt,
 		&preparedAt, &activatedAt, &mirroredAt, &acknowledgedAt)
 	if err != nil {

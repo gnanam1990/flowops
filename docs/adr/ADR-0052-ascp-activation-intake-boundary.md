@@ -19,9 +19,10 @@ Add one application service between authenticated callers and
   authorization reader.
 - Creation requires the separate `activations:create` credential scope;
   permission to issue an execution authorization alone cannot trigger signing.
-- The service accepts signer material only. It derives operation,
-  authorization, and reservation identifiers from durable state and generates
-  a cryptographically random request identifier.
+- The service accepts canonical signing input only. It derives operation,
+  authorization, reservation, signer key, key epoch, module, Safe, and keeper
+  identifiers from durable state and generates a cryptographically random
+  request identifier.
 - The store retains authorization ID as the permanent idempotency key. Exact
   concurrent calls converge to one request; changed material conflicts.
 - Only serializable/deadlock database errors receive three bounded retries.

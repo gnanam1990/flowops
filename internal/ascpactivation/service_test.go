@@ -11,6 +11,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
+	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
 )
 
 type authorizationStub struct {
@@ -30,9 +31,33 @@ type activationStoreStub struct {
 	value    ascpbearer.ActivationRequest
 	replayed bool
 	err      error
+	readErr  error
 	requests int
 	reads    int
 	readID   string
+}
+
+type bindingStub struct {
+	value          ascpsignerbinding.Binding
+	err            error
+	organizationID string
+	agentID        string
+	reads          int
+}
+
+func (s *bindingStub) Current(_ context.Context, organizationID, agentID string) (ascpsignerbinding.Binding, error) {
+	s.reads++
+	s.organizationID, s.agentID = organizationID, agentID
+	return s.value, s.err
+}
+
+func testBinding() *bindingStub {
+	return &bindingStub{value: ascpsignerbinding.Binding{
+		OrganizationID: "org_a", AgentID: "agent_a", Version: 1, ChainID: 84532,
+		SignerKeyID: "signer-key-1", KeyEpoch: 1,
+		ModuleAddress: "0x1111111111111111111111111111111111111111",
+		SafeAddress:   "0x2222222222222222222222222222222222222222", KeeperID: "keeper-primary",
+	}}
 }
 
 func (s *activationStoreStub) Request(_ context.Context, input ascpbearer.ActivationInput) (ascpbearer.ActivationRequest, bool, error) {
@@ -47,7 +72,13 @@ func (s *activationStoreStub) Request(_ context.Context, input ascpbearer.Activa
 func (s *activationStoreStub) ForAuthorization(_ context.Context, authorizationID string) (ascpbearer.ActivationRequest, error) {
 	s.reads++
 	s.readID = authorizationID
-	return s.value, s.err
+	if s.readErr != nil {
+		return ascpbearer.ActivationRequest{}, s.readErr
+	}
+	if s.value.RequestID == "" {
+		return ascpbearer.ActivationRequest{}, ascpbearer.ErrActivationNotFound
+	}
+	return s.value, nil
 }
 
 func TestServiceDerivesDurableScopeAndReturnsRedactedProjection(t *testing.T) {
@@ -57,7 +88,8 @@ func TestServiceDerivesDurableScopeAndReturnsRedactedProjection(t *testing.T) {
 		State: ascpexecauth.ValidatedAndReserved,
 	}}
 	store := &activationStoreStub{}
-	service, err := New(Config{Authorizations: authorization, Store: store, Random: bytes.NewReader(bytes.Repeat([]byte{0x44}, 32))})
+	binding := testBinding()
+	service, err := New(Config{Authorizations: authorization, Bindings: binding, Store: store, Random: bytes.NewReader(bytes.Repeat([]byte{0x44}, 32))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +105,12 @@ func TestServiceDerivesDurableScopeAndReturnsRedactedProjection(t *testing.T) {
 	if store.input.RequestID != testHashByte(0x44) || store.input.AuthorizationID != authorization.value.AuthorizationID ||
 		store.input.OperationID != authorization.value.OperationID || store.input.ReservationID != authorization.value.ReservationID {
 		t.Fatalf("server-derived activation binding=%+v", store.input)
+	}
+	if binding.organizationID != identity.OrganizationID || binding.agentID != identity.AgentID ||
+		store.input.SignerBindingVersion != binding.value.Version || store.input.SignerKeyID != binding.value.SignerKeyID || store.input.KeyEpoch != binding.value.KeyEpoch ||
+		store.input.ModuleAddress != binding.value.ModuleAddress || store.input.SafeAddress != binding.value.SafeAddress ||
+		store.input.KeeperID != binding.value.KeeperID {
+		t.Fatalf("authoritative signer binding lookup=%+v input=%+v", binding, store.input)
 	}
 	if status.RequestID != store.input.RequestID || status.State != ascpbearer.SignRequested || status.Replayed {
 		t.Fatalf("status=%+v", status)
@@ -98,12 +136,60 @@ func TestServiceRejectsNonLiveAuthorizationBeforeSignerRequest(t *testing.T) {
 		AuthorizationID: testHash(1), OperationID: testHash(2), State: ascpexecauth.Invalidated,
 	}}
 	store := &activationStoreStub{}
-	service, _ := New(Config{Authorizations: authorization, Store: store, Random: bytes.NewReader(bytes.Repeat([]byte{1}, 32))})
+	binding := testBinding()
+	service, _ := New(Config{Authorizations: authorization, Bindings: binding, Store: store, Random: bytes.NewReader(bytes.Repeat([]byte{1}, 32))})
 	if _, err := service.Create(context.Background(), ascporchestration.Identity{OrganizationID: "org_a", AgentID: "agent_a"}, authorization.value.OperationID, testRequest(time.Now().UTC())); !errors.Is(err, ErrStateConflict) {
 		t.Fatalf("non-live authorization error=%v", err)
 	}
 	if store.requests != 0 {
 		t.Fatalf("non-live authorization reached activation store: %d", store.requests)
+	}
+	if binding.reads != 0 {
+		t.Fatalf("non-live authorization reached signer bindings: %d", binding.reads)
+	}
+}
+
+func TestServiceFailsClosedWhenAuthoritativeSignerBindingIsUnavailable(t *testing.T) {
+	authorization := &authorizationStub{value: ascporchestration.Authorization{
+		AuthorizationID: testHash(1), OperationID: testHash(2), ReservationID: testHash(3),
+		State: ascpexecauth.ValidatedAndReserved,
+	}}
+	store := &activationStoreStub{}
+	binding := testBinding()
+	binding.err = ascpsignerbinding.ErrNotFound
+	service, _ := New(Config{Authorizations: authorization, Bindings: binding, Store: store})
+	if _, err := service.Create(context.Background(), ascporchestration.Identity{OrganizationID: "org_a", AgentID: "agent_a"}, authorization.value.OperationID, testRequest(time.Now().UTC())); !errors.Is(err, ascpsignerbinding.ErrNotFound) {
+		t.Fatalf("missing binding error=%v", err)
+	}
+	if store.requests != 0 || binding.reads != 1 {
+		t.Fatalf("missing binding reads=%d store requests=%d", binding.reads, store.requests)
+	}
+}
+
+func TestServiceReplaysStoredBindingAfterCurrentBindingRotates(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	authorization := &authorizationStub{value: ascporchestration.Authorization{
+		AuthorizationID: testHash(1), OperationID: testHash(2), ReservationID: testHash(3),
+		State: ascpexecauth.ValidatedAndReserved,
+	}}
+	existing := ascpbearer.ActivationRequest{ActivationInput: ascpbearer.ActivationInput{
+		RequestID: testHash(4), AuthorizationID: testHash(1), OperationID: testHash(2), ReservationID: testHash(3),
+		ActionID: "lock-action-1", CanonicalPayload: []byte("canonical-lock-payload"),
+		CanonicalPayloadHash: ascpbearer.CanonicalPayloadHash([]byte("canonical-lock-payload")),
+		EvidenceBundle:       []byte("immutable-evidence"), EvidenceBundleHash: ascpbearer.EvidenceBundleHash([]byte("immutable-evidence")),
+		Digest: testHash(6), Nonce: testHash(7), InstrumentType: ascpbearer.InstrumentLockAuthorization,
+		SignerBindingVersion: 1, SignerKeyID: "signer-key-1", KeyEpoch: 1,
+		ModuleAddress: "0x1111111111111111111111111111111111111111",
+		SafeAddress:   "0x2222222222222222222222222222222222222222", KeeperID: "keeper-primary",
+		ValidAfter: now, ValidUntil: now.Add(9 * time.Minute),
+	}, InputHash: testHash(8), State: ascpbearer.ActivationAcknowledged, CreatedAt: now}
+	store := &activationStoreStub{value: existing, replayed: true}
+	binding := testBinding()
+	binding.value.Version, binding.value.SignerKeyID, binding.value.KeyEpoch = 2, "signer-key-2", 2
+	service, _ := New(Config{Authorizations: authorization, Bindings: binding, Store: store, Random: bytes.NewReader(nil)})
+	status, err := service.Create(context.Background(), ascporchestration.Identity{OrganizationID: "org_a", AgentID: "agent_a"}, authorization.value.OperationID, testRequest(now))
+	if err != nil || !status.Replayed || status.SignerBindingVersion != 1 || store.input.SignerKeyID != "signer-key-1" || binding.reads != 0 {
+		t.Fatalf("status=%+v input=%+v bindingReads=%d err=%v", status, store.input, binding.reads, err)
 	}
 }
 
@@ -115,7 +201,7 @@ func TestServiceReadsOnlyThroughScopedAuthorization(t *testing.T) {
 	store := &activationStoreStub{value: ascpbearer.ActivationRequest{ActivationInput: ascpbearer.ActivationInput{
 		RequestID: testHash(4), AuthorizationID: testHash(1), OperationID: testHash(2),
 	}, InputHash: testHash(5), State: ascpbearer.ActiveMirrored}}
-	service, _ := New(Config{Authorizations: authorization, Store: store})
+	service, _ := New(Config{Authorizations: authorization, Bindings: testBinding(), Store: store})
 	identity := ascporchestration.Identity{OrganizationID: "org_a", AgentID: "agent_a"}
 	status, err := service.Get(context.Background(), identity, authorization.value.OperationID)
 	if err != nil || status.RequestID != testHash(4) || store.readID != authorization.value.AuthorizationID || authorization.identity != identity {
@@ -134,7 +220,7 @@ func TestServiceRejectsAllZeroRandomIdentifier(t *testing.T) {
 		State: ascpexecauth.ValidatedAndReserved,
 	}}
 	store := &activationStoreStub{}
-	service, _ := New(Config{Authorizations: authorization, Store: store, Random: bytes.NewReader(make([]byte, 32))})
+	service, _ := New(Config{Authorizations: authorization, Bindings: testBinding(), Store: store, Random: bytes.NewReader(make([]byte, 32))})
 	if _, err := service.Create(context.Background(), ascporchestration.Identity{OrganizationID: "org_a", AgentID: "agent_a"}, authorization.value.OperationID, testRequest(time.Now().UTC())); err == nil {
 		t.Fatal("all-zero request identifier succeeded")
 	}
@@ -150,8 +236,6 @@ func testRequest(now time.Time) Request {
 		ActionID: "lock-action-1", CanonicalPayload: payload, CanonicalPayloadHash: ascpbearer.CanonicalPayloadHash(payload),
 		EvidenceBundle: evidence, EvidenceBundleHash: ascpbearer.EvidenceBundleHash(evidence),
 		Digest: testHash(6), Nonce: testHash(7), InstrumentType: ascpbearer.InstrumentLockAuthorization,
-		SignerKeyID: "signer-key-1", KeyEpoch: 1, ModuleAddress: "0x1111111111111111111111111111111111111111",
-		SafeAddress: "0x2222222222222222222222222222222222222222", KeeperID: "keeper-primary",
 		ValidAfter: now, ValidUntil: now.Add(9 * time.Minute),
 	}
 }

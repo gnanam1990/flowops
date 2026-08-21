@@ -28,6 +28,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
 	"github.com/gnanam1990/flowops/internal/ascpsettlement"
+	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/directoryreader"
@@ -103,6 +104,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	signerBindingStore, err := ascpsignerbinding.NewStore(db, cfg.observerConfig.ChainID)
+	if err != nil {
+		return fmt.Errorf("create ASCP signer binding store: %w", err)
+	}
 	var ascpAgentService *ascpagent.Service
 	var ascpOrchestrationService *ascporchestration.Service
 	var ascpActivationService *ascpactivation.Service
@@ -153,6 +158,7 @@ func run(ctx context.Context) error {
 		}
 		ascpActivationService, err = ascpactivation.New(ascpactivation.Config{
 			Authorizations: ascpOrchestrationService,
+			Bindings:       signerBindingStore,
 			Store:          activationStore,
 		})
 		if err != nil {
@@ -260,11 +266,12 @@ func run(ctx context.Context) error {
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
 		OperatorControlKey: cfg.operatorKey, KeeperCallbackKey: cfg.keeperCallbackKey,
 		SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
-		Reconciliation: reconciliationEngine,
-		ASCPAgent:      ascpAgentService,
-		ASCPFlow:       ascpOrchestrationService,
-		ASCPActivation: ascpActivationService,
-		ASCPSettlement: ascpSettlementRegistrar{store: ascpSettlementStore},
+		Reconciliation:     reconciliationEngine,
+		ASCPAgent:          ascpAgentService,
+		ASCPFlow:           ascpOrchestrationService,
+		ASCPActivation:     ascpActivationService,
+		ASCPSignerBindings: signerBindingStore,
+		ASCPSettlement:     ascpSettlementRegistrar{store: ascpSettlementStore},
 	})
 	if err != nil {
 		return err
