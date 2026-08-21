@@ -28,6 +28,9 @@ GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations,
     ascp_directory_heads TO :"runtime_role";
 GRANT SELECT ON ascp_bearer_handles, ascp_bearer_registry TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_sign_requests, ascp_signer_outbox TO :"runtime_role";
+GRANT SELECT, INSERT, UPDATE ON ascp_agent_signer_bindings TO :"runtime_role";
+GRANT SELECT, INSERT ON ascp_agent_signer_binding_history,
+    ascp_agent_signer_binding_changes TO :"runtime_role";
 GRANT SELECT ON ascp_payment_operations TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_payment_attempts, ascp_chain_observations,
     ascp_ledger_transactions, ascp_ledger_postings TO :"runtime_role";

@@ -21,6 +21,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
+	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/directoryreader"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
@@ -68,6 +69,11 @@ type ASCPActivationService interface {
 	Get(context.Context, ascporchestration.Identity, string) (ascpactivation.Status, error)
 }
 
+type ASCPSignerBindingService interface {
+	Put(context.Context, string, string, string, string, ascpsignerbinding.PutRequest) (ascpsignerbinding.Result, error)
+	Current(context.Context, string, string) (ascpsignerbinding.Binding, error)
+}
+
 type ASCPSettlementAttemptRequest struct {
 	OperationID     string `json:"operationId"`
 	Action          string `json:"action"`
@@ -110,6 +116,7 @@ type ServerConfig struct {
 	ASCPAgent                ASCPAgentService
 	ASCPFlow                 ASCPFlowService
 	ASCPActivation           ASCPActivationService
+	ASCPSignerBindings       ASCPSignerBindingService
 	ASCPSettlement           ASCPSettlementRegistrar
 	KeeperCallbackKey        []byte
 }
@@ -130,6 +137,7 @@ type Server struct {
 	ascpAgent                ASCPAgentService
 	ascpFlow                 ASCPFlowService
 	ascpActivation           ASCPActivationService
+	ascpSignerBindings       ASCPSignerBindingService
 	ascpSettlement           ASCPSettlementRegistrar
 	keeperCallbackKey        []byte
 	handler                  http.Handler
@@ -164,6 +172,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		ascpAgent:              cfg.ASCPAgent,
 		ascpFlow:               cfg.ASCPFlow,
 		ascpActivation:         cfg.ASCPActivation,
+		ascpSignerBindings:     cfg.ASCPSignerBindings,
 		ascpSettlement:         cfg.ASCPSettlement,
 		keeperCallbackKey:      append([]byte(nil), cfg.KeeperCallbackKey...),
 	}
@@ -197,6 +206,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET /v1/approvals/{requestID}", s.authenticate(http.HandlerFunc(s.handleApproval)))
 	mux.Handle("POST /v1/approvals/{requestID}/decision", s.authenticate(http.HandlerFunc(s.handleApprovalDecision)))
 	mux.Handle("POST /v1/agents/{agentID}/pause", s.authenticate(http.HandlerFunc(s.handlePauseAgent)))
+	mux.Handle("PUT /v1/agents/{agentID}/signer-binding", s.authenticate(http.HandlerFunc(s.handlePutASCPSignerBinding)))
+	mux.Handle("GET /v1/agents/{agentID}/signer-binding", s.authenticate(http.HandlerFunc(s.handleGetASCPSignerBinding)))
 	mux.Handle("POST /v1/organization/pause", s.authenticate(http.HandlerFunc(s.handlePauseOrganization)))
 	mux.Handle("GET /v1/commands/{commandID}", s.authenticate(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("GET /v1/dashboard/snapshot", s.authenticate(http.HandlerFunc(s.handleDashboardSnapshot)))
@@ -961,6 +972,8 @@ func (s *Server) writeASCPActivationError(w http.ResponseWriter, err error, corr
 		writeCorrelatedError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, correlationID)
 	case errors.Is(err, ascpbearer.ErrActivationInput):
 		writeCorrelatedError(w, http.StatusBadRequest, "INVALID_ASCP_ACTIVATION", err, false, correlationID)
+	case errors.Is(err, ascpsignerbinding.ErrNotFound):
+		writeCorrelatedError(w, http.StatusConflict, "SIGNER_BINDING_REQUIRED", err, false, correlationID)
 	case errors.Is(err, ascpactivation.ErrStateConflict), errors.Is(err, ascpbearer.ErrActivationBinding),
 		errors.Is(err, ascpbearer.ErrActivationState):
 		writeCorrelatedError(w, http.StatusConflict, "ASCP_ACTIVATION_STATE_CONFLICT", err, false, correlationID)
@@ -1165,6 +1178,73 @@ func (s *Server) handleApprovalDecision(w http.ResponseWriter, r *http.Request) 
 
 type pauseRequest struct {
 	Reason string `json:"reason"`
+}
+
+func (s *Server) handlePutASCPSignerBinding(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if !s.authorize(w, principal, PermissionManageSignerBinding, "signer-bindings:write") || !s.requireStepUp(w, principal) {
+		return
+	}
+	if s.ascpSignerBindings == nil {
+		writeError(w, http.StatusServiceUnavailable, "ASCP_SIGNER_BINDING_UNAVAILABLE", ascpsignerbinding.ErrUnavailable, true, "")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var request ascpsignerbinding.PutRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	result, err := s.ascpSignerBindings.Put(r.Context(), principal.OrganizationID, r.PathValue("agentID"), principal.ID, idempotencyKey, request)
+	if err != nil {
+		s.writeASCPSignerBindingError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if !result.Replayed && request.ExpectedVersion == 0 && result.Binding.Version == 1 {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, result)
+}
+
+func (s *Server) handleGetASCPSignerBinding(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if !s.authorize(w, principal, PermissionManageSignerBinding, "signer-bindings:read") {
+		return
+	}
+	if s.ascpSignerBindings == nil {
+		writeError(w, http.StatusServiceUnavailable, "ASCP_SIGNER_BINDING_UNAVAILABLE", ascpsignerbinding.ErrUnavailable, true, "")
+		return
+	}
+	binding, err := s.ascpSignerBindings.Current(r.Context(), principal.OrganizationID, r.PathValue("agentID"))
+	if err != nil {
+		s.writeASCPSignerBindingError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"binding": binding})
+}
+
+func (s *Server) writeASCPSignerBindingError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ascpsignerbinding.ErrInvalid):
+		writeError(w, http.StatusBadRequest, "INVALID_SIGNER_BINDING", err, false, "")
+	case errors.Is(err, ascpsignerbinding.ErrNotFound):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+	case errors.Is(err, ascpsignerbinding.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", err, false, "")
+	case errors.Is(err, ascpsignerbinding.ErrVersionConflict):
+		writeError(w, http.StatusConflict, "SIGNER_BINDING_VERSION_CONFLICT", err, false, "")
+	case errors.Is(err, ascpsignerbinding.ErrInUse):
+		writeError(w, http.StatusConflict, "SIGNER_BINDING_IN_USE", err, false, "")
+	case errors.Is(err, ascpsignerbinding.ErrKeyEpochReuse):
+		writeError(w, http.StatusConflict, "SIGNER_KEY_EPOCH_REUSED", err, false, "")
+	case errors.Is(err, ascpsignerbinding.ErrAgentUnavailable):
+		writeError(w, http.StatusConflict, "AGENT_FROZEN", err, false, "")
+	default:
+		writeError(w, http.StatusServiceUnavailable, "ASCP_SIGNER_BINDING_UNAVAILABLE", err, true, "")
+	}
 }
 
 func (s *Server) handlePauseAgent(w http.ResponseWriter, r *http.Request) {

@@ -1,7 +1,7 @@
 // Package ascpactivation exposes the authenticated application boundary for
 // creating and reading two-phase signer activation requests. Economic scope is
-// always reconstructed from the durable execution authorization; callers may
-// supply signer material but cannot select another authorization or reservation.
+// reconstructed from the durable execution authorization and signer routing is
+// reconstructed from the agent's authoritative signer binding.
 package ascpactivation
 
 import (
@@ -16,6 +16,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
+	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
 )
 
 var (
@@ -23,8 +24,8 @@ var (
 	ErrStateConflict = errors.New("ASCP signer activation state conflicts with the request")
 )
 
-// Request contains only caller-supplied signer material. Request,
-// authorization, operation, and reservation identifiers are derived inside
+// Request contains the canonical signing input. Request, authorization,
+// operation, reservation, and signer-routing identifiers are derived inside
 // Service from authenticated durable state.
 type Request struct {
 	ActionID             string    `json:"actionId"`
@@ -35,11 +36,6 @@ type Request struct {
 	Digest               string    `json:"digest"`
 	Nonce                string    `json:"nonce"`
 	InstrumentType       string    `json:"instrumentType"`
-	SignerKeyID          string    `json:"signerKeyId"`
-	KeyEpoch             uint64    `json:"keyEpoch"`
-	ModuleAddress        string    `json:"moduleAddress"`
-	SafeAddress          string    `json:"safeAddress"`
-	KeeperID             string    `json:"keeperId"`
 	ValidAfter           time.Time `json:"validAfter"`
 	ValidUntil           time.Time `json:"validUntil"`
 }
@@ -47,26 +43,27 @@ type Request struct {
 // Status is the public projection. In particular, the canonical payload,
 // evidence bundle, and prepared signer handle never cross this boundary.
 type Status struct {
-	RequestID           string                     `json:"requestId"`
-	AuthorizationID     string                     `json:"authorizationId"`
-	OperationID         string                     `json:"operationId"`
-	InputHash           string                     `json:"inputHash"`
-	Digest              string                     `json:"digest"`
-	SignerKeyID         string                     `json:"signerKeyId"`
-	KeyEpoch            uint64                     `json:"keyEpoch"`
-	ModuleAddress       string                     `json:"moduleAddress"`
-	SafeAddress         string                     `json:"safeAddress"`
-	KeeperID            string                     `json:"keeperId"`
-	State               ascpbearer.ActivationState `json:"state"`
-	PrimaryMirrorDigest string                     `json:"primaryMirrorDigest,omitempty"`
-	ValidAfter          time.Time                  `json:"validAfter"`
-	ValidUntil          time.Time                  `json:"validUntil"`
-	CreatedAt           time.Time                  `json:"createdAt"`
-	PreparedAt          time.Time                  `json:"preparedAt,omitempty"`
-	ActivatedAt         time.Time                  `json:"activatedAt,omitempty"`
-	MirroredAt          time.Time                  `json:"mirroredAt,omitempty"`
-	AcknowledgedAt      time.Time                  `json:"acknowledgedAt,omitempty"`
-	Replayed            bool                       `json:"replayed,omitempty"`
+	RequestID            string                     `json:"requestId"`
+	AuthorizationID      string                     `json:"authorizationId"`
+	OperationID          string                     `json:"operationId"`
+	InputHash            string                     `json:"inputHash"`
+	Digest               string                     `json:"digest"`
+	SignerBindingVersion uint64                     `json:"signerBindingVersion,omitempty"`
+	SignerKeyID          string                     `json:"signerKeyId"`
+	KeyEpoch             uint64                     `json:"keyEpoch"`
+	ModuleAddress        string                     `json:"moduleAddress"`
+	SafeAddress          string                     `json:"safeAddress"`
+	KeeperID             string                     `json:"keeperId"`
+	State                ascpbearer.ActivationState `json:"state"`
+	PrimaryMirrorDigest  string                     `json:"primaryMirrorDigest,omitempty"`
+	ValidAfter           time.Time                  `json:"validAfter"`
+	ValidUntil           time.Time                  `json:"validUntil"`
+	CreatedAt            time.Time                  `json:"createdAt"`
+	PreparedAt           time.Time                  `json:"preparedAt,omitempty"`
+	ActivatedAt          time.Time                  `json:"activatedAt,omitempty"`
+	MirroredAt           time.Time                  `json:"mirroredAt,omitempty"`
+	AcknowledgedAt       time.Time                  `json:"acknowledgedAt,omitempty"`
+	Replayed             bool                       `json:"replayed,omitempty"`
 }
 
 type AuthorizationReader interface {
@@ -78,26 +75,32 @@ type Store interface {
 	ForAuthorization(context.Context, string) (ascpbearer.ActivationRequest, error)
 }
 
+type BindingReader interface {
+	Current(context.Context, string, string) (ascpsignerbinding.Binding, error)
+}
+
 type Config struct {
 	Authorizations AuthorizationReader
+	Bindings       BindingReader
 	Store          Store
 	Random         io.Reader
 }
 
 type Service struct {
 	authorizations AuthorizationReader
+	bindings       BindingReader
 	store          Store
 	random         io.Reader
 }
 
 func New(cfg Config) (*Service, error) {
-	if cfg.Authorizations == nil || cfg.Store == nil {
+	if cfg.Authorizations == nil || cfg.Bindings == nil || cfg.Store == nil {
 		return nil, ErrUnavailable
 	}
 	if cfg.Random == nil {
 		cfg.Random = rand.Reader
 	}
-	return &Service{authorizations: cfg.Authorizations, store: cfg.Store, random: cfg.Random}, nil
+	return &Service{authorizations: cfg.Authorizations, bindings: cfg.Bindings, store: cfg.Store, random: cfg.Random}, nil
 }
 
 func (s *Service) Create(ctx context.Context, identity ascporchestration.Identity, operationID string, request Request) (Status, error) {
@@ -108,9 +111,29 @@ func (s *Service) Create(ctx context.Context, identity ascporchestration.Identit
 	if authorization.OperationID != operationID || authorization.State != ascpexecauth.ValidatedAndReserved || authorization.ReservationID == "" {
 		return Status{}, ErrStateConflict
 	}
-	requestID, err := s.requestID()
-	if err != nil {
-		return Status{}, fmt.Errorf("create activation request identifier: %w", err)
+	var binding ascpsignerbinding.Binding
+	var requestID string
+	existing, existingErr := s.store.ForAuthorization(ctx, authorization.AuthorizationID)
+	switch {
+	case existingErr == nil:
+		requestID = existing.RequestID
+		binding = ascpsignerbinding.Binding{
+			OrganizationID: identity.OrganizationID, AgentID: identity.AgentID,
+			Version: existing.SignerBindingVersion, SignerKeyID: existing.SignerKeyID,
+			KeyEpoch: existing.KeyEpoch, ModuleAddress: existing.ModuleAddress,
+			SafeAddress: existing.SafeAddress, KeeperID: existing.KeeperID,
+		}
+	case errors.Is(existingErr, ascpbearer.ErrActivationNotFound):
+		binding, err = s.bindings.Current(ctx, identity.OrganizationID, identity.AgentID)
+		if err != nil {
+			return Status{}, err
+		}
+		requestID, err = s.requestID()
+		if err != nil {
+			return Status{}, fmt.Errorf("create activation request identifier: %w", err)
+		}
+	default:
+		return Status{}, existingErr
 	}
 	stored, replayed, err := s.store.Request(ctx, ascpbearer.ActivationInput{
 		RequestID: requestID, AuthorizationID: authorization.AuthorizationID,
@@ -119,8 +142,8 @@ func (s *Service) Create(ctx context.Context, identity ascporchestration.Identit
 		CanonicalPayloadHash: request.CanonicalPayloadHash,
 		EvidenceBundle:       append([]byte(nil), request.EvidenceBundle...), EvidenceBundleHash: request.EvidenceBundleHash,
 		Digest: request.Digest, Nonce: request.Nonce, InstrumentType: request.InstrumentType,
-		SignerKeyID: request.SignerKeyID, KeyEpoch: request.KeyEpoch, ModuleAddress: request.ModuleAddress,
-		SafeAddress: request.SafeAddress, KeeperID: request.KeeperID,
+		SignerBindingVersion: binding.Version, SignerKeyID: binding.SignerKeyID, KeyEpoch: binding.KeyEpoch, ModuleAddress: binding.ModuleAddress,
+		SafeAddress: binding.SafeAddress, KeeperID: binding.KeeperID,
 		ValidAfter: request.ValidAfter, ValidUntil: request.ValidUntil,
 	})
 	if err != nil {
@@ -165,7 +188,7 @@ func (s *Service) requestID() (string, error) {
 func project(request ascpbearer.ActivationRequest, replayed bool) Status {
 	return Status{
 		RequestID: request.RequestID, AuthorizationID: request.AuthorizationID, OperationID: request.OperationID,
-		InputHash: request.InputHash, Digest: request.Digest, SignerKeyID: request.SignerKeyID,
+		InputHash: request.InputHash, Digest: request.Digest, SignerBindingVersion: request.SignerBindingVersion, SignerKeyID: request.SignerKeyID,
 		KeyEpoch: request.KeyEpoch, ModuleAddress: request.ModuleAddress, SafeAddress: request.SafeAddress,
 		KeeperID: request.KeeperID, State: request.State, PrimaryMirrorDigest: request.PrimaryMirrorDigest,
 		ValidAfter: request.ValidAfter, ValidUntil: request.ValidUntil, CreatedAt: request.CreatedAt,

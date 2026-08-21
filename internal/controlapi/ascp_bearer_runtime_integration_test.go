@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
+	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
 )
 
 type expiryProofSigner struct{ now time.Time }
@@ -79,6 +80,16 @@ func TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically(t *t
 		ascpIntegrationHash(9110), reservationID, base); err != nil {
 		t.Fatal(err)
 	}
+	bindingStore, err := ascpsignerbinding.NewStore(db, 84532, func() time.Time { return base })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bindingStore.Put(ctx, "org_bearer_runtime", "agent_bearer_runtime", "owner_bearer_runtime", "bind_bearer_runtime_v1", ascpsignerbinding.PutRequest{
+		SignerKeyID: "signer-key-runtime", KeyEpoch: 7, ModuleAddress: ascpIntegrationModule,
+		SafeAddress: ascpIntegrationSafe, KeeperID: "keeper-runtime", Reason: "Bearer runtime integration binding",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	requestStore, err := ascpbearer.NewActivationStore(db, func() time.Time { return base })
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +101,7 @@ func TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically(t *t
 		CanonicalPayloadHash: ascpbearer.CanonicalPayloadHash(payload), EvidenceBundle: evidence,
 		EvidenceBundleHash: ascpbearer.EvidenceBundleHash(evidence), Digest: ascpIntegrationHash(9112),
 		Nonce: ascpIntegrationHash(9113), InstrumentType: ascpbearer.InstrumentLockAuthorization,
-		SignerKeyID: "signer-key-runtime", KeyEpoch: 7, ModuleAddress: ascpIntegrationModule,
+		SignerBindingVersion: 1, SignerKeyID: "signer-key-runtime", KeyEpoch: 7, ModuleAddress: ascpIntegrationModule,
 		SafeAddress: ascpIntegrationSafe, KeeperID: "keeper-runtime", ValidAfter: base, ValidUntil: base.Add(time.Minute),
 	}
 	request, _, err := requestStore.Request(ctx, input)

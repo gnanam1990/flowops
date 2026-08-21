@@ -17,6 +17,8 @@ for required in \
 	'GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations' \
 	'GRANT SELECT ON ascp_bearer_handles, ascp_bearer_registry' \
 	'GRANT SELECT, INSERT ON ascp_sign_requests, ascp_signer_outbox' \
+	'GRANT SELECT, INSERT, UPDATE ON ascp_agent_signer_bindings' \
+	'GRANT SELECT, INSERT ON ascp_agent_signer_binding_history' \
 	'GRANT UPDATE (state) ON ascp_bearer_handles' \
 	'GRANT UPDATE (outcome)' \
 	'GRANT SELECT ON ascp_payment_operations' \

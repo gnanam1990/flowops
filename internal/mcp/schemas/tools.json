@@ -131,7 +131,7 @@
     {
       "name": "ascp.operation.activation.create",
       "title": "Request ASCP signer activation",
-      "description": "Create the only two-phase signer activation request for an authenticated agent operation after a live execution authorization and budget reservation exist. Authorization, operation, reservation, and request identifiers are server-derived; the response never exposes canonical bytes, evidence bytes, signatures, or the prepared signer handle.",
+      "description": "Create the only two-phase signer activation request for an authenticated agent operation after a live execution authorization and budget reservation exist. Authorization, operation, reservation, request, signer key, key epoch, module, Safe, and keeper identifiers are server-derived; the response never exposes canonical bytes, evidence bytes, signatures, or the prepared signer handle.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -141,7 +141,7 @@
           "request": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["actionId", "canonicalPayload", "canonicalPayloadHash", "evidenceBundle", "evidenceBundleHash", "digest", "nonce", "instrumentType", "signerKeyId", "keyEpoch", "moduleAddress", "safeAddress", "keeperId", "validAfter", "validUntil"],
+            "required": ["actionId", "canonicalPayload", "canonicalPayloadHash", "evidenceBundle", "evidenceBundleHash", "digest", "nonce", "instrumentType", "validAfter", "validUntil"],
             "properties": {
               "actionId": {"type": "string", "minLength": 1, "maxLength": 128},
               "canonicalPayload": {"type": "string", "description": "Base64-encoded exact module payload bytes."},
@@ -151,11 +151,6 @@
               "digest": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
               "nonce": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
               "instrumentType": {"type": "string", "enum": ["LOCK_AUTHORIZATION"]},
-              "signerKeyId": {"type": "string", "minLength": 1, "maxLength": 128},
-              "keyEpoch": {"type": "integer", "minimum": 1},
-              "moduleAddress": {"type": "string", "pattern": "^0x[0-9a-f]{40}$"},
-              "safeAddress": {"type": "string", "pattern": "^0x[0-9a-f]{40}$"},
-              "keeperId": {"type": "string", "minLength": 1, "maxLength": 128},
               "validAfter": {"type": "string", "format": "date-time"},
               "validUntil": {"type": "string", "format": "date-time"}
             }
