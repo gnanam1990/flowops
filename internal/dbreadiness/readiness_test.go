@@ -54,14 +54,28 @@ func TestVerifyRuntimeSQLRejectsSurplusDeletePrivilege(t *testing.T) {
 	}
 }
 
-func TestVerifyRuntimeSQLRejectsSurplusSignerColumnUpdatePrivilege(t *testing.T) {
-	db, mock := readinessDB(t, true, nil, map[string][]string{"ascp_sign_requests": {"canonical_payload"}})
+func TestVerifyRuntimeSQLRejectsSignerTransitionUpdatePrivilege(t *testing.T) {
+	db, mock := readinessDB(t, true, map[string]map[string]bool{"ascp_sign_requests": {"UPDATE": true}}, nil)
 	report, err := VerifyRuntimeSQL(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Ready {
-		t.Fatal("surplus signer payload UPDATE privilege was marked ready")
+		t.Fatal("signer transition UPDATE privilege was marked ready for the control-plane role")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyRuntimeSQLRejectsPrimaryMirrorUpdatePrivilege(t *testing.T) {
+	db, mock := readinessDB(t, true, nil, map[string][]string{"ascp_bearer_registry": {"primary_mirror_digest"}})
+	report, err := VerifyRuntimeSQL(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Ready {
+		t.Fatal("primary mirror UPDATE privilege was marked ready for the control-plane role")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -147,14 +161,14 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 		"ascp_budget_reservations":           {"SELECT": true, "INSERT": true, "UPDATE": true},
 		"ascp_budget_reservation_dimensions": {"SELECT": true, "INSERT": true},
 		"ascp_execution_authorizations":      {"SELECT": true, "INSERT": true},
-		"ascp_bearer_handles":                {"SELECT": true, "INSERT": true},
+		"ascp_bearer_handles":                {"SELECT": true},
 		"ascp_sign_requests":                 {"SELECT": true, "INSERT": true},
-		"ascp_bearer_registry":               {"SELECT": true, "INSERT": true},
+		"ascp_bearer_registry":               {"SELECT": true},
 		"ascp_signer_outbox":                 {"SELECT": true, "INSERT": true},
 		"ascp_directory_snapshots":           {"SELECT": true, "INSERT": true},
 		"ascp_directory_quote_evidence":      {"SELECT": true, "INSERT": true},
 		"ascp_directory_heads":               {"SELECT": true, "INSERT": true, "UPDATE": true},
-		"ascp_payment_operations":            {"SELECT": true, "INSERT": true},
+		"ascp_payment_operations":            {"SELECT": true},
 		"ascp_payment_attempts":              {"SELECT": true, "INSERT": true},
 		"ascp_chain_observations":            {"SELECT": true, "INSERT": true},
 		"ascp_ledger_transactions":           {"SELECT": true, "INSERT": true},

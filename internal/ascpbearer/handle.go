@@ -69,13 +69,13 @@ type PrepareInput struct {
 }
 
 type ActivationProof struct {
-	RequestID            string
-	HandleID             string
-	OperationID          string
-	Digest               string
-	Nonce                string
-	PrimaryMirrorDigest  string
-	ActivationOccurredAt time.Time
+	RequestID            string    `json:"requestId"`
+	HandleID             string    `json:"handleId"`
+	OperationID          string    `json:"operationId"`
+	Digest               string    `json:"digest"`
+	Nonce                string    `json:"nonce"`
+	PrimaryMirrorDigest  string    `json:"primaryMirrorDigest"`
+	ActivationOccurredAt time.Time `json:"activationOccurredAt"`
 }
 
 // ActivationVerifier belongs inside the signer trust boundary. A production

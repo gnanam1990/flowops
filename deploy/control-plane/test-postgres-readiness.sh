@@ -15,12 +15,12 @@ for required in \
     'GRANT SELECT, INSERT ON audit_events, control_events' \
     'GRANT SELECT, INSERT ON ascp_intents, ascp_policy_decisions, ascp_execution_authorizations' \
 	'GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations' \
-	'GRANT SELECT, INSERT ON ascp_bearer_handles, ascp_sign_requests' \
+	'GRANT SELECT ON ascp_bearer_handles, ascp_bearer_registry' \
+	'GRANT SELECT, INSERT ON ascp_sign_requests, ascp_signer_outbox' \
 	'GRANT UPDATE (state) ON ascp_bearer_handles' \
-	'GRANT UPDATE (prepared_handle, state, prepared_at, activated_at' \
-	'GRANT UPDATE (primary_mirror_digest, outcome)' \
-	'GRANT UPDATE (state, attempts, delivered_at)' \
-	'GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts' \
+	'GRANT UPDATE (outcome)' \
+	'GRANT SELECT ON ascp_payment_operations' \
+	'GRANT SELECT, INSERT ON ascp_payment_attempts, ascp_chain_observations' \
 	'GRANT SELECT, INSERT ON ascp_keeper_jobs' \
 	'GRANT SELECT ON ascp_seller_jobs, ascp_seller_responses' \
 	'GRANT SELECT ON ascp_leadership_epochs' \
@@ -464,6 +464,86 @@ if printf '%s\n' 'GRANT SELECT ON public.ascp_payment_operations TO :"verifier_r
     exit 1
 fi
 verifier_grants_are_safe "$verifier_grant_file"
+
+bearer_grant_file=deploy/control-plane/configure-bearer-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT' \
+    'ALTER ROLE :"bearer_role" SET search_path = public' \
+    'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC' \
+    "REVOKE TEMPORARY ON DATABASE %I FROM %I', current_database(), :'bearer_role'" \
+    'REVOKE CREATE ON SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"bearer_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"bearer_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"bearer_role"' \
+    'ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC'
+do
+    grep -F "$required" "$bearer_grant_file" >/dev/null
+done
+
+bearer_grants_are_safe() {
+    awk 'BEGIN { RS=";" }
+    {
+        statement=toupper($0)
+        if (statement !~ /GRANT/) next
+        if (statement ~ /\/\*|--/) exit 1
+        gsub(/[[:space:]]+/, " ", statement)
+        sub(/^ /, "", statement)
+        sub(/ $/, "", statement)
+        if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT SELECT ON PUBLIC.ASCP_SIGN_REQUESTS, PUBLIC.ASCP_SIGNER_OUTBOX, PUBLIC.ASCP_EXECUTION_AUTHORIZATIONS, PUBLIC.ASCP_BUDGET_RESERVATIONS, PUBLIC.ASCP_POLICY_DECISIONS, PUBLIC.ASCP_BEARER_REGISTRY TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT INSERT (HANDLE_ID, OPERATION_ID, PAYLOAD_HASH, DIGEST, NONCE, STATE, VALID_UNTIL, CREATED_AT) ON PUBLIC.ASCP_BEARER_HANDLES TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT INSERT (DIGEST, INSTRUMENT_TYPE, SIGNATURE_REF, NONCE, ISSUED_AT, VALID_UNTIL, SIGNER_KEY_ID, KEY_EPOCH, OPERATION_ID, AUTHORIZATION_ID, RESERVATION_ID, MODULE_ADDRESS, SAFE_ADDRESS, OUTCOME, CREATED_AT) ON PUBLIC.ASCP_BEARER_REGISTRY TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT INSERT (OPERATION_ID, ORGANIZATION_ID, AGENT_ID, AUTHORIZATION_ID, RESERVATION_ID, BEARER_DIGEST, COMMITMENT_HASH, CALL_ID, CHAIN_ID, ESCROW_CONTRACT, ASSET, BUYER, PAY_TO, AMOUNT_BASE_UNITS, SETTLE_BY, STATE, CREATED_AT, UPDATED_AT) ON PUBLIC.ASCP_PAYMENT_OPERATIONS TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT INSERT (EVENT_ID, REQUEST_ID, OPERATION_ID, KIND, PAYLOAD, STATE, CREATED_AT) ON PUBLIC.ASCP_SIGNER_OUTBOX TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT UPDATE (LEASE_OWNER, LEASE_TOKEN, LEASE_EXPIRES_AT, ATTEMPT_COUNT, NEXT_ATTEMPT_AT, LAST_ERROR, PREPARED_HANDLE, STATE, PREPARED_AT, ACTIVATED_AT, PRIMARY_MIRROR_DIGEST, MIRRORED_AT, ACKNOWLEDGED_AT, UNACTIVATED_PROOF, EXPIRED_AT) ON PUBLIC.ASCP_SIGN_REQUESTS TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT UPDATE (STATE) ON PUBLIC.ASCP_BUDGET_RESERVATIONS TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT UPDATE (PRIMARY_MIRROR_DIGEST) ON PUBLIC.ASCP_BEARER_REGISTRY TO :\"BEARER_ROLE\"") next
+        if (statement == "GRANT UPDATE (STATE, ATTEMPTS, DELIVERED_AT, CANCELLED_AT, LAST_ERROR) ON PUBLIC.ASCP_SIGNER_OUTBOX TO :\"BEARER_ROLE\"") next
+        exit 1
+    }' "$@"
+}
+
+if ! bearer_grants_are_safe "$bearer_grant_file"; then
+    echo "bearer role grant script contains an unapproved privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'grant select, update on public.ascp_policy_decisions to :"bearer_role";' | bearer_grants_are_safe; then
+    echo "bearer role checker accepted table-wide UPDATE" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT SELECT/*hidden*/, DELETE ON public.ascp_sign_requests TO :"bearer_role";' | bearer_grants_are_safe; then
+    echo "bearer role checker accepted a comment-obfuscated privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT SELECT ON public.credentials TO :"bearer_role";' | bearer_grants_are_safe; then
+    echo "bearer role checker accepted unrelated credential access" >&2
+    exit 1
+fi
+
+bearer_role_alters_are_safe() {
+    awk 'BEGIN { RS=";" }
+    {
+        statement=toupper($0)
+        if (statement !~ /ALTER ROLE/) next
+        if (statement ~ /\/\*|--/) exit 1
+        gsub(/[[:space:]]+/, " ", statement)
+        sub(/^ /, "", statement)
+        sub(/ $/, "", statement)
+        if (statement == "ALTER ROLE :\"BEARER_ROLE\" NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT") next
+        if (statement == "ALTER ROLE :\"BEARER_ROLE\" SET SEARCH_PATH = PUBLIC") next
+        exit 1
+    }' "$@"
+}
+
+bearer_role_alters_are_safe "$bearer_grant_file"
+if { cat "$bearer_grant_file"; printf '%s\n' 'ALTER ROLE :"bearer_role" SUPERUSER;'; } | bearer_role_alters_are_safe; then
+    echo "bearer role checker accepted an appended SUPERUSER statement" >&2
+    exit 1
+fi
+if printf '%s\n' 'ALTER ROLE :"bearer_role" SET session_preload_libraries = attacker;' | bearer_role_alters_are_safe; then
+    echo "bearer role checker accepted an unreviewed role setting" >&2
+    exit 1
+fi
 
 if [ -n "${FLOWOPS_DATABASE_URL:-}" ]; then
     go run ./cmd/postgres-readiness sql

@@ -21,7 +21,7 @@ production Base value as part of this procedure.
 The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/flowops-admin`, `/flowops/flowops-operator`,
 `/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`,
-`/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`, and
+`/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`, `/flowops/ascp-bearer-worker`, and
 `/flowops/postgres-readiness`. `railway.json` selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
@@ -318,6 +318,39 @@ HSM custody, KMS durability, provider independence, funded gas availability or
 live transaction correctness. Keep the keeper EOA capped and alert on ambiguity,
 dead letters, gas floor, lease stalls, fee-bump exhaustion, chain disagreement,
 and expiry-to-broadcast lag.
+
+Run `/flowops/ascp-bearer-worker` as a separate supervised process with its own
+LOGIN role after migration `0023`. Apply
+`configure-bearer-role.sql`; do not reuse the control-plane or keeper
+credential. Startup proves the role's exact effective privileges and refuses
+admin, inherited, object-owning, temporary-table, routine, sequence, surplus
+table, or surplus column authority.
+
+| Variable | Requirement |
+|---|---|
+| `FLOWOPS_BEARER_DATABASE_URL` | Dedicated bearer-role PostgreSQL URL with exactly one `sslmode=verify-full`; effective schema must be `public` |
+| `FLOWOPS_BEARER_WORKER_ID` | Stable canonical worker identifier |
+| `FLOWOPS_BEARER_SIGNER_KEY_ID` | Exact isolated signer key identifier assigned to this worker shard |
+| `FLOWOPS_BEARER_KEY_EPOCH` | Positive signer key epoch assigned to this worker shard |
+| `FLOWOPS_BEARER_KEEPER_ID` | Exact keeper allowed to release the resulting activated artifacts |
+| `FLOWOPS_BEARER_SIGNER_SOCKET` | Absolute Unix socket for prepare, activation acknowledgment, and non-activation proof |
+| `FLOWOPS_BEARER_MIRROR_SOCKET` | Different absolute Unix socket for create-if-absent primary WORM writes |
+| `FLOWOPS_BEARER_BOUNDARY_TIMEOUT` | Optional per-sidecar timeout, default `3s`, range `1s` through `10s` |
+| `FLOWOPS_BEARER_LEASE_DURATION` | Optional fenced lease, default `10s`, at least one boundary timeout plus `2s`, maximum `1m` |
+| `FLOWOPS_BEARER_RETRY_DELAY` | Optional retry delay for unavailable boundaries, default `10s`, range `1s` through `1h` |
+| `FLOWOPS_BEARER_INTERVAL` | Optional cycle interval, default `30s`, maximum `5m` |
+| `FLOWOPS_BEARER_CYCLE_TIMEOUT` | Optional whole-cycle timeout, default `20s`, below the interval and greater than one boundary timeout plus `1s`; expiry may use at most that boundary timeout plus `1s`, preserving the rest for activation |
+| `FLOWOPS_BEARER_EXPIRY_BATCH_SIZE` | Optional independently proved expiry capacity per cycle, default `10`, maximum `100` |
+| `FLOWOPS_BEARER_ADVANCE_BATCH_SIZE` | Optional activation advancement capacity per cycle, default `40`, maximum `100` |
+
+The two socket paths and device/inode identities must be distinct. Mount each
+from a separately reviewed sidecar into an immediate directory owned by UID
+10001 or root and not writable by group or other users. Sidecars implement the
+exact `ASCP_BEARER_RUNTIME_V1` contract in `ASCP_BEARER_HANDLES.md`.
+Alert on retry count, lease age, oldest eligible request, prepared-to-active
+latency, active-to-primary-mirror latency, acknowledgment latency, expiry lag,
+proof failures, and reservation/request/outbox state divergence. A running
+worker does not prove signer HSM custody, WORM retention, or sidecar durability.
 
 Signer receipt keys are public material but remain tenant-scoped security
 configuration. Each JSON item must contain exactly `organizationId`,

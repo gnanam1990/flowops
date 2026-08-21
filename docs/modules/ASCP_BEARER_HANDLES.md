@@ -26,14 +26,41 @@ The legacy `encrypted_artifact` control-plane column is constrained to `NULL`
 by migration `0010`; the runtime role cannot bypass the database constraint.
 Ciphertext belongs only to the customer signer ledger and is retained through
 the permanent replay horizon. Normal finalization does not erase it.
-Runtime SQL grants limit updates to reviewed lifecycle columns; immutable
-payload, evidence, signer binding, registry identity, and outbox payload fields
-are not updateable through the runtime role.
+Signer lifecycle updates are removed from the control-plane runtime role. The
+separately supervised bearer worker uses a dedicated role whose startup audit
+requires exactly the reviewed table and column privileges and rejects surplus
+authority. Immutable payload, evidence, signer binding, registry identity, and
+outbox payload fields are not updateable through either runtime role.
 
-This module supplies the durable protocol, signer adapter, and recovery state
-machine. It is not yet wired to a production signer RPC, real Ring 6 signing
-engine, WORM provider, or public control-plane/MCP route; those adapters remain
-explicit integration gates and this document does not claim a live signer.
+`cmd/ascp-bearer-worker` supplies the durable claim/retry process and strict
+Unix-socket clients for an isolated signer and primary WORM writer. The actual
+Ring 6 signing engine, signer-side RPC server, WORM-provider sidecar, and public
+control-plane/MCP request route remain explicit integration gates; this
+document does not claim those production services are deployed.
+
+## Runtime boundary contract
+
+The signer and mirror must use different Unix sockets and different filesystem
+device/inode identities. Socket parents are non-symlink directories owned by
+the worker UID or root and not writable by group or other users. Every socket
+is revalidated before every call. Both sidecars expose exact health JSON with
+protocol `ASCP_BEARER_RUNTIME_V1`, their exact `signer` or `mirror` identity,
+and status `ok`.
+
+- `POST /v1/prepare` receives the full immutable `ActivationInput` and returns
+  only `{handleId}`. The signer must independently validate all bytes before
+  durable preparation.
+- `POST /v1/acknowledge` receives the exact activation proof and returns
+  `{acknowledged:true}` only after durable signer-ledger activation.
+- `POST /v1/prove-unactivated` receives request, action, and input-hash
+  bindings and returns a domain-separated `UnactivatedProof`.
+- `POST /v1/put-primary` receives the exact registry key, bytes, and digest. It
+  may return only `CREATED` or `EXISTS_EXACT` with the same digest.
+
+Requests and responses are bounded to 2 MiB. Responses require exact
+`application/json`, one JSON value, no unknown fields, no duplicate keys, and
+no more than 64 nesting levels. Redirects and proxies are disabled. Secret-
+bearing request and response buffers are cleared after calls.
 
 ## Recovery and expiry
 
@@ -51,6 +78,11 @@ signer fails closed if this authoritative verification is unavailable.
 
 A `PREPARED` signer record may expire only after its authorization validity
 window and an authoritative proof that the control plane never activated it.
+The bearer worker also handles `SIGN_REQUESTED` expiry. A serializable
+transaction validates the worker lease and proof, changes the reservation from
+`RESERVED` to `RELEASED`, records `EXPIRED_UNACTIVATED`, cancels the pending
+prepare outbox event, and clears the lease. This closes the pre-activation
+budget leak without allowing TTL release after activation.
 An active bearer can leave the budget only through nonce consumption, a
 finalized unused-expiry proof, or finalized on-chain nonce invalidation; pause
 alone is not release evidence.
@@ -59,9 +91,9 @@ alone is not release evidence.
 
 ```sh
 go test -race ./internal/ascpbearer ./internal/controlapi
-go vet ./internal/ascpbearer ./internal/controlapi
+go vet ./internal/ascpbearer ./internal/controlapi ./cmd/ascp-bearer-worker
 FLOWOPS_TEST_DATABASE_URL=... go test -race ./internal/controlapi \
-  -run TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveAtomically -count=1
+  -run 'TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically|TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveAtomically' -count=1
 ```
 
 The tests cover exact-byte independent-verification gating, opaque-handle
@@ -70,4 +102,5 @@ restart, nondeterministic-resign avoidance, hash-chain and ciphertext/state
 tamper failures, file and parent-directory permission failures, exact
 runtime-column grants, authoritative prepared expiry, wrong WORM digest,
 outbox creation, and the
-atomic `RESERVED → AUTHORIZATION_LIVE` transition.
+atomic `RESERVED → AUTHORIZATION_LIVE` transition, fenced concurrent runtime
+claims, stale-lease rejection, and atomic pre-activation expiry release.
