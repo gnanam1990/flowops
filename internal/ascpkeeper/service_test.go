@@ -160,7 +160,7 @@ func TestRestartRebroadcastsExactSealedTransactionWithoutNewNonce(t *testing.T) 
 	store := newMemoryStore(now)
 	input := signedInput(now)
 	_, _, _ = store.Enqueue(context.Background(), input)
-	lease, _ := store.Claim(context.Background(), input.KeeperID, 20*time.Second)
+	lease, _ := store.Claim(context.Background(), input.KeeperID, input.GasPayer, input.ChainID, 20*time.Second)
 	nonce, _ := store.AllocateNonce(context.Background(), lease, 17)
 	unsigned := UnsignedTransaction{ChainID: input.ChainID, From: input.GasPayer, To: input.Target, ValueWei: "0",
 		Nonce: nonce, GasLimit: 100000, Data: []byte{1, 2, 3, 4}, Fee: Fee{"100", "2"}}
@@ -285,7 +285,7 @@ func TestEnqueueIsExactReplayAndConcurrentClaimIsExclusive(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if _, err := store.Claim(context.Background(), input.KeeperID, 20*time.Second); err == nil {
+			if _, err := store.Claim(context.Background(), input.KeeperID, input.GasPayer, input.ChainID, 20*time.Second); err == nil {
 				success.Add(1)
 			}
 		}()
@@ -301,7 +301,7 @@ func TestNonceReservationSurvivesCrashBeforePreparedAttempt(t *testing.T) {
 	store := newMemoryStore(now)
 	input := signedInput(now)
 	_, _, _ = store.Enqueue(context.Background(), input)
-	lease, _ := store.Claim(context.Background(), input.KeeperID, 20*time.Second)
+	lease, _ := store.Claim(context.Background(), input.KeeperID, input.GasPayer, input.ChainID, 20*time.Second)
 	first, err := store.AllocateNonce(context.Background(), lease, 17)
 	if err != nil {
 		t.Fatal(err)
@@ -349,11 +349,11 @@ func (s *memoryStore) Enqueue(_ context.Context, input EnqueueInput) (Job, bool,
 	return job, false, nil
 }
 
-func (s *memoryStore) Claim(_ context.Context, keeper string, duration time.Duration) (Lease, error) {
+func (s *memoryStore) Claim(_ context.Context, keeper, gasPayer string, chainID uint64, duration time.Duration) (Lease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, job := range s.jobs {
-		if job.KeeperID != keeper || s.now.Before(job.EligibleAfter) || (!job.LeaseExpiresAt.IsZero() && s.now.Before(job.LeaseExpiresAt)) ||
+		if job.KeeperID != keeper || job.GasPayer != gasPayer || job.ChainID != chainID || s.now.Before(job.EligibleAfter) || (!job.LeaseExpiresAt.IsZero() && s.now.Before(job.LeaseExpiresAt)) ||
 			(job.State != StateQueued && job.State != StatePrepared && job.State != StateBroadcasting && job.State != StateTimedOut && job.State != StateReorged) {
 			continue
 		}
@@ -365,11 +365,11 @@ func (s *memoryStore) Claim(_ context.Context, keeper string, duration time.Dura
 	return Lease{}, ErrNoWork
 }
 
-func (s *memoryStore) ClaimObservation(_ context.Context, keeper string, duration time.Duration) (Lease, error) {
+func (s *memoryStore) ClaimObservation(_ context.Context, keeper, gasPayer string, chainID uint64, duration time.Duration) (Lease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, job := range s.jobs {
-		if job.KeeperID != keeper || (job.State != StateAmbiguous && job.State != StateSubmitted && job.State != StateConfirmed) ||
+		if job.KeeperID != keeper || job.GasPayer != gasPayer || job.ChainID != chainID || (job.State != StateAmbiguous && job.State != StateSubmitted && job.State != StateConfirmed) ||
 			(!job.LeaseExpiresAt.IsZero() && s.now.Before(job.LeaseExpiresAt)) {
 			continue
 		}
@@ -588,7 +588,7 @@ func newFixture(store *memoryStore, now time.Time) *fixture {
 }
 func (f *fixture) service(t *testing.T) *Service {
 	t.Helper()
-	service, err := NewService(f.store, f.artifacts, f.assembler, f.verifier, f.wallet, f.sealer, f.broadcast, f.fees, f.nonces, f.replacements, f.outcomes, f.leadership, Config{KeeperID: "keeper-primary", GasPayer: testGasPayer(), LeaseDuration: 20 * time.Second, MaxFeeBumps: 3, MaxGasLimit: 200000, FeeCap: Fee{"1000", "100"}, Clock: func() time.Time { return f.now }})
+	service, err := NewService(f.store, f.artifacts, f.assembler, f.verifier, f.wallet, f.sealer, f.broadcast, f.fees, f.nonces, f.replacements, f.outcomes, f.leadership, Config{KeeperID: "keeper-primary", GasPayer: testGasPayer(), ChainID: 84532, LeaseDuration: 20 * time.Second, MaxFeeBumps: 3, MaxGasLimit: 200000, FeeCap: Fee{"1000", "100"}, Clock: func() time.Time { return f.now }})
 	if err != nil {
 		t.Fatal(err)
 	}

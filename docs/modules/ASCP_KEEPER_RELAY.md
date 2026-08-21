@@ -74,12 +74,56 @@ settlement continues to own receipt, finality and accounting truth.
 
 ## Operations
 
-Deploy separately from the API with `configure-keeper-role.sql`. The keeper EOA
+Apply migrations `0013` and `0022`, then deploy separately from the API with
+`configure-keeper-role.sql`. The keeper EOA
 must be dedicated, capped and independently funded. Alert on gas floor, lease
 stalls, ambiguity/dead letters, RPC disagreement, fee-bump exhaustion and
 `claimExpired` eligibility-to-broadcast lag over ten minutes. Correlation IDs
 are the durable job and operation IDs. Reconcile every keeper EOA outflow and
 every attempt's actual receipt gas against `KeeperRelayerETH`/`NetworkFeeETH`.
+
+## Durable runtime
+
+`cmd/ascp-keeper` is the separately supervised process. It pins one Base chain
+and wires the PostgreSQL
+store and read-only leadership gate to seven distinct Unix-domain boundary
+sockets: activated artifact, assembler, independent verifier, wallet/HSM,
+ciphertext sealer/KMS, write-only broadcaster, and independently verified
+read-only chain gateway. Startup
+rejects a shared socket between any two boundaries, a symlink or world-writable
+socket, a world-writable socket directory, a socket not owned by the runtime
+user or root, or a health response whose exact boundary identity does not
+match. No TCP listener, private key, raw-transaction environment variable, or
+credential-bearing RPC URL exists in this process.
+
+Every sidecar implements `ASCP_KEEPER_BOUNDARY_V1`, returns strict JSON with no
+unknown fields, and bounds each body to 2 MiB. `GET /healthz` returns exactly
+`protocol`, `boundary`, and `status`. The operation routes are:
+
+- artifact: `POST /v1/release`;
+- assembler: `POST /v1/assemble`;
+- verifier: `POST /v1/verify`;
+- wallet: `POST /v1/sign`;
+- sealer: `POST /v1/seal` and `POST /v1/open`;
+- broadcaster: `POST /v1/broadcast`; and
+- chain: `POST /v1/fees/initial`, `/v1/fees/bump`,
+  `/v1/nonce`, `/v1/replacement`, `/v1/outcome`, and `/v1/expiries`.
+
+The chain sidecar is the independently operated read-only quorum/evidence
+adapter and cannot broadcast. Its
+`outcome`, `replacement`, and `expiries` responses are still revalidated by the
+keeper kernel before durable state changes. A non-success broadcast response
+is deterministic only when the trusted chain adapter emits `REJECTED` or
+`UNDERPRICED`; every other code and every transport error is ambiguous. The
+runtime first observes already-broadcast attempts, then scans expiry proofs,
+and finally advances relay work. A boundary or database failure stops the supervised
+process instead of skipping proof gates.
+
+The runtime is executable integration infrastructure, not a claim that the
+external signer, HSM, KMS or Base-provider set has been deployed. Production
+admission still requires separately reviewed sidecars, distinct socket
+ownership, live funded EOA drills, provider-independence evidence, alerting,
+backup/restore evidence, and key ceremonies.
 
 ## Acceptance criteria
 
@@ -87,6 +131,9 @@ every attempt's actual receipt gas against `KeeperRelayerETH`/`NetworkFeeETH`.
 - Leadership is checked before bearer release; only the bound keeper receives
   the artifact; `claimExpired` never contacts the signer.
 - Concurrent claims are exclusive and nonce reservation survives restart.
+- Claims and observation leases bind keeper ID, configured gas payer, and exact
+  Base chain, so another EOA or chain cannot poison a worker into a restart
+  loop.
 - Expiry scanning rejects local-wall-clock-only, stale or single-provider proof
   and emits the exact `claimExpired(bytes32)` selector and call ID.
 - Transaction substitution fails before the wallet.

@@ -36,18 +36,19 @@ type ExpiryScanner struct {
 	store              Store
 	source             ExpirySource
 	keeperID, gasPayer string
+	chainID            uint64
 	clock              func() time.Time
 }
 
-func NewExpiryScanner(store Store, source ExpirySource, keeperID, gasPayer string, clocks ...func() time.Time) (*ExpiryScanner, error) {
-	if store == nil || source == nil || !identifier(keeperID) || !address(gasPayer) || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
+func NewExpiryScanner(store Store, source ExpirySource, keeperID, gasPayer string, chainID uint64, clocks ...func() time.Time) (*ExpiryScanner, error) {
+	if store == nil || source == nil || !identifier(keeperID) || !address(gasPayer) || (chainID != 8453 && chainID != 84532) || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
 		return nil, ErrInvalidConfig
 	}
 	clock := time.Now
 	if len(clocks) == 1 {
 		clock = clocks[0]
 	}
-	return &ExpiryScanner{store: store, source: source, keeperID: keeperID, gasPayer: gasPayer, clock: clock}, nil
+	return &ExpiryScanner{store: store, source: source, keeperID: keeperID, gasPayer: gasPayer, chainID: chainID, clock: clock}, nil
 }
 
 func (s *ExpiryScanner) Scan(ctx context.Context, limit int) (int, error) {
@@ -58,9 +59,15 @@ func (s *ExpiryScanner) Scan(ctx context.Context, limit int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if len(calls) > limit {
+		return 0, ErrInvalidJob
+	}
 	created := 0
 	for _, call := range calls {
-		if err := validateExpiredCall(call, s.clock().UTC()); err != nil {
+		if err := validateExpiredCall(call, s.clock().UTC()); err != nil || call.ChainID != s.chainID {
+			if err == nil {
+				err = ErrInvalidJob
+			}
 			return created, err
 		}
 		payload := claimExpiredCalldata(call.CallID)

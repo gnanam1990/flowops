@@ -4,18 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // RunOnce claims and advances one durable job. A signed transaction is sealed
 // before the state becomes BROADCASTING. On restart, PREPARED/BROADCASTING is
 // rebroadcast byte-for-byte; a new nonce is never allocated for uncertain work.
 func (s *Service) RunOnce(ctx context.Context) (Job, error) {
-	lease, err := s.store.Claim(ctx, s.config.KeeperID, s.config.LeaseDuration)
+	lease, err := s.store.Claim(ctx, s.config.KeeperID, s.config.GasPayer, s.config.ChainID, s.config.LeaseDuration)
 	if err != nil {
 		return Job{}, err
 	}
-	defer s.store.ReleaseLease(context.WithoutCancel(ctx), lease)
-	if lease.Job.KeeperID != s.config.KeeperID || lease.Job.GasPayer != s.config.GasPayer {
+	defer s.releaseLease(ctx, lease)
+	if lease.Job.KeeperID != s.config.KeeperID || lease.Job.GasPayer != s.config.GasPayer || lease.Job.ChainID != s.config.ChainID {
 		return Job{}, ErrInvalidJob
 	}
 	switch lease.Job.State {
@@ -33,11 +34,11 @@ func (s *Service) RunOnce(ctx context.Context) (Job, error) {
 // ObserveOnce advances one submitted attempt using evidence produced by the
 // independent settlement/reconciliation boundary.
 func (s *Service) ObserveOnce(ctx context.Context) (Job, error) {
-	lease, err := s.store.ClaimObservation(ctx, s.config.KeeperID, s.config.LeaseDuration)
+	lease, err := s.store.ClaimObservation(ctx, s.config.KeeperID, s.config.GasPayer, s.config.ChainID, s.config.LeaseDuration)
 	if err != nil {
 		return Job{}, err
 	}
-	defer s.store.ReleaseLease(context.WithoutCancel(ctx), lease)
+	defer s.releaseLease(ctx, lease)
 	attempt, err := s.store.CurrentAttempt(ctx, lease.Job.JobID)
 	if err != nil {
 		return Job{}, err
@@ -50,6 +51,12 @@ func (s *Service) ObserveOnce(ctx context.Context) (Job, error) {
 		return Job{}, err
 	}
 	return s.store.ApplyOutcome(ctx, lease, outcome)
+}
+
+func (s *Service) releaseLease(ctx context.Context, lease Lease) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = s.store.ReleaseLease(releaseCtx, lease)
 }
 
 func (s *Service) replace(ctx context.Context, lease Lease) (Job, error) {

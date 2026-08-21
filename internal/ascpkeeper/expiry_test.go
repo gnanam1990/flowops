@@ -23,7 +23,7 @@ func TestExpiryScannerRequiresConfirmedChainTimeAndEnqueuesExactReplay(t *testin
 		Escrow: "0x2222222222222222222222222222222222222222", CallID: testHash(9), SettleBy: now.Add(-time.Minute), ObservedChainTime: now,
 		ObservedAt: now, EvidenceDigest: testHash(10), Providers: []string{"base-primary", "base-secondary"}}
 	source := &expirySourceFixture{calls: []ExpiredCall{call}}
-	scanner, err := NewExpiryScanner(store, source, "keeper-primary", testGasPayer(), func() time.Time { return now })
+	scanner, err := NewExpiryScanner(store, source, "keeper-primary", testGasPayer(), 84532, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,9 +54,37 @@ func TestExpiryScannerRequiresConfirmedChainTimeAndEnqueuesExactReplay(t *testin
 func TestExpiryScannerRejectsWallClockOnlyOrSingleProviderEvidence(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	call := ExpiredCall{OperationID: testHash(8), OrganizationID: "org-test", ChainID: 84532, Escrow: "0x2222222222222222222222222222222222222222", CallID: testHash(9), SettleBy: now, ObservedChainTime: now, ObservedAt: now, EvidenceDigest: testHash(10), Providers: []string{"only-one"}}
-	scanner, _ := NewExpiryScanner(newMemoryStore(now), &expirySourceFixture{calls: []ExpiredCall{call}}, "keeper-primary", testGasPayer(), func() time.Time { return now })
+	scanner, _ := NewExpiryScanner(newMemoryStore(now), &expirySourceFixture{calls: []ExpiredCall{call}}, "keeper-primary", testGasPayer(), 84532, func() time.Time { return now })
 	if _, err := scanner.Scan(context.Background(), 10); !errors.Is(err, ErrInvalidJob) {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestExpiryScannerRejectsSourceLimitViolation(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	call := ExpiredCall{OperationID: testHash(8), OrganizationID: "org-test", ChainID: 84532,
+		Escrow: "0x2222222222222222222222222222222222222222", CallID: testHash(9), SettleBy: now.Add(-time.Minute),
+		ObservedChainTime: now, ObservedAt: now, EvidenceDigest: testHash(10), Providers: []string{"base-primary", "base-secondary"}}
+	scanner, err := NewExpiryScanner(newMemoryStore(now), &expirySourceFixture{calls: []ExpiredCall{call, call}}, "keeper-primary", testGasPayer(), 84532, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanner.Scan(context.Background(), 1); !errors.Is(err, ErrInvalidJob) {
+		t.Fatalf("expected source limit rejection, got %v", err)
+	}
+}
+
+func TestExpiryScannerRejectsAnotherConfiguredChain(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	call := ExpiredCall{OperationID: testHash(8), OrganizationID: "org-test", ChainID: 8453,
+		Escrow: "0x2222222222222222222222222222222222222222", CallID: testHash(9), SettleBy: now.Add(-time.Minute),
+		ObservedChainTime: now, ObservedAt: now, EvidenceDigest: testHash(10), Providers: []string{"base-primary", "base-secondary"}}
+	scanner, err := NewExpiryScanner(newMemoryStore(now), &expirySourceFixture{calls: []ExpiredCall{call}}, "keeper-primary", testGasPayer(), 84532, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanner.Scan(context.Background(), 1); !errors.Is(err, ErrInvalidJob) {
+		t.Fatalf("expected chain pin rejection, got %v", err)
 	}
 }
 

@@ -40,8 +40,15 @@ fi
 
 keeper_grant_file=deploy/control-plane/configure-keeper-role.sql
 for required in \
-	'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
-    'GRANT SELECT, INSERT ON ascp_keeper_jobs, ascp_keeper_nonce_sequences' \
+	'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT' \
+	'keeper_role must exist and have LOGIN' \
+	'keeper_role must not participate in role memberships' \
+	'keeper_role must not own database objects' \
+	'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC' \
+	'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
+	'ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC' \
+    'GRANT SELECT, INSERT ON public.ascp_keeper_jobs, public.ascp_keeper_nonce_sequences' \
+	'GRANT SELECT ON public.ascp_leadership_epochs' \
     'GRANT UPDATE (lease_owner, lease_token, lease_expires_at, nonce, state' \
     'GRANT UPDATE (next_nonce, updated_at)' \
     'GRANT UPDATE (state, broadcast_at, last_error, evidence_digest, observed_at)'
@@ -49,9 +56,48 @@ do
     grep -F "$required" "$keeper_grant_file" >/dev/null
 done
 
-if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$keeper_grant_file"; then
-    echo "keeper grant script contains a forbidden broad privilege" >&2
-    exit 1
+keeper_grants_are_safe() {
+	awk 'BEGIN { RS=";" }
+	{
+		statement=toupper($0)
+		if (statement !~ /GRANT/) next
+		if (statement ~ /\/\*|--/) exit 1
+		gsub(/[[:space:]]+/, " ", statement)
+		sub(/^.*GRANT /, "GRANT ", statement)
+		sub(/ $/, "", statement)
+		if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"KEEPER_ROLE\"") next
+		if (statement == "GRANT SELECT, INSERT ON PUBLIC.ASCP_KEEPER_JOBS, PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES, PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\"") next
+		if (statement == "GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS TO :\"KEEPER_ROLE\"") next
+		if (statement == "GRANT UPDATE (LEASE_OWNER, LEASE_TOKEN, LEASE_EXPIRES_AT, NONCE, STATE, ATTEMPT_COUNT, CURRENT_ATTEMPT, LAST_ERROR, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_JOBS TO :\"KEEPER_ROLE\"") next
+		if (statement == "GRANT UPDATE (NEXT_NONCE, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES TO :\"KEEPER_ROLE\"") next
+		if (statement == "GRANT UPDATE (STATE, BROADCAST_AT, LAST_ERROR, EVIDENCE_DIGEST, OBSERVED_AT) ON PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\"") next
+		exit 1
+	}' "$@"
+}
+
+if ! keeper_grants_are_safe "$keeper_grant_file"; then
+	echo "keeper grant script contains a forbidden or unexpected privilege" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT SELECT, DELETE ON public.ascp_keeper_jobs TO role;' | keeper_grants_are_safe; then
+	echo "keeper grant checker failed to reject DELETE" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT UPDATE ON public.ascp_keeper_jobs TO role;' | keeper_grants_are_safe; then
+	echo "keeper grant checker failed to reject table-wide UPDATE" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT EXECUTE ON FUNCTION public.dangerous() TO role;' | keeper_grants_are_safe; then
+	echo "keeper grant checker failed to reject routine execution" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT UPDATE (state), DELETE ON public.ascp_keeper_jobs TO role;' | keeper_grants_are_safe; then
+	echo "keeper grant checker failed to reject mixed privileges" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT UPDATE/*hidden*/ ON public.ascp_keeper_jobs TO role;' | keeper_grants_are_safe; then
+	echo "keeper grant checker failed to reject comments" >&2
+	exit 1
 fi
 
 rails_grant_file=deploy/control-plane/configure-rails-role.sql

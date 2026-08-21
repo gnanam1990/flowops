@@ -92,8 +92,8 @@ func (s *PostgresStore) enqueueOnce(ctx context.Context, input EnqueueInput, now
 	return job, false, nil
 }
 
-func (s *PostgresStore) Claim(ctx context.Context, keeperID string, duration time.Duration) (Lease, error) {
-	if !identifier(keeperID) || duration < time.Second || duration > time.Minute {
+func (s *PostgresStore) Claim(ctx context.Context, keeperID, gasPayer string, chainID uint64, duration time.Duration) (Lease, error) {
+	if !identifier(keeperID) || !address(gasPayer) || (chainID != 8453 && chainID != 84532) || duration < time.Second || duration > time.Minute {
 		return Lease{}, ErrInvalidConfig
 	}
 	now := s.clock().UTC()
@@ -109,10 +109,10 @@ func (s *PostgresStore) Claim(ctx context.Context, keeperID string, duration tim
 	var jobID string
 	err = tx.QueryRowContext(ctx, `
 		SELECT job_id FROM ascp_keeper_jobs
-		 WHERE keeper_id=$1 AND state IN ('QUEUED','PREPARED','BROADCASTING','TIMED_OUT','REORGED')
-		   AND eligible_after <= $2 AND (lease_expires_at IS NULL OR lease_expires_at <= $2)
+		 WHERE keeper_id=$1 AND gas_payer=$2 AND chain_id=$3 AND state IN ('QUEUED','PREPARED','BROADCASTING','TIMED_OUT','REORGED')
+		   AND eligible_after <= $4 AND (lease_expires_at IS NULL OR lease_expires_at <= $4)
 		 ORDER BY CASE action WHEN 'CLAIM_EXPIRED' THEN 0 ELSE 1 END, eligible_after, created_at, job_id
-		 FOR UPDATE SKIP LOCKED LIMIT 1`, keeperID, now).Scan(&jobID)
+		 FOR UPDATE SKIP LOCKED LIMIT 1`, keeperID, gasPayer, chainID, now).Scan(&jobID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lease{}, ErrNoWork
 	}
@@ -138,8 +138,8 @@ func (s *PostgresStore) Claim(ctx context.Context, keeperID string, duration tim
 	return Lease{Job: job, Token: token}, nil
 }
 
-func (s *PostgresStore) ClaimObservation(ctx context.Context, keeperID string, duration time.Duration) (Lease, error) {
-	if !identifier(keeperID) || duration < time.Second || duration > time.Minute {
+func (s *PostgresStore) ClaimObservation(ctx context.Context, keeperID, gasPayer string, chainID uint64, duration time.Duration) (Lease, error) {
+	if !identifier(keeperID) || !address(gasPayer) || (chainID != 8453 && chainID != 84532) || duration < time.Second || duration > time.Minute {
 		return Lease{}, ErrInvalidConfig
 	}
 	now := s.clock().UTC()
@@ -154,9 +154,9 @@ func (s *PostgresStore) ClaimObservation(ctx context.Context, keeperID string, d
 	defer tx.Rollback()
 	var jobID string
 	err = tx.QueryRowContext(ctx, `SELECT job_id FROM ascp_keeper_jobs
-		WHERE keeper_id=$1 AND state IN ('AMBIGUOUS','SUBMITTED','CONFIRMED')
-		  AND (lease_expires_at IS NULL OR lease_expires_at <= $2)
-		ORDER BY updated_at,job_id FOR UPDATE SKIP LOCKED LIMIT 1`, keeperID, now).Scan(&jobID)
+		WHERE keeper_id=$1 AND gas_payer=$2 AND chain_id=$3 AND state IN ('AMBIGUOUS','SUBMITTED','CONFIRMED')
+		  AND (lease_expires_at IS NULL OR lease_expires_at <= $4)
+		ORDER BY updated_at,job_id FOR UPDATE SKIP LOCKED LIMIT 1`, keeperID, gasPayer, chainID, now).Scan(&jobID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Lease{}, ErrNoWork
 	}

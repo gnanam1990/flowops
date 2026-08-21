@@ -191,8 +191,8 @@ type Lease struct {
 
 type Store interface {
 	Enqueue(context.Context, EnqueueInput) (Job, bool, error)
-	Claim(context.Context, string, time.Duration) (Lease, error)
-	ClaimObservation(context.Context, string, time.Duration) (Lease, error)
+	Claim(context.Context, string, string, uint64, time.Duration) (Lease, error)
+	ClaimObservation(context.Context, string, string, uint64, time.Duration) (Lease, error)
 	AllocateNonce(context.Context, Lease, uint64) (uint64, error)
 	RecordPrepared(context.Context, Lease, Attempt) (Job, error)
 	RecordReplacement(context.Context, Lease, Attempt, Attempt) (Job, error)
@@ -267,6 +267,7 @@ type LeadershipGate interface {
 type Config struct {
 	KeeperID      string
 	GasPayer      string
+	ChainID       uint64
 	LeaseDuration time.Duration
 	MaxFeeBumps   int
 	MaxGasLimit   uint64
@@ -297,6 +298,7 @@ func NewService(store Store, artifacts ArtifactSource, assembler Assembler, veri
 ) (*Service, error) {
 	if store == nil || artifacts == nil || assembler == nil || verifier == nil || wallet == nil || sealer == nil ||
 		broadcaster == nil || fees == nil || nonces == nil || replacements == nil || outcomes == nil || leadership == nil || !identifier(config.KeeperID) ||
+		(config.ChainID != 8453 && config.ChainID != 84532) ||
 		!address(config.GasPayer) || config.LeaseDuration < time.Second || config.LeaseDuration > time.Minute ||
 		config.MaxFeeBumps < 0 || config.MaxFeeBumps > 3 || config.MaxGasLimit == 0 || !validFee(config.FeeCap) {
 		return nil, ErrInvalidConfig
