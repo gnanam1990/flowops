@@ -401,7 +401,8 @@ Run `/flowops/ascp-verifier` as the dedicated `flowops` user in the same pod or
 host as its authenticated delivery producer. The listener rejects non-loopback
 addresses. PostgreSQL 11 or newer is required for the call-scoped
 `hashtextextended` advisory lock. Apply migration
-`0020_ascp_verifier_runtime.sql`, create a LOGIN role
+`0020_ascp_verifier_runtime.sql` and
+`0021_harden_ascp_verifier_runtime.sql`, create a LOGIN role
 with no memberships or owned objects, then apply:
 
 ```sh

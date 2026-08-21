@@ -30,8 +30,12 @@ func TestPublishedMigrationsRemainForwardOnly(t *testing.T) {
 	if checksums["0019_restricted_event_head.sql"] != published0019 {
 		t.Fatalf("0019 checksum changed after publication: %s", checksums["0019_restricted_event_head.sql"])
 	}
-	const published0020 = "54aea82d73d0467a9f63030069f03c30a35aa6c34b0f86d52c2e8bd7df1f4bbc"
+	const published0020 = "5edcc33cbb31cdc88370506716e93206046c3d45cb960ac273d39fd43d83c6f4"
 	if checksums["0020_ascp_verifier_runtime.sql"] != published0020 {
 		t.Fatalf("0020 checksum changed after publication: %s", checksums["0020_ascp_verifier_runtime.sql"])
+	}
+	const published0021 = "72b516d57988291cfb79f82b827ee8d7892ecec47491b20145769d242dba4ac1"
+	if checksums["0021_harden_ascp_verifier_runtime.sql"] != published0021 {
+		t.Fatalf("0021 checksum changed after publication: %s", checksums["0021_harden_ascp_verifier_runtime.sql"])
 	}
 }

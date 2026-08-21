@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -30,6 +31,18 @@ type blockingVerifier struct {
 	release <-chan struct{}
 }
 
+type gatedBody struct {
+	once    sync.Once
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (b *gatedBody) Read([]byte) (int, error) {
+	b.once.Do(func() { b.started <- struct{}{} })
+	<-b.release
+	return 0, io.EOF
+}
+
 func (v blockingVerifier) VerifyAndSign(ctx context.Context, _ ascpverifier.Input) (ascpverifier.SignedDecision, error) {
 	v.started <- struct{}{}
 	select {
@@ -42,6 +55,43 @@ func (v blockingVerifier) VerifyAndSign(ctx context.Context, _ ascpverifier.Inpu
 
 func (s staticVerifier) VerifyAndSign(context.Context, ascpverifier.Input) (ascpverifier.SignedDecision, error) {
 	return s.decision, s.err
+}
+
+func TestUnauthenticatedSlowBodiesDoNotConsumeVerificationSlots(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	key := []byte(strings.Repeat("k", 32))
+	handler, err := NewHandler(HandlerConfig{
+		Verifier:    staticVerifier{decision: ascpverifier.SignedDecision{Verdict: ascpverifier.VerdictPass}},
+		ReplayGuard: &memoryReplayGuard{seen: map[string]struct{}{}}, Keys: map[string][]byte{"delivery-key-1": key},
+		Clock: func() time.Time { return now }, MaxSkew: 30 * time.Second, ChainID: "8453",
+		EscrowContract: "0x1111111111111111111111111111111111111111",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{}, maxConcurrent)
+	release := make(chan struct{})
+	var requests sync.WaitGroup
+	for range maxConcurrent {
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			request := httptest.NewRequest(http.MethodPost, "/v1/verdicts", &gatedBody{started: started, release: release})
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+		}()
+	}
+	for range maxConcurrent {
+		<-started
+	}
+	body := []byte(`{"requestId":"verifier-request-slow-body","input":{"commitment":{"chainId":"8453","escrowContract":"0x1111111111111111111111111111111111111111"},"spec":"e30=","delivery":{"reference":null,"content":null,"contentDigest":"","httpStatus":0,"contentType":"","capturedAt":0}}}`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, signedRequest(t, now, key, "nonce_for_slow_body_test_1", body))
+	close(release)
+	requests.Wait()
+	if response.Code != http.StatusOK {
+		t.Fatalf("authenticated request status=%d body=%s", response.Code, response.Body.String())
+	}
 }
 
 type memoryReplayGuard struct {

@@ -43,8 +43,9 @@ The signer interface accepts only a 32-byte digest and returns a signature. The 
 one Base chain and escrow, consumes HMAC-authenticated captured-delivery bodies
 with durable replay nonces, allocates PostgreSQL verdict nonces, serializes one
 append-only decision per call across replicas, revalidates stored signatures,
-and reads only fresh finalized verifier-key observations. Migration `0020` and
-`configure-verifier-role.sql` enforce the least-privilege DB contract. Verdict
+and reads only fresh finalized verifier-key observations. Migrations `0020` and
+`0021` plus `configure-verifier-role.sql` enforce the least-privilege DB
+contract. Verdict
 decisions and finalized key observations are permanently append-only; replay
 nonces are immutable for 24 hours and then pruned only through one reviewed
 routine. The process has no RPC writer or transaction broadcaster.

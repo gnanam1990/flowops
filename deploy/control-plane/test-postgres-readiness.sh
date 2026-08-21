@@ -281,12 +281,14 @@ fi
 printf '%s\n' 'GRANT USAGE ON SCHEMA public TO :"recovery_role";' \
     'GRANT SELECT ON public.ascp_events, public.ascp_event_checkpoints TO :"recovery_role";' | recovery_grants_are_safe
 
-verifier_migration=internal/controlapi/migrations/0020_ascp_verifier_runtime.sql
+verifier_migration_base=internal/controlapi/migrations/0020_ascp_verifier_runtime.sql
+verifier_migration_hardening=internal/controlapi/migrations/0021_harden_ascp_verifier_runtime.sql
 for required in \
     'CREATE SEQUENCE IF NOT EXISTS ascp_verdict_nonce_seq' \
     'CREATE TABLE IF NOT EXISTS ascp_verdict_decisions' \
     'CREATE TABLE IF NOT EXISTS ascp_verifier_key_observations' \
-    'finalized_log_index bigint NOT NULL' \
+    'ADD COLUMN finalized_log_index bigint' \
+    'ALTER COLUMN finalized_log_index SET NOT NULL' \
     'CREATE TABLE IF NOT EXISTS ascp_verifier_intake_replays' \
     'reject_ascp_verifier_immutable_mutation' \
     'reject_ascp_verifier_replay_mutation' \
@@ -296,7 +298,7 @@ for required in \
     'BEFORE TRUNCATE ON ascp_verifier_key_observations' \
     'BEFORE TRUNCATE ON ascp_verifier_intake_replays'
 do
-    grep -F "$required" "$verifier_migration" >/dev/null
+    grep -F "$required" "$verifier_migration_base" "$verifier_migration_hardening" >/dev/null
 done
 
 verifier_grant_file=deploy/control-plane/configure-verifier-role.sql
@@ -319,11 +321,24 @@ do
 done
 
 verifier_default_privileges_are_safe() {
-    grep -F 'ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC' >/dev/null
+    awk 'BEGIN { RS=";"; found=0 }
+    {
+        statement=toupper($0)
+        if (statement ~ /\/\*|--/) next
+        gsub(/[[:space:]]+/, " ", statement)
+        sub(/^ /, "", statement)
+        sub(/ $/, "", statement)
+        if (statement == "ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC") found=1
+    }
+    END { exit(found ? 0 : 1) }'
 }
 verifier_default_privileges_are_safe <"$verifier_grant_file"
 if sed '/ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC/d' "$verifier_grant_file" | verifier_default_privileges_are_safe; then
     echo "verifier role checker accepted missing future-routine protection" >&2
+    exit 1
+fi
+if printf '%s\n' '-- ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC;' | verifier_default_privileges_are_safe; then
+    echo "verifier role checker accepted commented future-routine protection" >&2
     exit 1
 fi
 
