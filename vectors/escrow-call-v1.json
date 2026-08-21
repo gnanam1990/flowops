@@ -1,0 +1,32 @@
+{
+  "profile": "escrow-call/1",
+  "x402Version": 2,
+  "schemeVersion": 1,
+  "purchaseSpecCanonicalJSON": "{\"orgId\":\"org-1\",\"agentId\":\"agent-1\",\"taskId\":\"task-1\",\"method\":\"POST\",\"canonicalURL\":\"https://seller.example/v1/jobs?a=1&b=2\",\"requestBodyHash\":\"0x249a5e4bc4b0e6f0e331d79be8d3ecf838873594d09bc9b2debdb09ebeabec8d\",\"headerBindings\":[{\"lowercaseName\":\"content-type\",\"valueHash\":\"0x82e6a468c95da6cfe399f69ee0782fd009e354a8030ea5636ea9c7db0edcf7f5\"},{\"lowercaseName\":\"x-request-id\",\"valueHash\":\"0x5adac62d109fffbdb33383f3d0e94a5d119de8413f1c5db806cc8eae3b857f5e\"}],\"responseContract\":{\"contentType\":\"application/json\",\"schemaRef\":\"schema:job-v1\"},\"category\":\"research\"}",
+  "sellerQuote": {
+    "purchaseSpecHash": "0x7f07d14deb2e2b4a109dc4df975f33bb96ff4bf0092000f0de28d79a9285428a",
+    "sellerId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "resourceId": "0x1212121212121212121212121212121212121212121212121212121212121212",
+    "directoryVersion": 7,
+    "schemeVersion": 1,
+    "chainId": "84532",
+    "asset": "0x1111111111111111111111111111111111111111",
+    "amountBaseUnits": "2500000",
+    "payTo": "0x2222222222222222222222222222222222222222",
+    "ackAuthority": "0x3333333333333333333333333333333333333333",
+    "verificationSpecHash": "0x1313131313131313131313131313131313131313131313131313131313131313",
+    "declaredWorkTime": 120,
+    "verificationBudgetSeconds": 60,
+    "quoteExpiresAt": 1800000900,
+    "quoteNonce": "0x1414141414141414141414141414141414141414141414141414141414141414"
+  },
+  "sellerQuoteHash": "0x8d6b44a026127ec8ccc8496e48f0d6aea5951a1481d42639de6f46ba00c818eb",
+  "sellerQuoteSignature": "0x7c618654bd75e59a97d48b03f081fd078c6692cd9cc244f3e648c0e58c06ccc12c3c10ca4f861198903bbd84025ee3e8b07181d78d20761b908db78cd9563a1a01",
+  "sellerQuoteSigner": "0x17c5185167401ed00cf5f5b2fc97d9bbfdb7d025",
+  "resourceRequestDigest": "0x18b66d6125d9580f231b8f2155370dd944f5bab3340ceb9faf9e4aefee24d606",
+  "paymentRequiredCanonicalJSON": "{\"accepts\":[{\"amount\":\"2500000\",\"asset\":\"0x1111111111111111111111111111111111111111\",\"extra\":{\"escrowCall\":{\"resourceRequestDigest\":\"0x18b66d6125d9580f231b8f2155370dd944f5bab3340ceb9faf9e4aefee24d606\",\"schemeVersion\":1,\"sellerQuote\":{\"ackAuthority\":\"0x3333333333333333333333333333333333333333\",\"amountBaseUnits\":\"2500000\",\"asset\":\"0x1111111111111111111111111111111111111111\",\"chainId\":\"84532\",\"declaredWorkTime\":120,\"directoryVersion\":7,\"payTo\":\"0x2222222222222222222222222222222222222222\",\"purchaseSpecHash\":\"0x7f07d14deb2e2b4a109dc4df975f33bb96ff4bf0092000f0de28d79a9285428a\",\"quoteExpiresAt\":1800000900,\"quoteNonce\":\"0x1414141414141414141414141414141414141414141414141414141414141414\",\"resourceId\":\"0x1212121212121212121212121212121212121212121212121212121212121212\",\"schemeVersion\":1,\"sellerId\":\"0x1111111111111111111111111111111111111111111111111111111111111111\",\"verificationBudgetSeconds\":60,\"verificationSpecHash\":\"0x1313131313131313131313131313131313131313131313131313131313131313\"},\"sellerQuoteSignature\":\"0x7c618654bd75e59a97d48b03f081fd078c6692cd9cc244f3e648c0e58c06ccc12c3c10ca4f861198903bbd84025ee3e8b07181d78d20761b908db78cd9563a1a01\"}},\"maxTimeoutSeconds\":900,\"network\":\"eip155:84532\",\"payTo\":\"0x2222222222222222222222222222222222222222\",\"scheme\":\"escrow-call/1\"}],\"resource\":{\"description\":\"Run seller job\",\"mimeType\":\"application/json\",\"url\":\"https://seller.example/v1/jobs?a=1&b=2\"},\"x402Version\":2}",
+  "paymentPayloadCanonicalJSON": "{\"accepted\":{\"amount\":\"2500000\",\"asset\":\"0x1111111111111111111111111111111111111111\",\"extra\":{\"escrowCall\":{\"resourceRequestDigest\":\"0x18b66d6125d9580f231b8f2155370dd944f5bab3340ceb9faf9e4aefee24d606\",\"schemeVersion\":1,\"sellerQuote\":{\"ackAuthority\":\"0x3333333333333333333333333333333333333333\",\"amountBaseUnits\":\"2500000\",\"asset\":\"0x1111111111111111111111111111111111111111\",\"chainId\":\"84532\",\"declaredWorkTime\":120,\"directoryVersion\":7,\"payTo\":\"0x2222222222222222222222222222222222222222\",\"purchaseSpecHash\":\"0x7f07d14deb2e2b4a109dc4df975f33bb96ff4bf0092000f0de28d79a9285428a\",\"quoteExpiresAt\":1800000900,\"quoteNonce\":\"0x1414141414141414141414141414141414141414141414141414141414141414\",\"resourceId\":\"0x1212121212121212121212121212121212121212121212121212121212121212\",\"schemeVersion\":1,\"sellerId\":\"0x1111111111111111111111111111111111111111111111111111111111111111\",\"verificationBudgetSeconds\":60,\"verificationSpecHash\":\"0x1313131313131313131313131313131313131313131313131313131313131313\"},\"sellerQuoteSignature\":\"0x7c618654bd75e59a97d48b03f081fd078c6692cd9cc244f3e648c0e58c06ccc12c3c10ca4f861198903bbd84025ee3e8b07181d78d20761b908db78cd9563a1a01\"}},\"maxTimeoutSeconds\":900,\"network\":\"eip155:84532\",\"payTo\":\"0x2222222222222222222222222222222222222222\",\"scheme\":\"escrow-call/1\"},\"payload\":{\"callId\":\"0x2121212121212121212121212121212121212121212121212121212121212121\",\"commitmentHash\":\"0x2222222222222222222222222222222222222222222222222222222222222222\",\"escrowContract\":\"0x4444444444444444444444444444444444444444\",\"schemeVersion\":1},\"x402Version\":2}",
+  "paymentProofDigest": "0x4d722bb9bea57d24a9c4825a7d239302bee171e5f86cd56a4c091f1f79bac3ce",
+  "paymentResponseCanonicalJSON": "{\"amount\":\"2500000\",\"extensions\":{\"escrowCall\":{\"callId\":\"0x2121212121212121212121212121212121212121212121212121212121212121\",\"contentDigest\":\"0x4444444444444444444444444444444444444444444444444444444444444444\",\"schemeVersion\":1}},\"network\":\"eip155:84532\",\"payer\":\"0x5555555555555555555555555555555555555555\",\"success\":true,\"transaction\":\"0x5555555555555555555555555555555555555555555555555555555555555555\"}",
+  "versionErrorCanonicalJSON": "{\"errorMessage\":\"seller rejected escrow proof\",\"errorReason\":\"VERSION_UNSUPPORTED\",\"extensions\":{\"escrowCall\":{\"callId\":\"0x2121212121212121212121212121212121212121212121212121212121212121\",\"schemeVersion\":1}},\"extra\":{\"supportedSchemeVersions\":[1]},\"network\":\"eip155:84532\",\"success\":false,\"transaction\":\"\"}"
+}
