@@ -135,6 +135,20 @@ func validateDestinationShape(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
+// ValidateRestrictedURLShape rejects URL forms and literal addresses that the
+// controlled outbound transport can never dial. DNS names are resolved again
+// immediately before connection and every answer must still be public.
+func ValidateRestrictedURLShape(raw string) error {
+	parsed, err := validateDestinationShape(raw)
+	if err != nil {
+		return err
+	}
+	if literal, parseErr := netip.ParseAddr(strings.Trim(parsed.Hostname(), "[]")); parseErr == nil && !isPublic(literal.Unmap()) {
+		return ErrUnsafeDestination
+	}
+	return nil
+}
+
 func resolvePublic(ctx context.Context, resolver Resolver, host string) ([]netip.Addr, error) {
 	if literal, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
 		literal = literal.Unmap()

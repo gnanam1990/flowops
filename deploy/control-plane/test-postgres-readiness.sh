@@ -65,6 +65,7 @@ for required in \
     'GRANT INSERT ON ascp_seller_attempts, ascp_seller_responses' \
 	'GRANT INSERT (effect_id,organization_id,epoch,state,started_at)' \
 	'GRANT UPDATE (state,resolved_at) ON ascp_leadership_effects' \
+	'GRANT EXECUTE ON FUNCTION public.ascp_current_event_head()' \
     'GRANT UPDATE (state,eligible_after,lease_owner,lease_token,lease_expires_at,attempt_count' \
     'GRANT UPDATE (state,completed_at,result_code) ON ascp_seller_attempts'
 do
@@ -78,6 +79,12 @@ rails_grants_are_safe() {
 		if (statement !~ /GRANT/) next
 		if (statement ~ /\/\*|--/) exit 1
 		gsub(/[[:space:]]+/, " ", statement)
+		sub(/^ /, "", statement)
+		sub(/ $/, "", statement)
+		if (statement ~ /^GRANT EXECUTE/) {
+			if (statement == "GRANT EXECUTE ON FUNCTION PUBLIC.ASCP_CURRENT_EVENT_HEAD() TO :\"RAILS_ROLE\"") next
+			exit 1
+		}
 		sub(/^.*GRANT /, "", statement)
 		split(statement, parts, " ON ")
 		privileges=parts[1]
@@ -115,7 +122,21 @@ if printf '%s\n' 'GRANT UPDATE/*hidden*/ ON ascp_seller_jobs TO role;' | rails_g
 	echo "rails grant checker failed to reject a commented broad grant" >&2
 	exit 1
 fi
+if printf '%s\n' 'GRANT EXECUTE ON FUNCTION public.dangerous() TO :"rails_role";' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject unrelated function execution" >&2
+	exit 1
+fi
 printf '%s\n' 'GRANT UPDATE (state) ON ascp_seller_jobs TO role;' | rails_grants_are_safe
+
+event_head_migration=internal/controlapi/migrations/0019_restricted_event_head.sql
+for required in \
+	'SECURITY DEFINER' \
+	'SET search_path = pg_catalog' \
+	'FROM %1$I.ascp_events AS event' \
+	'REVOKE ALL PRIVILEGES ON FUNCTION %I.ascp_current_event_head() FROM PUBLIC'
+do
+	grep -F "$required" "$event_head_migration" >/dev/null
+done
 
 leadership_grant_file=deploy/control-plane/configure-leadership-role.sql
 for required in \

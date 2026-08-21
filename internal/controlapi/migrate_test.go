@@ -26,4 +26,8 @@ func TestPublishedMigrationsRemainForwardOnly(t *testing.T) {
 	if checksums["0018_durable_leadership_effects.sql"] != published0018 {
 		t.Fatalf("0018 checksum changed after publication: %s", checksums["0018_durable_leadership_effects.sql"])
 	}
+	const published0019 = "f0099d68c41ffec50f82097616e3a6041c35ebcc4fbda6f250a54a55d588fb52"
+	if checksums["0019_restricted_event_head.sql"] != published0019 {
+		t.Fatalf("0019 checksum changed after publication: %s", checksums["0019_restricted_event_head.sql"])
+	}
 }

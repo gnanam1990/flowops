@@ -36,7 +36,9 @@ later send.
    exact organization, chain, call, commitment, escrow, asset, payee, amount
    and usable settle window proceeds.
 3. A fresh corroborated Base timestamp is checked against `deliverBy`.
-   Wall-clock time only controls queue scheduling and lease expiry.
+   Wall-clock time controls queue scheduling and lease expiry and may only
+   fail closed when an agreed anchor is stale or implausibly future; it never
+   advances an escrow deadline.
 4. `escrowcall.PrepareRequest` reconstructs and revalidates the exact stored
    request and sole generated `PAYMENT-SIGNATURE` immediately before send.
 5. The leadership gate holds the current strongly consistent epoch fence across
@@ -108,6 +110,15 @@ advance. The rails role has read-only epoch access plus column-scoped admission
 and completion rights on the leadership effect table; it cannot abandon an
 effect or advance leadership.
 
+`/flowops/ascp-seller-worker` is the runnable isolated process. It wires the
+PostgreSQL store, operation gate and durable leadership adapter to the only
+supported restricted transport. Its quorum chain clock requires an exact Base
+anchor from at least two distinct configured provider hosts. Its integrity gate
+requires a short-lived Ed25519 attestation from the external recovery verifier
+and compares the fully checkpointed signed head to the restricted live database
+head. The worker receives recovery public keys only; the attestation private
+key, WORM credentials and remote-head authority remain outside the process.
+
 ## Observability and operations
 
 Alert on lease age, retries, ambiguous attempts, dead letters, deadline misses,
@@ -117,7 +128,10 @@ seller HTTP latency, chain-time freshness and verifier outcome. Retain the
 append-only response and attempt evidence for the escrow dispute window and
 exercise restart at every persisted boundary. Production uses
 `configure-rails-role.sql` and the same restricted transport; unrestricted
-fallback is unsupported.
+fallback is unsupported. Run supervised replicas with distinct worker IDs.
+Each cycle finalizes durable responses before dispatching new jobs and has a
+bounded batch and timeout. A non-idle error exits for supervisor backoff rather
+than silently declaring the queue healthy.
 
 ## Acceptance criteria
 
@@ -136,6 +150,10 @@ fallback is unsupported.
   size never reaches `CAPTURED`.
 - PostgreSQL rejects payment-operation substitution, request mutation,
   response mutation and terminal-state reopening.
+- Runtime configuration rejects a non-verifying database URL, single or
+  duplicate-host RPC set, insufficient quorum, unsigned/expired/substituted
+  recovery proof, wrong live event head, unsafe timing budget and generic
+  transport before seller egress.
 - Focused race/vet, real PostgreSQL concurrency/restart tests, migration-role
   readiness, repository-wide checks and adversarial PR review pass before
   merge.

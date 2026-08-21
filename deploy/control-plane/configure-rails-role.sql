@@ -24,6 +24,7 @@ GRANT INSERT ON ascp_seller_attempts, ascp_seller_responses TO :"rails_role";
 GRANT INSERT (effect_id,organization_id,epoch,state,started_at)
     ON ascp_leadership_effects TO :"rails_role";
 GRANT UPDATE (state,resolved_at) ON ascp_leadership_effects TO :"rails_role";
+GRANT EXECUTE ON FUNCTION public.ascp_current_event_head() TO :"rails_role";
 GRANT UPDATE (state,eligible_after,lease_owner,lease_token,lease_expires_at,attempt_count,
     captured_at,capture_evidence_digest,deadline_evidence_digest,last_error,updated_at)
     ON ascp_seller_jobs TO :"rails_role";

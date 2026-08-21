@@ -461,6 +461,7 @@ func (s *ObserverSet) call(ctx context.Context, provider RPCProvider, method str
 	if err != nil {
 		return err
 	}
+	request.Host = request.URL.Host
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	response, err := s.client.Do(request)
