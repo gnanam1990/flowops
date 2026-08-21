@@ -95,8 +95,9 @@ type RegistryEntry struct {
 }
 
 type ActivationStore struct {
-	db    *sql.DB
-	clock func() time.Time
+	db             *sql.DB
+	clock          func() time.Time
+	leasesRequired bool
 }
 
 func NewActivationStore(db *sql.DB, clocks ...func() time.Time) (*ActivationStore, error) {
@@ -124,7 +125,7 @@ func (s *ActivationStore) Request(ctx context.Context, input ActivationInput) (A
 	if err != nil {
 		return ActivationRequest{}, false, fmt.Errorf("begin sign request: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	existing, err := loadActivationRequest(ctx, tx, input.AuthorizationID)
 	if err == nil {
 		if existing.InputHash != inputHash {
@@ -210,7 +211,10 @@ func (s *ActivationStore) RecordPrepared(ctx context.Context, requestID, handle 
 	if err != nil {
 		return ActivationRequest{}, fmt.Errorf("begin prepared signer handle: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
+	if err := s.requireRuntimeLease(ctx, tx, requestID, now); err != nil {
+		return ActivationRequest{}, err
+	}
 	var request ActivationRequest
 	err = scanActivationRequest(tx.QueryRowContext(ctx, `
 		UPDATE ascp_sign_requests SET prepared_handle=$2, state='PREPARED', prepared_at=$3
@@ -250,9 +254,12 @@ func (s *ActivationStore) Activate(ctx context.Context, requestID string) (Regis
 	if err != nil {
 		return RegistryEntry{}, fmt.Errorf("begin signer activation: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	request, err := loadActivationRequestByID(ctx, tx, requestID, true)
 	if err != nil {
+		return RegistryEntry{}, err
+	}
+	if err := s.requireRuntimeLease(ctx, tx, requestID, now); err != nil {
 		return RegistryEntry{}, err
 	}
 	if request.State == ActivePendingMirror || request.State == ActiveMirrored || request.State == ActivationAcknowledged {
@@ -311,8 +318,8 @@ func (s *ActivationStore) Activate(ctx context.Context, requestID string) (Regis
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO ascp_bearer_handles
-			(handle_id, operation_id, payload_hash, digest, nonce, encrypted_artifact, state, valid_until, created_at)
-		VALUES ($1,$2,$3,$4,$5,NULL,'ACTIVE',$6,$7)`, request.PreparedHandle, request.OperationID,
+			(handle_id, operation_id, payload_hash, digest, nonce, state, valid_until, created_at)
+		VALUES ($1,$2,$3,$4,$5,'ACTIVE',$6,$7)`, request.PreparedHandle, request.OperationID,
 		request.CanonicalPayloadHash, request.Digest, request.Nonce, request.ValidUntil, now); err != nil {
 		return RegistryEntry{}, fmt.Errorf("record opaque active bearer handle: %w", err)
 	}
@@ -394,9 +401,12 @@ func (s *ActivationStore) MarkPrimaryMirrored(ctx context.Context, requestID, mi
 	if err != nil {
 		return ActivationRequest{}, fmt.Errorf("begin primary mirror acknowledgment: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	request, err := loadActivationRequestByID(ctx, tx, requestID, true)
 	if err != nil {
+		return ActivationRequest{}, err
+	}
+	if err := s.requireRuntimeLease(ctx, tx, requestID, now); err != nil {
 		return ActivationRequest{}, err
 	}
 	if request.State == ActiveMirrored || request.State == ActivationAcknowledged {
@@ -453,7 +463,10 @@ func (s *ActivationStore) MarkAcknowledged(ctx context.Context, requestID, handl
 	if err != nil {
 		return ActivationRequest{}, fmt.Errorf("begin signer activation acknowledgment: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
+	if err := s.requireRuntimeLease(ctx, tx, requestID, now); err != nil {
+		return ActivationRequest{}, err
+	}
 	var request ActivationRequest
 	err = scanActivationRequest(tx.QueryRowContext(ctx, `
 		UPDATE ascp_sign_requests SET state='ACTIVATION_ACKNOWLEDGED', acknowledged_at=$3
@@ -506,6 +519,24 @@ func (s *ActivationStore) Registry(ctx context.Context, digest string) (Registry
 func (s *ActivationStore) Get(ctx context.Context, requestID string) (ActivationRequest, error) {
 	if !hash(requestID) {
 		return ActivationRequest{}, ErrActivationInput
+	}
+	if s.leasesRequired {
+		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return ActivationRequest{}, fmt.Errorf("begin leased signer activation read: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		request, err := loadActivationRequestByID(ctx, tx, requestID, false)
+		if err != nil {
+			return ActivationRequest{}, err
+		}
+		if err := s.requireRuntimeLease(ctx, tx, requestID, s.clock().UTC()); err != nil {
+			return ActivationRequest{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return ActivationRequest{}, fmt.Errorf("commit leased signer activation read: %w", err)
+		}
+		return request, nil
 	}
 	var request ActivationRequest
 	err := scanActivationRequest(s.db.QueryRowContext(ctx, `SELECT `+activationColumns+` FROM ascp_sign_requests WHERE request_id=$1`, requestID), &request)

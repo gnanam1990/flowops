@@ -26,10 +26,11 @@ GRANT SELECT, INSERT ON ascp_intents, ascp_policy_decisions, ascp_execution_auth
     ascp_directory_quote_evidence TO :"runtime_role";
 GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations,
     ascp_directory_heads TO :"runtime_role";
-GRANT SELECT, INSERT ON ascp_bearer_handles, ascp_sign_requests,
-    ascp_bearer_registry, ascp_signer_outbox TO :"runtime_role";
-GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts,
-    ascp_chain_observations, ascp_ledger_transactions, ascp_ledger_postings TO :"runtime_role";
+GRANT SELECT ON ascp_bearer_handles, ascp_bearer_registry TO :"runtime_role";
+GRANT SELECT, INSERT ON ascp_sign_requests, ascp_signer_outbox TO :"runtime_role";
+GRANT SELECT ON ascp_payment_operations TO :"runtime_role";
+GRANT SELECT, INSERT ON ascp_payment_attempts, ascp_chain_observations,
+    ascp_ledger_transactions, ascp_ledger_postings TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_keeper_jobs TO :"runtime_role";
 GRANT SELECT ON ascp_seller_jobs, ascp_seller_responses TO :"runtime_role";
 GRANT SELECT ON ascp_leadership_epochs, ascp_leadership_effects TO :"runtime_role";
@@ -40,13 +41,8 @@ GRANT INSERT (job_id,operation_id,organization_id,chain_id,leadership_epoch,deli
 GRANT SELECT, INSERT ON ascp_events TO :"runtime_role";
 GRANT SELECT ON ascp_event_checkpoints TO :"runtime_role";
 GRANT UPDATE (state) ON ascp_bearer_handles TO :"runtime_role";
-GRANT UPDATE (prepared_handle, state, prepared_at, activated_at,
-    primary_mirror_digest, mirrored_at, acknowledged_at)
-    ON ascp_sign_requests TO :"runtime_role";
-GRANT UPDATE (primary_mirror_digest, outcome)
+GRANT UPDATE (outcome)
     ON ascp_bearer_registry TO :"runtime_role";
-GRANT UPDATE (state, attempts, delivered_at)
-    ON ascp_signer_outbox TO :"runtime_role";
 GRANT UPDATE (state, locked_transaction_hash, locked_block_number, locked_block_hash,
     terminal_action, terminal_transaction_hash, terminal_block_number, terminal_block_hash, updated_at)
     ON ascp_payment_operations TO :"runtime_role";
