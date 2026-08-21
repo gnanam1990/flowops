@@ -1,0 +1,26 @@
+{
+  "typeString": "AdminActionAuthorization(bytes32 orgDomain,address contractAddress,uint256 chainId,bytes32 authorityRole,bytes4 functionSelector,bytes32 payloadHash,bytes32 adminOperationId,uint256 adminNonce,uint64 adminEpoch,uint64 validAfter,uint64 validBefore,bytes32 workflowId)",
+  "domain": {
+    "name": "ASCP",
+    "version": "4",
+    "chainId": "8453",
+    "verifyingContract": "0x1111111111111111111111111111111111111111",
+    "separator": "0x7b3124ffa73fe66d0496edae8e4c80239b7d8bdb4b4610cff4afd23a479e4a82"
+  },
+  "authorization": {
+    "orgDomain": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "contractAddress": "0x1111111111111111111111111111111111111111",
+    "chainId": "8453",
+    "authorityRole": "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "functionSelector": "0x85045a95",
+    "payloadHash": "0x0000000000000000000000000000000000000000000000000000000000000003",
+    "adminOperationId": "0x0000000000000000000000000000000000000000000000000000000000000004",
+    "adminNonce": "42",
+    "adminEpoch": 7,
+    "validAfter": 1800000000,
+    "validBefore": 1800000600,
+    "workflowId": "0x0000000000000000000000000000000000000000000000000000000000000005"
+  },
+  "structHash": "0x8b7fcce4348d879f4e6ef090719a34351b3f90e5b03ba8eafdd0949701449497",
+  "digest": "0x7b7f08dd98d5de1302ff68757f58617706be5d90c7e36bbb0d42defb51838327"
+}
