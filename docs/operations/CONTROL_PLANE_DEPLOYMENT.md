@@ -60,6 +60,8 @@ The API service requires:
 | `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` | Maximum tolerated future timestamp skew |
 | `FLOWOPS_OPERATOR_CONTROL_KEY_B64` | Exactly 32 random bytes, base64; global halt/resume authority |
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
+| `FLOWOPS_ASCP_DIRECTORY_CONTRACT` | Optional canonical lowercase ServiceDirectory address. When unset, durable agent intake remains mounted but returns a fail-closed 503 |
+| `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |
 | `FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `1000000` |
 | `FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `10000000` |
 
@@ -67,6 +69,14 @@ The outstanding ceiling is scoped to one organization/customer pair in the
 control plane and one customer-owned signer journal. It is not a global
 platform ceiling. Mainnet remains blocked until pilot admission restricts the
 deployment to one customer or a reviewed allocation layer bounds the aggregate.
+
+Enabling durable ASCP intake also requires a current head and matching quote
+evidence already recorded in `ascp_directory_heads` and related snapshot
+tables by the finalized directory observer. The API never treats a database
+write timestamp or caller-provided proof as a freshness substitute. Missing,
+stale, wrong-version, and unknown-leaf cases fail before operation creation.
+The existing `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` also bounds small positive
+observer/API host clock skew; larger future observations fail closed.
 
 Do not set `FLOWOPS_CONTROL_ADDR` on the selected runtime; `PORT` produces the
 required `0.0.0.0:PORT` listener and still requires explicit trusted-proxy

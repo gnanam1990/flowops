@@ -96,7 +96,7 @@ func TestServerListsToolsAndPreservesIntentBoundary(t *testing.T) {
 	server.ServeHTTP(listRecorder, list)
 	listResponse := decodeRPC(t, listRecorder)
 	tools := listResponse["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 5 {
+	if len(tools) != 7 {
 		t.Fatalf("tool count = %d", len(tools))
 	}
 
@@ -130,6 +130,41 @@ func TestServerListsToolsAndPreservesIntentBoundary(t *testing.T) {
 	server.ServeHTTP(unknownRecorder, unknown)
 	if rpcErrorCode(t, unknownRecorder) != -32602 || len(calls) != 4 {
 		t.Fatalf("unknown MCP arguments reached the backend: calls=%d body=%s", len(calls), unknownRecorder.Body.String())
+	}
+}
+
+func TestDurableOperationToolsDelegateOnlyToAgentBoundary(t *testing.T) {
+	var calls []capturedCall
+	server := newTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		calls = append(calls, capturedCall{method: request.Method, path: request.URL.Path, authorization: request.Header.Get("Authorization"), idempotency: request.Header.Get("Idempotency-Key"), body: body})
+		if request.URL.Path == "/v1/session" {
+			writeTestJSON(writer, http.StatusOK, map[string]string{"principalId": "agent_a"})
+			return
+		}
+		writeTestJSON(writer, http.StatusOK, map[string]any{"operation": map[string]string{"operationId": "0x" + strings.Repeat("a", 64)}})
+	}))
+	requestBody := map[string]any{"taskId": "task_1", "sellerQuote": map[string]any{"purchaseSpecHash": "0x" + strings.Repeat("b", 64)}}
+	call := mcpRequest(t, 1, "tools/call", map[string]any{"name": "ascp.operation.create", "arguments": map[string]any{"request": requestBody, "idempotencyKey": "idem_1"}}, testAuthorization())
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, call)
+	if rpc := decodeRPC(t, recorder); rpc["error"] != nil {
+		t.Fatalf("create RPC error: %s", recorder.Body.String())
+	}
+	if len(calls) != 2 || calls[1].path != "/agent/v1/intents" || calls[1].method != http.MethodPost || calls[1].idempotency != "idem_1" || calls[1].authorization != testAuthorization() {
+		t.Fatalf("create calls=%+v", calls)
+	}
+	var forwarded map[string]any
+	if json.Unmarshal(calls[1].body, &forwarded) != nil || forwarded["taskId"] != "task_1" {
+		t.Fatalf("forwarded body=%s", calls[1].body)
+	}
+
+	operationID := "0x" + strings.Repeat("c", 64)
+	call = mcpRequest(t, 2, "tools/call", map[string]any{"name": "ascp.operation.get", "arguments": map[string]any{"operationId": operationID}}, testAuthorization())
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, call)
+	if len(calls) != 4 || calls[3].path != "/agent/v1/intents/"+operationID || calls[3].method != http.MethodGet {
+		t.Fatalf("read calls=%+v body=%s", calls, recorder.Body.String())
 	}
 }
 

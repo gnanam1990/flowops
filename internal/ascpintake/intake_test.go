@@ -150,6 +150,23 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	if err != nil || !replayed || stored.OperationID != input.Operation.OperationID {
 		t.Fatalf("replay=%+v replayed=%t err=%v", stored, replayed, err)
 	}
+	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
+		WithArgs(input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID).
+		WillReturnRows(sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "created_at"}).AddRow(
+			input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID, input.Operation.QuoteHash,
+			input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(9), input.Operation.DirectoryContract,
+			input.Operation.SellerSigner, now,
+		))
+	read, err := store.Get(context.Background(), input.Operation.OrganizationID, input.Operation.ActorID, input.Operation.OperationID)
+	if err != nil || read.OperationID != input.Operation.OperationID || read.CreatedAt != now.Unix() {
+		t.Fatalf("read=%+v err=%v", read, err)
+	}
+	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
+		WithArgs(input.Operation.OperationID, input.Operation.OrganizationID, "agent_other").
+		WillReturnRows(sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "created_at"}))
+	if _, err := store.Get(context.Background(), input.Operation.OrganizationID, "agent_other", input.Operation.OperationID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-actor read error=%v", err)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}

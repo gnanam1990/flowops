@@ -15,9 +15,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpagent"
+	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/controlplane"
+	"github.com/gnanam1990/flowops/internal/directoryreader"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
+	"github.com/gnanam1990/flowops/pkg/sellerquote"
 )
 
 const (
@@ -40,6 +44,11 @@ type ReconciliationOperator interface {
 	QuarantineForOrganization(context.Context, string, string, string, string) (reconciliation.Execution, error)
 }
 
+type ASCPAgentService interface {
+	Create(context.Context, ascpagent.Identity, string, ascpagent.CreateRequest) (ascpintake.Operation, error)
+	Get(context.Context, ascpagent.Identity, string) (ascpintake.Operation, error)
+}
+
 type ServerConfig struct {
 	Store                    Store
 	Lifecycle                *controlplane.Lifecycle
@@ -53,6 +62,7 @@ type ServerConfig struct {
 	SignerEscrowBroadcasts   EscrowBroadcastRegistrar
 	Escrow                   *EscrowRegistrar
 	Reconciliation           ReconciliationReader
+	ASCPAgent                ASCPAgentService
 }
 
 type Server struct {
@@ -68,6 +78,7 @@ type Server struct {
 	signerEscrowBroadcasts   EscrowBroadcastRegistrar
 	escrow                   *EscrowRegistrar
 	reconciliation           ReconciliationReader
+	ascpAgent                ASCPAgentService
 	handler                  http.Handler
 }
 
@@ -97,6 +108,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		signerEscrowBroadcasts: cfg.SignerEscrowBroadcasts,
 		escrow:                 cfg.Escrow,
 		reconciliation:         cfg.Reconciliation,
+		ascpAgent:              cfg.ASCPAgent,
 	}
 	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
 		return nil, errors.New("operator control key must contain exactly 32 bytes")
@@ -108,6 +120,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST /v1/intents", s.authenticate(http.HandlerFunc(s.handleCreateIntent)))
 	mux.Handle("GET /v1/intents/{requestID}", s.authenticate(http.HandlerFunc(s.handleIntent)))
 	mux.Handle("POST /v1/intents/{requestID}/authorization", s.authenticate(http.HandlerFunc(s.handleIssueAuthorization)))
+	mux.Handle("POST /agent/v1/intents", s.authenticate(http.HandlerFunc(s.handleCreateASCPIntent)))
+	mux.Handle("GET /agent/v1/intents/{operationID}", s.authenticate(http.HandlerFunc(s.handleASCPIntent)))
 	mux.Handle("GET /v1/approvals", s.authenticate(http.HandlerFunc(s.handleApprovals)))
 	mux.Handle("GET /v1/approvals/{requestID}", s.authenticate(http.HandlerFunc(s.handleApproval)))
 	mux.Handle("POST /v1/approvals/{requestID}/decision", s.authenticate(http.HandlerFunc(s.handleApprovalDecision)))
@@ -128,7 +142,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		mux.Handle("GET /v1/operator/reconciliation", s.authenticateOperator(http.HandlerFunc(s.handleOperatorReconciliation)))
 		mux.Handle("POST /v1/operator/executions/{executionID}/quarantine", s.authenticateOperator(http.HandlerFunc(s.handleOperatorQuarantine)))
 	}
-	s.handler = securityHeaders(mux)
+	s.handler = securityHeaders(s.withAgentCorrelation(mux))
 	return s, nil
 }
 
@@ -140,6 +154,25 @@ func (s *Server) authenticateOperator(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "UNAUTHENTICATED", ErrUnauthenticated, false, "")
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) withAgentCorrelation(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/agent/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		correlationID, err := s.idSource("corr")
+		if err != nil {
+			correlationID, err = randomID("corr")
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "CORRELATION_ID_FAILED", errors.New("correlation ID generation failed"), true, "")
+			return
+		}
+		w.Header().Set("X-Correlation-ID", correlationID)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -505,6 +538,99 @@ func (s *Server) handleOperatorQuarantine(w http.ResponseWriter, r *http.Request
 		"execution":      execution,
 		"reconciliation": controller.OrganizationView(request.OrganizationID),
 	})
+}
+
+func (s *Server) handleCreateASCPIntent(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	principal := principalFrom(r.Context())
+	if principal.Kind != PrincipalAgent {
+		writeCorrelatedError(w, http.StatusForbidden, "AGENT_CREDENTIAL_REQUIRED", ErrForbidden, false, correlationID)
+		return
+	}
+	if !s.authorize(w, principal, PermissionCreateIntent, "intents:create") {
+		return
+	}
+	if s.ascpAgent == nil {
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_INTAKE_UNAVAILABLE", errors.New("durable ASCP intake is not configured"), true, correlationID)
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var request ascpagent.CreateRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	operation, err := s.ascpAgent.Create(r.Context(), ascpagent.Identity{OrganizationID: principal.OrganizationID, AgentID: principal.AgentID}, idempotencyKey, request)
+	if err != nil {
+		s.writeASCPError(w, err, correlationID)
+		return
+	}
+	status := http.StatusCreated
+	if operation.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"correlationId": correlationID, "operation": operation})
+}
+
+func (s *Server) handleASCPIntent(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	principal := principalFrom(r.Context())
+	if principal.Kind != PrincipalAgent {
+		writeCorrelatedError(w, http.StatusForbidden, "AGENT_CREDENTIAL_REQUIRED", ErrForbidden, false, correlationID)
+		return
+	}
+	if !s.authorize(w, principal, PermissionRead, "intents:read") {
+		return
+	}
+	if s.ascpAgent == nil {
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_INTAKE_UNAVAILABLE", errors.New("durable ASCP intake is not configured"), true, correlationID)
+		return
+	}
+	operation, err := s.ascpAgent.Get(r.Context(), ascpagent.Identity{OrganizationID: principal.OrganizationID, AgentID: principal.AgentID}, r.PathValue("operationID"))
+	if err != nil {
+		if errors.Is(err, ascpintake.ErrNotFound) || errors.Is(err, ascpagent.ErrInvalidIdentity) {
+			writeCorrelatedError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, correlationID)
+			return
+		}
+		s.writeASCPError(w, err, correlationID)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "operation": operation})
+}
+
+func (s *Server) correlationID(w http.ResponseWriter) string {
+	if existing := w.Header().Get("X-Correlation-ID"); existing != "" {
+		return existing
+	}
+	correlationID, err := s.idSource("corr")
+	if err != nil {
+		correlationID = "corr_unavailable"
+	}
+	w.Header().Set("X-Correlation-ID", correlationID)
+	return correlationID
+}
+
+func (s *Server) writeASCPError(w http.ResponseWriter, err error, correlationID string) {
+	switch {
+	case errors.Is(err, ascpintake.ErrIdempotencyConflict):
+		writeCorrelatedError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", err, false, correlationID)
+	case errors.Is(err, ascpintake.ErrQuoteNonceConsumed):
+		writeCorrelatedError(w, http.StatusConflict, "QUOTE_NONCE_CONSUMED", err, false, correlationID)
+	case errors.Is(err, directoryreader.ErrCurrentVersionMismatch):
+		writeCorrelatedError(w, http.StatusConflict, "DIRECTORY_VERSION_STALE", err, false, correlationID)
+	case errors.Is(err, directoryreader.ErrCurrentSnapshotUnavailable), errors.Is(err, directoryreader.ErrCurrentSnapshotStale):
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "DIRECTORY_EVIDENCE_UNAVAILABLE", err, true, correlationID)
+	case errors.Is(err, directoryreader.ErrQuoteEvidenceUnavailable),
+		errors.Is(err, ascpagent.ErrInvalidRequest), errors.Is(err, ascpagent.ErrUnsupportedTerms),
+		errors.Is(err, sellerquote.ErrInvalidQuote), errors.Is(err, sellerquote.ErrInvalidSignature),
+		errors.Is(err, sellerquote.ErrQuoteExpired), errors.Is(err, sellerquote.ErrDirectoryEvidence),
+		errors.Is(err, ascpintake.ErrPurchaseSpecBinding):
+		writeCorrelatedError(w, http.StatusBadRequest, "INVALID_ASCP_INTENT", err, false, correlationID)
+	default:
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_INTAKE_FAILED", err, true, correlationID)
+	}
 }
 
 func (s *Server) handleCreateIntent(w http.ResponseWriter, r *http.Request) {
@@ -1039,9 +1165,24 @@ func writeError(w http.ResponseWriter, status int, code string, err error, retri
 	if status >= 500 {
 		message = "request could not be completed"
 	}
-	writeJSON(w, status, map[string]any{
+	payload := map[string]any{
 		"error":     map[string]any{"code": code, "message": message, "retriable": retriable},
 		"commandId": commandID,
+	}
+	if correlationID := w.Header().Get("X-Correlation-ID"); correlationID != "" {
+		payload["correlationId"] = correlationID
+	}
+	writeJSON(w, status, payload)
+}
+
+func writeCorrelatedError(w http.ResponseWriter, status int, code string, err error, retriable bool, correlationID string) {
+	message := err.Error()
+	if status >= 500 {
+		message = "request could not be completed"
+	}
+	writeJSON(w, status, map[string]any{
+		"correlationId": correlationID,
+		"error":         map[string]any{"code": code, "message": message, "retriable": retriable},
 	})
 }
 

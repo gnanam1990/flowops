@@ -325,6 +325,25 @@ func (s *Server) callTool(ctx context.Context, authorization string, params json
 	}
 	var response backendResponse
 	switch call.Name {
+	case "ascp.operation.create":
+		var arguments struct {
+			Request        json.RawMessage `json:"request"`
+			IdempotencyKey string          `json:"idempotencyKey"`
+		}
+		if err := requireNoUnknown(call.Arguments, &arguments); err != nil {
+			return nil, invalidParams()
+		}
+		trimmedRequest := bytes.TrimSpace(arguments.Request)
+		if !json.Valid(trimmedRequest) || len(trimmedRequest) == 0 || trimmedRequest[0] != '{' || !identifierPattern.MatchString(arguments.IdempotencyKey) {
+			return nil, invalidParams()
+		}
+		response = s.callBackend(ctx, authorization, http.MethodPost, "/agent/v1/intents", map[string]string{"Idempotency-Key": arguments.IdempotencyKey}, trimmedRequest)
+	case "ascp.operation.get":
+		operationID, ok := oneIdentifierArgument(call.Arguments, "operationId")
+		if !ok {
+			return nil, invalidParams()
+		}
+		response = s.callBackend(ctx, authorization, http.MethodGet, "/agent/v1/intents/"+url.PathEscape(operationID), nil, nil)
 	case "ascp.intent.create":
 		var arguments struct {
 			Intent         json.RawMessage `json:"intent"`

@@ -30,11 +30,22 @@ same idempotency key where a write occurs:
 
 | MCP tool | REST route | Idempotency |
 |---|---|---|
+| `ascp.operation.create` | `POST /agent/v1/intents` | Required |
+| `ascp.operation.get` | `GET /agent/v1/intents/{operationId}` | Read-only |
 | `ascp.intent.create` | `POST /v1/intents` | Required |
 | `ascp.intent.get` | `GET /v1/intents/{requestId}` | Read-only |
 | `ascp.approval.list` | `GET /v1/approvals` | Read-only |
 | `ascp.approval.get` | `GET /v1/approvals/{requestId}` | Read-only |
 | `ascp.approval.decide` | `POST /v1/approvals/{requestId}/decision` | Required |
+
+The `ascp.operation.*` tools are the durable ASCP path. Their REST adapter
+derives tenant/agent identity, configured deployment terms, and current
+finalized directory evidence; those two tools only forward untrusted request
+data and cannot invoke signer, keeper, approval-decision, or database
+internals. The separately advertised human approval tools remain protected by
+their REST role and step-up gates; agent credentials receive a denial. The
+`ascp.intent.*` names remain explicitly documented legacy compatibility tools
+and do not create rows in `ascp_intents`.
 
 Therefore, the existing role/scope checks, policy evaluation, reservation,
 approval digest, step-up, durable command, audit, and lifecycle semantics
@@ -46,8 +57,9 @@ not presented as a successful payment or settlement.
 Tool results include a text JSON representation and `structuredContent`.
 Signature bytes, private-key material, seeds, mnemonic phrases, access tokens,
 raw approval tokens, and calldata fields are removed before an MCP result is
-written. The gateway does not advertise any unavailable directory, quote,
-payment-status, evidence, simulation, or workflow tool.
+written. SellerQuote signatures are accepted only as create input and are
+redacted from results. The gateway does not advertise signer, payment-status,
+evidence, simulation, keeper, or workflow tools.
 
 `schemas/tools.json` describes the advertised inputs. Its SHA-256 is pinned in
 `schemas/manifest.sha256`; tests reject drift. The manifest is an implementation
