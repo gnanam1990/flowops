@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 )
 
 type staticResolver map[string][]netip.Addr
@@ -132,5 +133,27 @@ func TestProductionRestrictedTransportHasUnforgeableMarker(t *testing.T) {
 	}
 	if _, ok := transport.(interface{ ascpRestrictedTransport() }); !ok {
 		t.Fatal("production transport lacks restricted marker")
+	}
+}
+
+func TestRestrictedHTTPSClientClassifiesConfigurationAndSafetyErrors(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		rawURL  string
+		timeout time.Duration
+		want    error
+	}{
+		{name: "malformed URL", rawURL: "://bad", timeout: time.Second, want: ErrInvalidConfig},
+		{name: "empty hostname", rawURL: "https:///recovery", timeout: time.Second, want: ErrInvalidConfig},
+		{name: "short timeout", rawURL: "https://recovery.example/", timeout: time.Millisecond, want: ErrInvalidConfig},
+		{name: "unsafe scheme", rawURL: "http://recovery.example/", timeout: time.Second, want: ErrUnsafeDestination},
+		{name: "query routing surface", rawURL: "https://recovery.example/?next=internal", timeout: time.Second, want: ErrUnsafeDestination},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := NewRestrictedHTTPSClient(test.rawURL, test.timeout)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("error=%v want=%v", err, test.want)
+			}
+		})
 	}
 }

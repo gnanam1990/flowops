@@ -230,6 +230,45 @@ role. A process start proves configuration and connectivity only; pilot
 admission still requires live RPC-independence, recovery-verifier, WORM,
 remote-head, seller-idempotency and restore-drill evidence.
 
+Run `/flowops/ascp-event-recovery` behind the TLS edge as a separate supervised
+process. First create a login role with no membership or owned objects, then
+apply the read-only grant contract:
+
+```sh
+psql "$FLOWOPS_DATABASE_ADMIN_URL" \
+  --set=recovery_role=flowops_recovery \
+  --file=deploy/control-plane/configure-recovery-role.sql
+```
+
+Run this contract as every role that applies migrations in `public`, so its
+default-routine privilege rule also covers future functions. The contract
+revokes `TEMPORARY` from `PUBLIC` on this dedicated database; explicitly grant
+it back only to reviewed roles that require temporary tables.
+
+The process requires:
+
+| Variable | Requirement |
+|---|---|
+| `FLOWOPS_RECOVERY_DATABASE_URL` | Recovery-role PostgreSQL URL with exactly one `sslmode=verify-full`; effective schema must be `public` |
+| `FLOWOPS_RECOVERY_LISTEN_ADDRESS` | Explicit local bind address and non-privileged port, for example `0.0.0.0:8082` |
+| `FLOWOPS_RECOVERY_WORM_URL` | HTTPS port-443 immutable-object read endpoint; the runtime supplies the exact `ref` query |
+| `FLOWOPS_RECOVERY_REMOTE_HEAD_URL` | HTTPS port-443 endpoint returning exact `{lastSeq,lastEventHash}` JSON |
+| `FLOWOPS_RECOVERY_WRITER_KEYS_JSON` | Strict map of writer epoch to canonical base64 32-byte HMAC verification key |
+| `FLOWOPS_RECOVERY_CHECKPOINT_KEYS_JSON` | Strict map of checkpoint epoch to canonical base64 Ed25519 public key |
+| `FLOWOPS_RECOVERY_ATTESTATION_KEY_ID` | Stable attestation signing epoch configured in seller workers |
+| `FLOWOPS_RECOVERY_ATTESTATION_KEY_FILE` | Absolute owner-only file containing one canonical base64 Ed25519 private key; never pass the key in an environment value |
+| `FLOWOPS_RECOVERY_ATTESTATION_PUBLIC_KEY_B64` | Canonical base64 Ed25519 public key that must match the private file and the seller-worker trust configuration |
+| `FLOWOPS_RECOVERY_EXTERNAL_TIMEOUT` | Optional per-external-read timeout, default `5s`, maximum `10s` |
+| `FLOWOPS_RECOVERY_VERIFICATION_TIMEOUT` | Optional whole verification timeout, default `20s`, maximum `1m` and at least two external timeouts plus `5s` |
+| `FLOWOPS_RECOVERY_PROOF_TTL` | Optional signed proof lifetime, default `2m`, maximum `5m` |
+| `FLOWOPS_RECOVERY_CACHE_TTL` | Optional verification coalescing window, default `2s`, maximum `5s` and below proof TTL |
+
+Startup refuses to listen until a complete externally checkpointed recovery
+passes. Route only exact `GET /v1/recovery`; all mutation routes are absent.
+The TLS edge must preserve `Cache-Control: no-store`, bound request rates, and
+must not cache or rewrite JSON. A green process proves the configured evidence
+at that instant, not backup RPO/RTO, WORM retention, or operator independence.
+
 SQL cannot prove provider backup retention, PITR, encryption at rest, or
 monitoring. A signed operator record is tamper evidence and an accountable
 snapshot, not an independent provider attestation. Before pilot admission,

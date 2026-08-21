@@ -223,6 +223,64 @@ if grep -Eq 'GRANT (ALL|DELETE|UPDATE|TRUNCATE|TRIGGER|REFERENCES)' "$checkpoint
     exit 1
 fi
 
+recovery_grant_file=deploy/control-plane/configure-recovery-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT' \
+    'ALTER ROLE :"recovery_role" SET default_transaction_read_only = on' \
+    'recovery_role must exist and have LOGIN' \
+    'recovery_role must not participate in role memberships' \
+    'recovery_role must not own database objects' \
+    'ALTER ROLE :"recovery_role" SET search_path = public' \
+    'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC' \
+    "REVOKE TEMPORARY ON DATABASE %I FROM %I', current_database(), :'recovery_role'" \
+    'REVOKE CREATE ON SCHEMA public FROM PUBLIC' \
+    'REVOKE CREATE ON SCHEMA public FROM :"recovery_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"recovery_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"recovery_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"recovery_role"' \
+    'ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC' \
+    'GRANT SELECT ON public.ascp_events, public.ascp_event_checkpoints'
+do
+    grep -F "$required" "$recovery_grant_file" >/dev/null
+done
+
+recovery_grants_are_safe() {
+	awk 'BEGIN { RS=";" }
+	{
+		statement=toupper($0)
+		if (statement !~ /GRANT/) next
+		if (statement ~ /\/\*|--/) exit 1
+		gsub(/[[:space:]]+/, " ", statement)
+		sub(/^ /, "", statement)
+		sub(/ $/, "", statement)
+		if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"RECOVERY_ROLE\"") next
+		if (statement == "GRANT SELECT ON PUBLIC.ASCP_EVENTS, PUBLIC.ASCP_EVENT_CHECKPOINTS TO :\"RECOVERY_ROLE\"") next
+		exit 1
+	}' "$@"
+}
+
+if ! recovery_grants_are_safe "$recovery_grant_file"; then
+    echo "recovery grant script contains a forbidden write or execution privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT SELECT,' '    INSERT ON public.ascp_events TO :"recovery_role";' | recovery_grants_are_safe; then
+    echo "recovery grant checker failed to reject a multiline write privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'grant select, delete on public.ascp_events to :"recovery_role";' | recovery_grants_are_safe; then
+    echo "recovery grant checker failed to reject a lowercase write privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT SELECT/*hidden*/, INSERT ON public.ascp_events TO :"recovery_role";' | recovery_grants_are_safe; then
+    echo "recovery grant checker failed to reject a comment-obfuscated privilege" >&2
+    exit 1
+fi
+printf '%s\n' 'GRANT USAGE ON SCHEMA public TO :"recovery_role";' \
+    'GRANT SELECT ON public.ascp_events, public.ascp_event_checkpoints TO :"recovery_role";' | recovery_grants_are_safe
+
 if [ -n "${FLOWOPS_DATABASE_URL:-}" ]; then
     go run ./cmd/postgres-readiness sql
 else

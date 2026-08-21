@@ -70,6 +70,14 @@ create schema objects. HMAC keys, checkpoint private keys, and immutable-store
 credentials are distinct secrets and must not enter logs, events, database
 payloads, or the application repository.
 
+`/flowops/ascp-event-recovery` is the runnable read-only recovery verifier. Its
+dedicated database role can select only events and checkpoints. It reads the
+exact immutable checkpoint and monotonic head through restricted HTTPS,
+re-verifies the complete chain, and serves a short-lived signed proof at
+`GET /v1/recovery`. It never publishes checkpoints or accepts mutation routes.
+The seller worker independently compares this proof with its restricted live
+database head, so a cached proof cannot conceal a newly appended event.
+
 The deployment must fence event append and checkpoint publication on the
 current leadership epoch, publish at least every five minutes or 10,000 events,
 and alert on verification failure, checkpoint age, remote-head lag, WORM
