@@ -20,20 +20,26 @@ import (
 const maxLeadershipInputBytes = 32 * 1024
 
 type request struct {
-	OrganizationID string `json:"organizationId"`
-	ExpectedEpoch  uint64 `json:"expectedEpoch,omitempty"`
-	Actor          string `json:"actor,omitempty"`
-	EvidenceDigest string `json:"evidenceDigest,omitempty"`
+	OrganizationID string  `json:"organizationId"`
+	ExpectedEpoch  *uint64 `json:"expectedEpoch,omitempty"`
+	Actor          *string `json:"actor,omitempty"`
+	EvidenceDigest *string `json:"evidenceDigest,omitempty"`
+	EffectID       *string `json:"effectId,omitempty"`
+	fields         map[string]struct{}
 }
 
 type response struct {
-	Status         string               `json:"status"`
-	OrganizationID string               `json:"organizationId"`
-	Epoch          uint64               `json:"epoch"`
-	State          ascpleadership.State `json:"state"`
-	EvidenceDigest string               `json:"evidenceDigest"`
-	Actor          string               `json:"actor"`
-	UpdatedAt      time.Time            `json:"updatedAt"`
+	Status                   string               `json:"status"`
+	OrganizationID           string               `json:"organizationId"`
+	Epoch                    uint64               `json:"epoch"`
+	State                    ascpleadership.State `json:"state"`
+	EvidenceDigest           string               `json:"evidenceDigest"`
+	Actor                    string               `json:"actor"`
+	UpdatedAt                time.Time            `json:"updatedAt"`
+	EffectID                 string               `json:"effectId,omitempty"`
+	ResolutionActor          string               `json:"resolutionActor,omitempty"`
+	ResolutionEvidenceDigest string               `json:"resolutionEvidenceDigest,omitempty"`
+	InFlightEffectIDs        []string             `json:"inFlightEffectIds,omitempty"`
 }
 
 func main() {
@@ -45,7 +51,7 @@ func main() {
 
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) != 1 || !validCommand(args[0]) {
-		return errors.New("use status, bootstrap, drain, or advance")
+		return errors.New("use status, bootstrap, drain, advance, or abandon-effect")
 	}
 	var request request
 	if err := decodeStrict(input, &request); err != nil {
@@ -62,7 +68,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	if err != nil {
 		return fmt.Errorf("open leadership PostgreSQL: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(4)
 	operationCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -78,44 +84,81 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	case "status":
 		record, err = store.Get(operationCtx, request.OrganizationID)
 	case "bootstrap":
-		record, err = store.Bootstrap(operationCtx, request.OrganizationID, request.Actor, request.EvidenceDigest)
+		record, err = store.Bootstrap(operationCtx, request.OrganizationID, *request.Actor, *request.EvidenceDigest)
 	case "drain":
-		record, err = store.BeginDrain(operationCtx, request.OrganizationID, request.ExpectedEpoch, request.Actor, request.EvidenceDigest)
+		record, err = store.BeginDrain(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.Actor, *request.EvidenceDigest)
 	case "advance":
-		record, err = store.Advance(operationCtx, request.OrganizationID, request.ExpectedEpoch, request.Actor, request.EvidenceDigest)
+		record, err = store.Advance(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.Actor, *request.EvidenceDigest)
+	case "abandon-effect":
+		err = store.AbandonEffect(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.EffectID, *request.Actor, *request.EvidenceDigest)
+		if err == nil {
+			record, err = store.Get(operationCtx, request.OrganizationID)
+		}
 	}
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(output).Encode(response{
+	result := response{
 		Status: "ok", OrganizationID: record.OrganizationID, Epoch: record.Epoch,
 		State: record.State, EvidenceDigest: record.EvidenceDigest, Actor: record.Actor, UpdatedAt: record.UpdatedAt,
-	})
+	}
+	if args[0] == "abandon-effect" {
+		result.EffectID = *request.EffectID
+		result.ResolutionActor = *request.Actor
+		result.ResolutionEvidenceDigest = *request.EvidenceDigest
+	}
+	if args[0] == "status" || args[0] == "abandon-effect" {
+		result.InFlightEffectIDs, err = store.InFlightEffectIDs(operationCtx, record.OrganizationID, record.Epoch)
+		if err != nil {
+			return err
+		}
+	}
+	return json.NewEncoder(output).Encode(result)
 }
 
 func (r request) validateFor(command string) error {
+	if strings.TrimSpace(r.OrganizationID) == "" {
+		return errors.New("organizationId is required")
+	}
 	switch command {
 	case "status":
-		if r.ExpectedEpoch != 0 || r.Actor != "" || r.EvidenceDigest != "" {
+		if r.has("expectedEpoch") || r.has("actor") || r.has("evidenceDigest") || r.has("effectId") {
 			return errors.New("status accepts only organizationId")
 		}
 	case "bootstrap":
-		if r.ExpectedEpoch != 0 || r.Actor == "" || r.EvidenceDigest == "" {
+		if r.has("expectedEpoch") || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || r.has("effectId") {
 			return errors.New("bootstrap requires organizationId, actor, and evidenceDigest only")
 		}
 	case "drain", "advance":
-		if r.ExpectedEpoch == 0 || r.Actor == "" || r.EvidenceDigest == "" {
+		if !r.positiveEpoch() || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || r.has("effectId") {
 			return errors.New(command + " requires organizationId, expectedEpoch, actor, and evidenceDigest")
 		}
+	case "abandon-effect":
+		if !r.positiveEpoch() || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || !r.present("effectId", r.EffectID) {
+			return errors.New("abandon-effect requires organizationId, expectedEpoch, effectId, actor, and evidenceDigest")
+		}
 	default:
-		return errors.New("use status, bootstrap, drain, or advance")
+		return errors.New("use status, bootstrap, drain, advance, or abandon-effect")
 	}
 	return nil
 }
 
+func (r request) has(field string) bool {
+	_, ok := r.fields[field]
+	return ok
+}
+
+func (r request) present(field string, value *string) bool {
+	return r.has(field) && value != nil && *value != ""
+}
+
+func (r request) positiveEpoch() bool {
+	return r.has("expectedEpoch") && r.ExpectedEpoch != nil && *r.ExpectedEpoch > 0
+}
+
 func validCommand(command string) bool {
 	switch command {
-	case "status", "bootstrap", "drain", "advance":
+	case "status", "bootstrap", "drain", "advance", "abandon-effect":
 		return true
 	default:
 		return false
@@ -139,7 +182,8 @@ func decodeStrict(input io.Reader, target any) error {
 	if err != nil {
 		return errors.New("leadership request could not be read")
 	}
-	if len(raw) > maxLeadershipInputBytes || len(bytes.TrimSpace(raw)) == 0 {
+	trimmed := bytes.TrimSpace(raw)
+	if len(raw) > maxLeadershipInputBytes || len(trimmed) == 0 || trimmed[0] != '{' {
 		return errors.New("leadership request must be one JSON object of at most 32 KiB")
 	}
 	if err := rejectDuplicateKeys(raw); err != nil {
@@ -152,6 +196,16 @@ func decodeStrict(input io.Reader, target any) error {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("leadership request must contain exactly one JSON value")
+	}
+	if requestTarget, ok := target.(*request); ok {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return errors.New("leadership request must contain valid JSON")
+		}
+		requestTarget.fields = make(map[string]struct{}, len(fields))
+		for field := range fields {
+			requestTarget.fields[field] = struct{}{}
+		}
 	}
 	return nil
 }

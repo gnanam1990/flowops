@@ -175,8 +175,24 @@ printf '%s\n' '{"organizationId":"org-id","expectedEpoch":1,"actor":"operator-id
 The drain command does not return until prior fenced effects have exited. Never
 advance merely because a client timeout occurred; first query
 `/flowops/ascp-leadership status`, reconcile the durable state/event evidence,
-and verify old-host shutdown. Database URLs and credentials belong only in the
-environment/secret mount, never JSON, arguments, logs, or tickets.
+and verify old-host shutdown. Status includes durable `inFlightEffectIds` when
+completion persistence was lost. Those IDs are a fail-closed recovery queue,
+not permission to clear work on a timer. First reconcile the effect-specific
+idempotency key and durable seller/payment outcome. Only after independently
+proving the old effect host dead, preserve that proof as a lower-case SHA-256
+digest and run:
+
+```sh
+printf '%s\n' '{"organizationId":"org-id","expectedEpoch":1,"effectId":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","actor":"recovery-operator","evidenceDigest":"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}' \
+  | /flowops/ascp-leadership abandon-effect
+```
+
+Re-run status and require an empty in-flight list before advance. Abandonment is
+allowed only in `DRAINING` and is permanently attributable; the rails worker
+cannot perform it. Seller callback database writes use the rails credential,
+never the isolated controller credential. Database URLs and credentials
+belong only in the environment/secret mount, never JSON, arguments, logs, or
+tickets.
 
 SQL cannot prove provider backup retention, PITR, encryption at rest, or
 monitoring. A signed operator record is tamper evidence and an accountable

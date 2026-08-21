@@ -4,16 +4,21 @@ package ascpleadership
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
 	"time"
+	"unicode"
 )
 
 const (
-	advisorySeed int64  = 912034761
-	maxEpoch     uint64 = 1<<63 - 1
+	advisorySeed   int64  = 912034761
+	maxEpoch       uint64 = 1<<63 - 1
+	drainPoll             = 25 * time.Millisecond
+	resolveTimeout        = 30 * time.Second
 )
 
 var (
@@ -26,6 +31,7 @@ var (
 	schemaPattern    = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 )
 
+// State is the durable admission state for one organization's current epoch.
 type State string
 
 const (
@@ -33,6 +39,7 @@ const (
 	Draining State = "DRAINING"
 )
 
+// Record is the authoritative leadership state returned to services/operators.
 type Record struct {
 	OrganizationID string
 	Epoch          uint64
@@ -42,14 +49,17 @@ type Record struct {
 	UpdatedAt      time.Time
 }
 
+// Postgres implements durable leadership admission, drain, and recovery.
 type Postgres struct {
-	db                 *sql.DB
-	clock              func() time.Time
-	epochsTable        string
-	eventsTable        string
-	observeLockAttempt func(int)
+	db           *sql.DB
+	clock        func() time.Time
+	epochsTable  string
+	eventsTable  string
+	effectsTable string
+	newEffectID  func() (string, error)
 }
 
+// NewPostgres binds the adapter to a validated, explicitly qualified schema.
 func NewPostgres(db *sql.DB, schema string, clocks ...func() time.Time) (*Postgres, error) {
 	if db == nil || !schemaPattern.MatchString(schema) || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
 		return nil, ErrInvalid
@@ -59,13 +69,16 @@ func NewPostgres(db *sql.DB, schema string, clocks ...func() time.Time) (*Postgr
 		clock = clocks[0]
 	}
 	return &Postgres{
-		db:          db,
-		clock:       clock,
-		epochsTable: `"` + schema + `".ascp_leadership_epochs`,
-		eventsTable: `"` + schema + `".ascp_leadership_events`,
+		db:           db,
+		clock:        clock,
+		epochsTable:  `"` + schema + `".ascp_leadership_epochs`,
+		eventsTable:  `"` + schema + `".ascp_leadership_events`,
+		effectsTable: `"` + schema + `".ascp_leadership_effects`,
+		newEffectID:  randomEffectID,
 	}, nil
 }
 
+// Current returns the active epoch and fails with ErrEpochChanged while draining.
 func (p *Postgres) Current(ctx context.Context, organizationID string) (uint64, error) {
 	record, err := p.Get(ctx, organizationID)
 	if err != nil {
@@ -77,12 +90,21 @@ func (p *Postgres) Current(ctx context.Context, organizationID string) (uint64, 
 	return record.Epoch, nil
 }
 
-// Fence invokes effect at most once while holding the same organization-scoped
-// PostgreSQL advisory lock required by every drain and epoch transition.
+// Fence durably admits effect at most once while holding the same
+// organization-scoped PostgreSQL advisory lock required by drain and epoch
+// transitions. The callback runs after admission commits and must use an
+// independent transaction; its writes are not rolled back by Fence. Drain can
+// enter DRAINING while the callback runs but cannot return,
+// and the epoch cannot advance, until the durable effect is resolved.
 func (p *Postgres) Fence(ctx context.Context, organizationID string, expected uint64, effect func(context.Context) error) error {
 	if !validOrganization(organizationID) || expected == 0 || expected > maxEpoch || effect == nil {
 		return ErrInvalid
 	}
+	effectID, err := p.newEffectID()
+	if err != nil {
+		return fmt.Errorf("create leadership effect id: %w", err)
+	}
+	startedAt := p.clock().UTC()
 	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return err
@@ -98,12 +120,26 @@ func (p *Postgres) Fence(ctx context.Context, organizationID string, expected ui
 	if record.State != Active || record.Epoch != expected {
 		return ErrEpochChanged
 	}
-	if err := effect(ctx); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s
+		(effect_id,organization_id,epoch,state,started_at) VALUES ($1,$2,$3,'IN_FLIGHT',$4)`,
+		p.effectsTable), effectID, organizationID, expected, startedAt); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	effectErr := effect(ctx)
+	resolveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resolveTimeout)
+	defer cancel()
+	resolveErr := p.completeEffect(resolveCtx, effectID, p.clock().UTC())
+	if resolveErr != nil {
+		resolveErr = fmt.Errorf("resolve leadership effect %s: %w", effectID, resolveErr)
+	}
+	return errors.Join(effectErr, resolveErr)
 }
 
+// Bootstrap creates epoch one or returns the exact idempotent replay.
 func (p *Postgres) Bootstrap(ctx context.Context, organizationID, actor, evidence string) (Record, error) {
 	if !validMutation(organizationID, actor, evidence) {
 		return Record{}, ErrInvalid
@@ -140,15 +176,64 @@ func (p *Postgres) Bootstrap(ctx context.Context, organizationID, actor, evidenc
 	return commitRecord(ctx, tx, p.epochsTable, organizationID)
 }
 
+// BeginDrain blocks new admission and waits for every admitted effect to resolve.
 func (p *Postgres) BeginDrain(ctx context.Context, organizationID string, expected uint64, actor, evidence string) (Record, error) {
-	return p.transition(ctx, organizationID, expected, expected, Active, Draining, actor, evidence)
+	record, err := p.transition(ctx, organizationID, expected, expected, Active, Draining, actor, evidence)
+	if err != nil {
+		return Record{}, err
+	}
+	if err := p.waitForNoEffects(ctx, organizationID, expected); err != nil {
+		return Record{}, err
+	}
+	return record, nil
 }
 
+// Advance activates the next epoch after the draining epoch has no live effects.
 func (p *Postgres) Advance(ctx context.Context, organizationID string, expected uint64, actor, evidence string) (Record, error) {
 	if expected >= maxEpoch {
 		return Record{}, ErrInvalid
 	}
 	return p.transition(ctx, organizationID, expected, expected+1, Draining, Active, actor, evidence)
+}
+
+// AbandonEffect is an explicit operator recovery after the organization is
+// draining and the old effect host has been proved dead. The actor and evidence
+// are retained on the immutable effect record.
+func (p *Postgres) AbandonEffect(ctx context.Context, organizationID string, expected uint64, effectID, actor, evidence string) error {
+	if expected == 0 || expected > maxEpoch || !validMutation(organizationID, actor, evidence) || !hashPattern.MatchString(effectID) {
+		return ErrInvalid
+	}
+	now := p.clock().UTC()
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := p.lockOrganization(ctx, tx, organizationID); err != nil {
+		return err
+	}
+	record, err := get(ctx, tx, p.epochsTable, organizationID)
+	if err != nil {
+		return err
+	}
+	if record.Epoch != expected {
+		return ErrEpochChanged
+	}
+	if record.State != Draining {
+		return ErrStateConflict
+	}
+	result, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s
+		SET state='ABANDONED',resolved_at=GREATEST($5,started_at),resolution_actor=$3,
+			resolution_evidence_digest=$4
+		WHERE effect_id=$1 AND organization_id=$2 AND epoch=$6 AND state='IN_FLIGHT'`,
+		p.effectsTable), effectID, organizationID, actor, evidence, now, expected)
+	if err != nil {
+		return err
+	}
+	if rowsAffected(result) != 1 {
+		return ErrStateConflict
+	}
+	return tx.Commit()
 }
 
 func (p *Postgres) transition(ctx context.Context, organizationID string, expected, next uint64, from, to State, actor, evidence string) (Record, error) {
@@ -192,11 +277,35 @@ func (p *Postgres) transition(ctx context.Context, organizationID string, expect
 	return commitRecord(ctx, tx, p.epochsTable, organizationID)
 }
 
+// Get returns leadership state without requiring it to be active.
 func (p *Postgres) Get(ctx context.Context, organizationID string) (Record, error) {
 	if !validOrganization(organizationID) {
 		return Record{}, ErrInvalid
 	}
 	return get(ctx, p.db, p.epochsTable, organizationID)
+}
+
+// InFlightEffectIDs returns the durable recovery queue for an exact epoch.
+func (p *Postgres) InFlightEffectIDs(ctx context.Context, organizationID string, epoch uint64) ([]string, error) {
+	if !validOrganization(organizationID) || epoch == 0 || epoch > maxEpoch {
+		return nil, ErrInvalid
+	}
+	rows, err := p.db.QueryContext(ctx, fmt.Sprintf(`SELECT effect_id FROM %s
+		WHERE organization_id=$1 AND epoch=$2 AND state='IN_FLIGHT' ORDER BY effect_id`,
+		p.effectsTable), organizationID, epoch)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var effectIDs []string
+	for rows.Next() {
+		var effectID string
+		if err := rows.Scan(&effectID); err != nil {
+			return nil, err
+		}
+		effectIDs = append(effectIDs, effectID)
+	}
+	return effectIDs, rows.Err()
 }
 
 type queryer interface {
@@ -214,15 +323,42 @@ func get(ctx context.Context, q queryer, epochsTable, organizationID string) (Re
 }
 
 func (p *Postgres) lockOrganization(ctx context.Context, tx *sql.Tx, organizationID string) error {
-	if p.observeLockAttempt != nil {
-		var backendPID int
-		if err := tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&backendPID); err != nil {
-			return err
-		}
-		p.observeLockAttempt(backendPID)
-	}
 	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,$2))`, organizationID, advisorySeed)
 	return err
+}
+
+func (p *Postgres) completeEffect(ctx context.Context, effectID string, resolvedAt time.Time) error {
+	result, err := p.db.ExecContext(ctx, fmt.Sprintf(`UPDATE %s
+		SET state='COMPLETED',resolved_at=GREATEST($2,started_at)
+		WHERE effect_id=$1 AND state='IN_FLIGHT'`, p.effectsTable), effectID, resolvedAt)
+	if err != nil {
+		return err
+	}
+	if rowsAffected(result) != 1 {
+		return ErrStateConflict
+	}
+	return nil
+}
+
+func (p *Postgres) waitForNoEffects(ctx context.Context, organizationID string, epoch uint64) error {
+	ticker := time.NewTicker(drainPoll)
+	defer ticker.Stop()
+	for {
+		var inFlight bool
+		if err := p.db.QueryRowContext(ctx, fmt.Sprintf(`SELECT EXISTS (
+			SELECT 1 FROM %s WHERE organization_id=$1 AND epoch=$2 AND state='IN_FLIGHT'
+		)`, p.effectsTable), organizationID, epoch).Scan(&inFlight); err != nil {
+			return err
+		}
+		if !inFlight {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func commitRecord(ctx context.Context, tx *sql.Tx, epochsTable, organizationID string) (Record, error) {
@@ -245,11 +381,19 @@ func validOrganization(value string) bool {
 		return false
 	}
 	for _, r := range value {
-		if r <= 0x20 || r == 0x7f {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			return false
 		}
 	}
 	return true
+}
+
+func randomEffectID() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return "0x" + hex.EncodeToString(raw[:]), nil
 }
 
 func rowsAffected(result sql.Result) int64 {

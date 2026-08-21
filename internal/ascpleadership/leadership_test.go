@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,7 +28,7 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 	if err != nil || record.Epoch != 1 || record.State != Active {
 		t.Fatalf("bootstrap=%+v err=%v", record, err)
 	}
-	if replay, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil || replay != record {
+	if replay, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil || !sameRecord(replay, record) {
 		t.Fatalf("idempotent bootstrap=%+v err=%v", replay, err)
 	}
 	if _, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("9")); !errors.Is(err, ErrStateConflict) {
@@ -52,37 +53,48 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 		})
 	}()
 	<-effectStarted
+	if _, err := db.ExecContext(t.Context(), `UPDATE ascp_leadership_effects
+		SET state='ABANDONED',resolved_at=clock_timestamp(),resolution_actor='operator',
+			resolution_evidence_digest=$1
+		WHERE organization_id='org-test' AND state='IN_FLIGHT'`, leadershipHash("8")); err == nil {
+		t.Fatal("database accepted effect abandonment while leadership was active")
+	}
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseEffect) }) }
 	defer release()
-	drainStore, err := NewPostgres(db, schema, func() time.Time { return now })
-	if err != nil {
-		t.Fatal(err)
-	}
 	drainDone := make(chan error, 1)
-	drainLockAttempt := make(chan int, 1)
-	drainStore.observeLockAttempt = func(pid int) { drainLockAttempt <- pid }
 	go func() {
-		_, drainErr := drainStore.BeginDrain(context.Background(), "org-test", 1, "owner-safe", leadershipHash("2"))
+		_, drainErr := store.BeginDrain(context.Background(), "org-test", 1, "owner-safe", leadershipHash("2"))
 		drainDone <- drainErr
 	}()
-	var drainPID int
-	select {
-	case drainPID = <-drainLockAttempt:
-	case err := <-drainDone:
-		t.Fatalf("drain failed before attempting the advisory lock: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("drain never attempted the advisory lock")
-	}
-	if err := waitForAdvisoryWait(t.Context(), db, drainPID); err != nil {
+	if err := waitForLeadershipState(t.Context(), db, Draining); err != nil {
 		t.Fatal(err)
 	}
+	assertInFlightEffects(t, db, "org-test", 1, 1)
 	release()
 	if err := <-fenceDone; err != nil {
 		t.Fatal(err)
 	}
 	if err := <-drainDone; err != nil {
 		t.Fatal(err)
+	}
+	assertInFlightEffects(t, db, "org-test", 1, 0)
+	var completedEffectID string
+	if err := db.QueryRowContext(t.Context(), `SELECT effect_id FROM ascp_leadership_effects
+		WHERE organization_id='org-test' AND state='COMPLETED'`).Scan(&completedEffectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), `DELETE FROM ascp_leadership_effects WHERE effect_id=$1`, completedEffectID); err == nil {
+		t.Fatal("database deleted immutable leadership effect evidence")
+	}
+	if _, err := db.ExecContext(t.Context(), `UPDATE ascp_leadership_effects
+		SET state='IN_FLIGHT',resolved_at=NULL WHERE effect_id=$1`, completedEffectID); err == nil {
+		t.Fatal("database reopened a resolved leadership effect")
+	}
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO ascp_leadership_effects
+		(effect_id,organization_id,epoch,state,started_at)
+		VALUES ($1,'org-test',1,'IN_FLIGHT',now())`, leadershipHash("f")); err == nil {
+		t.Fatal("database admitted a new effect while draining")
 	}
 	if effects.Load() != 1 {
 		t.Fatalf("effects=%d", effects.Load())
@@ -216,7 +228,7 @@ func TestPostgresLeadershipAdapterIgnoresTemporaryTableShadow(t *testing.T) {
 	}
 }
 
-func TestPostgresLeadershipDatabaseTriggerFencesDirectControllerUpdate(t *testing.T) {
+func TestPostgresLeadershipDatabaseRejectsDirectAdvanceWhileEffectIsInFlight(t *testing.T) {
 	db, schema := leadershipDatabase(t)
 	store, _ := NewPostgres(db, schema)
 	if _, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil {
@@ -236,37 +248,119 @@ func TestPostgresLeadershipDatabaseTriggerFencesDirectControllerUpdate(t *testin
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseEffect) }) }
 	defer release()
-	directTx, err := db.BeginTx(t.Context(), &sql.TxOptions{})
+	drainTx, err := db.BeginTx(t.Context(), &sql.TxOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = directTx.Rollback() }()
-	var directPID int
-	if err := directTx.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&directPID); err != nil {
+	var drainingAt time.Time
+	if err := drainTx.QueryRowContext(t.Context(), `UPDATE ascp_leadership_epochs
+		SET state='DRAINING',evidence_digest=$1,actor='owner-safe',updated_at=updated_at+interval '1 second'
+		WHERE organization_id='org-test' RETURNING updated_at`, leadershipHash("2")).Scan(&drainingAt); err != nil {
 		t.Fatal(err)
 	}
-	directDone := make(chan error, 1)
-	go func() {
-		_, updateErr := directTx.ExecContext(context.Background(), `UPDATE ascp_leadership_epochs
-			SET state='DRAINING',evidence_digest=$2,actor='owner-safe',updated_at=updated_at+interval '1 second'
-			WHERE organization_id=$1`, "org-test", leadershipHash("2"))
-		directDone <- updateErr
-	}()
-	if err := waitForAdvisoryWait(t.Context(), db, directPID); err != nil {
+	if _, err := drainTx.ExecContext(t.Context(), `INSERT INTO ascp_leadership_events
+		(organization_id,previous_epoch,new_epoch,previous_state,new_state,evidence_digest,actor,created_at)
+		VALUES ('org-test',1,1,'ACTIVE','DRAINING',$1,'owner-safe',$2)`, leadershipHash("2"), drainingAt); err != nil {
 		t.Fatal(err)
 	}
+	if err := drainTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	assertInFlightEffects(t, db, "org-test", 1, 1)
+	advanceConn, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer advanceConn.Close()
+	if _, err := advanceConn.ExecContext(t.Context(), fmt.Sprintf(`CREATE TEMP TABLE ascp_leadership_effects
+		(LIKE "%s".ascp_leadership_effects INCLUDING ALL)`, schema)); err != nil {
+		t.Fatal(err)
+	}
+	advanceTx, err := advanceConn.BeginTx(t.Context(), &sql.TxOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := advanceTx.ExecContext(t.Context(), `UPDATE ascp_leadership_epochs
+		SET epoch=2,state='ACTIVE',evidence_digest=$1,actor='owner-safe',updated_at=updated_at+interval '1 second'
+		WHERE organization_id='org-test'`, leadershipHash("3")); err == nil {
+		t.Fatal("temporary effect table bypassed direct advance rejection")
+	}
+	_ = advanceTx.Rollback()
 	release()
 	if err := <-fenceDone; err != nil {
 		t.Fatal(err)
 	}
-	if err := <-directDone; err != nil {
+	if _, err := store.Advance(t.Context(), "org-test", 1, "owner-safe", leadershipHash("4")); err != nil {
 		t.Fatal(err)
 	}
-	if err := directTx.Rollback(); err != nil {
+}
+
+func TestPostgresLeadershipConnectionLossLeavesDurableFenceUntilExplicitAbandonment(t *testing.T) {
+	controllerDB, schema := leadershipDatabase(t)
+	controller, err := NewPostgres(controllerDB, schema)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if epoch, err := store.Current(t.Context(), "org-test"); err != nil || epoch != 1 {
-		t.Fatalf("rolled-back direct update changed leadership: epoch=%d err=%v", epoch, err)
+	if _, err := controller.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil {
+		t.Fatal(err)
+	}
+	effectDB := openLeadershipDatabase(t, schema)
+	effectStore, err := NewPostgres(effectDB, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effectID := leadershipHash("e")
+	effectStore.newEffectID = func() (string, error) { return effectID, nil }
+	effectStarted := make(chan struct{})
+	releaseEffect := make(chan struct{})
+	fenceDone := make(chan error, 1)
+	go func() {
+		fenceDone <- effectStore.Fence(context.Background(), "org-test", 1, func(context.Context) error {
+			close(effectStarted)
+			<-releaseEffect
+			return nil
+		})
+	}()
+	<-effectStarted
+	assertInFlightEffects(t, controllerDB, "org-test", 1, 1)
+	if err := effectDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	drainDone := make(chan error, 1)
+	go func() {
+		_, drainErr := controller.BeginDrain(context.Background(), "org-test", 1, "owner-safe", leadershipHash("2"))
+		drainDone <- drainErr
+	}()
+	if err := waitForLeadershipState(t.Context(), controllerDB, Draining); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseEffect)
+	if err := <-fenceDone; err == nil || !strings.Contains(err.Error(), effectID) {
+		t.Fatal("lost effect database connection reported durable completion")
+	}
+	assertInFlightEffects(t, controllerDB, "org-test", 1, 1)
+	if effectIDs, err := controller.InFlightEffectIDs(t.Context(), "org-test", 1); err != nil || len(effectIDs) != 1 || effectIDs[0] != effectID {
+		t.Fatalf("durable recovery queue=%v err=%v", effectIDs, err)
+	}
+	if err := controller.AbandonEffect(t.Context(), "org-test", 1, effectID, "recovery-operator", leadershipHash("3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-drainDone; err != nil {
+		t.Fatal(err)
+	}
+	var state, actor, evidence string
+	if err := controllerDB.QueryRowContext(t.Context(), `SELECT state,resolution_actor,resolution_evidence_digest
+		FROM ascp_leadership_effects WHERE effect_id=$1`, effectID).Scan(&state, &actor, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if state != "ABANDONED" || actor != "recovery-operator" || evidence != leadershipHash("3") {
+		t.Fatalf("abandonment evidence: state=%s actor=%s evidence=%s", state, actor, evidence)
+	}
+	if effectIDs, err := controller.InFlightEffectIDs(t.Context(), "org-test", 1); err != nil || len(effectIDs) != 0 {
+		t.Fatalf("resolved recovery queue=%v err=%v", effectIDs, err)
+	}
+	if _, err := controller.Advance(t.Context(), "org-test", 1, "owner-safe", leadershipHash("4")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -314,7 +408,8 @@ func TestLeadershipRejectsMalformedInputs(t *testing.T) {
 	if _, err := NewPostgres(&sql.DB{}, "public;drop schema"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("invalid schema=%v", err)
 	}
-	if validOrganization("org test") || validMutation("org-test", "owner-safe", "0x01") {
+	if validOrganization("org test") || validOrganization("org\u00a0test") || validOrganization("org\u0085test") ||
+		validMutation("org-test", "owner-safe", "0x01") {
 		t.Fatal("malformed leadership input accepted")
 	}
 	store, _ := NewPostgres(&sql.DB{}, "public")
@@ -323,6 +418,13 @@ func TestLeadershipRejectsMalformedInputs(t *testing.T) {
 	}
 	if _, err := store.Advance(t.Context(), "org-test", maxEpoch, "owner-safe", leadershipHash("1")); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("overflowing advance epoch=%v", err)
+	}
+	if err := store.AbandonEffect(t.Context(), "org-test", 1, "not-a-digest", "owner-safe", leadershipHash("1")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("malformed abandonment effect id=%v", err)
+	}
+	effectID, err := randomEffectID()
+	if err != nil || !hashPattern.MatchString(effectID) {
+		t.Fatalf("random effect id=%q err=%v", effectID, err)
 	}
 }
 
@@ -358,23 +460,52 @@ func leadershipDatabase(t *testing.T) (*sql.DB, string) {
 	return db, schema
 }
 
-func waitForAdvisoryWait(ctx context.Context, db *sql.DB, backendPID int) error {
+func openLeadershipDatabase(t *testing.T, schema string) *sql.DB {
+	t.Helper()
+	config, err := pgx.ParseConfig(os.Getenv("FLOWOPS_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*config)
+	db.SetMaxOpenConns(8)
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func waitForLeadershipState(ctx context.Context, db *sql.DB, expected State) error {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		var waiting bool
-		if err := db.QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted
-		)`, backendPID).Scan(&waiting); err != nil {
+		var state State
+		if err := db.QueryRowContext(ctx, `SELECT state FROM ascp_leadership_epochs
+			WHERE organization_id='org-test'`).Scan(&state); err != nil {
 			return err
 		}
-		if waiting {
+		if state == expected {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("backend %d never waited on the advisory fence", backendPID)
+			return fmt.Errorf("leadership never reached %s; current state is %s", expected, state)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func assertInFlightEffects(t *testing.T, db *sql.DB, organizationID string, epoch uint64, expected int) {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM ascp_leadership_effects
+		WHERE organization_id=$1 AND epoch=$2 AND state='IN_FLIGHT'`, organizationID, epoch).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != expected {
+		t.Fatalf("in-flight effects=%d, want %d", count, expected)
+	}
+}
+
+func sameRecord(left, right Record) bool {
+	return left.OrganizationID == right.OrganizationID && left.Epoch == right.Epoch && left.State == right.State &&
+		left.EvidenceDigest == right.EvidenceDigest && left.Actor == right.Actor && left.UpdatedAt.Equal(right.UpdatedAt)
 }
 
 func leadershipHash(s string) string {

@@ -45,15 +45,18 @@ REVOKE CREATE ON SCHEMA public FROM :"leadership_role";
 GRANT USAGE ON SCHEMA public TO :"leadership_role";
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"leadership_role";
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"leadership_role";
 
-GRANT SELECT ON ascp_leadership_epochs, ascp_leadership_events TO :"leadership_role";
+GRANT SELECT ON ascp_leadership_epochs, ascp_leadership_events, ascp_leadership_effects TO :"leadership_role";
 GRANT INSERT (organization_id,epoch,state,evidence_digest,actor,updated_at)
     ON ascp_leadership_epochs TO :"leadership_role";
 GRANT INSERT (organization_id,previous_epoch,new_epoch,previous_state,new_state,evidence_digest,actor,created_at)
     ON ascp_leadership_events TO :"leadership_role";
 GRANT UPDATE (epoch,state,evidence_digest,actor,updated_at)
     ON ascp_leadership_epochs TO :"leadership_role";
+GRANT UPDATE (state,resolved_at,resolution_actor,resolution_evidence_digest)
+    ON ascp_leadership_effects TO :"leadership_role";
 GRANT USAGE, SELECT ON SEQUENCE ascp_leadership_events_event_id_seq TO :"leadership_role";
 
 COMMIT;

@@ -58,10 +58,13 @@ rails_grant_file=deploy/control-plane/configure-rails-role.sql
 for required in \
     'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
 	'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
-    'GRANT SELECT ON ascp_seller_jobs, ascp_seller_attempts, ascp_seller_responses' \
+	'GRANT SELECT ON ascp_seller_jobs, ascp_seller_attempts, ascp_seller_responses' \
+	'ascp_leadership_effects TO :"rails_role"' \
 	'GRANT SELECT ON ascp_payment_operations' \
 	'GRANT SELECT ON ascp_leadership_epochs' \
     'GRANT INSERT ON ascp_seller_attempts, ascp_seller_responses' \
+	'GRANT INSERT (effect_id,organization_id,epoch,state,started_at)' \
+	'GRANT UPDATE (state,resolved_at) ON ascp_leadership_effects' \
     'GRANT UPDATE (state,eligible_after,lease_owner,lease_token,lease_expires_at,attempt_count' \
     'GRANT UPDATE (state,completed_at,result_code) ON ascp_seller_attempts'
 do
@@ -122,11 +125,12 @@ for required in \
     'leadership_role must not own database objects' \
     'SELECT 1 FROM pg_shdepend' \
     'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
-    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public' \
-    'GRANT SELECT ON ascp_leadership_epochs, ascp_leadership_events' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC' \
+    'GRANT SELECT ON ascp_leadership_epochs, ascp_leadership_events, ascp_leadership_effects' \
     'GRANT INSERT (organization_id,epoch,state,evidence_digest,actor,updated_at)' \
     'GRANT INSERT (organization_id,previous_epoch,new_epoch,previous_state,new_state,evidence_digest,actor,created_at)' \
     'GRANT UPDATE (epoch,state,evidence_digest,actor,updated_at)' \
+    'GRANT UPDATE (state,resolved_at,resolution_actor,resolution_evidence_digest)' \
     'GRANT USAGE, SELECT ON SEQUENCE ascp_leadership_events_event_id_seq'
 do
     grep -F "$required" "$leadership_grant_file" >/dev/null
@@ -136,16 +140,19 @@ leadership_grants_are_safe() {
     awk 'BEGIN { RS=";" }
     {
         statement=toupper($0)
-        if (statement !~ /GRANT/ || statement ~ /GRANT USAGE, SELECT ON SEQUENCE/) next
+        if (statement !~ /GRANT/) next
         if (statement ~ /\/\*|--/) exit 1
         gsub(/[[:space:]]+/, " ", statement)
-        sub(/^.*GRANT /, "", statement)
-        split(statement, parts, " ON ")
-        privileges=parts[1]
-        gsub(/[ ]*,[ ]*/, ",", privileges)
-        if (privileges ~ /(^|,)(ALL([ ]+PRIVILEGES)?|DELETE|TRUNCATE|TRIGGER|REFERENCES)(,|$)/) exit 1
-        if (privileges ~ /(^|,)INSERT(,|$)/) exit 1
-        if (privileges ~ /(^|,)UPDATE(,|$)/) exit 1
+        sub(/^ /, "", statement)
+        sub(/ $/, "", statement)
+        if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"LEADERSHIP_ROLE\"") next
+        if (statement == "GRANT SELECT ON ASCP_LEADERSHIP_EPOCHS, ASCP_LEADERSHIP_EVENTS, ASCP_LEADERSHIP_EFFECTS TO :\"LEADERSHIP_ROLE\"") next
+        if (statement == "GRANT INSERT (ORGANIZATION_ID,EPOCH,STATE,EVIDENCE_DIGEST,ACTOR,UPDATED_AT) ON ASCP_LEADERSHIP_EPOCHS TO :\"LEADERSHIP_ROLE\"") next
+        if (statement == "GRANT INSERT (ORGANIZATION_ID,PREVIOUS_EPOCH,NEW_EPOCH,PREVIOUS_STATE,NEW_STATE,EVIDENCE_DIGEST,ACTOR,CREATED_AT) ON ASCP_LEADERSHIP_EVENTS TO :\"LEADERSHIP_ROLE\"") next
+        if (statement == "GRANT UPDATE (EPOCH,STATE,EVIDENCE_DIGEST,ACTOR,UPDATED_AT) ON ASCP_LEADERSHIP_EPOCHS TO :\"LEADERSHIP_ROLE\"") next
+        if (statement == "GRANT UPDATE (STATE,RESOLVED_AT,RESOLUTION_ACTOR,RESOLUTION_EVIDENCE_DIGEST) ON ASCP_LEADERSHIP_EFFECTS TO :\"LEADERSHIP_ROLE\"") next
+        if (statement == "GRANT USAGE, SELECT ON SEQUENCE ASCP_LEADERSHIP_EVENTS_EVENT_ID_SEQ TO :\"LEADERSHIP_ROLE\"") next
+        exit 1
     }' "$@"
 }
 
@@ -169,8 +176,15 @@ if printf '%s\n' 'GRANT UPDATE/*hidden*/ ON ascp_leadership_epochs TO role;' | l
     echo "leadership grant checker failed to reject a commented broad grant" >&2
     exit 1
 fi
-printf '%s\n' 'GRANT INSERT (organization_id) ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe
-printf '%s\n' 'GRANT UPDATE (state) ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe
+if printf '%s\n' 'GRANT SELECT ON unrelated_table TO :"leadership_role";' | leadership_grants_are_safe; then
+    echo "leadership grant checker failed to reject unrelated table SELECT" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT USAGE, SELECT ON SEQUENCE unrelated_sequence TO :"leadership_role";' | leadership_grants_are_safe; then
+    echo "leadership grant checker failed to reject unrelated sequence access" >&2
+    exit 1
+fi
+printf '%s\n' 'GRANT UPDATE (state,resolved_at,resolution_actor,resolution_evidence_digest) ON ascp_leadership_effects TO :"leadership_role";' | leadership_grants_are_safe
 
 checkpointer_grant_file=deploy/control-plane/configure-checkpointer-role.sql
 for required in \

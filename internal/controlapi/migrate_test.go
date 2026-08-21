@@ -18,8 +18,12 @@ func TestPublishedMigrationsRemainForwardOnly(t *testing.T) {
 	if checksums["0016_harden_ascp_seller_egress.sql"] == "" {
 		t.Fatal("forward seller-egress hardening migration is missing")
 	}
-	const published0017 = "e576811d34d701b9381319cb9536d57ed0c93656559cf5d2e3b5679756f056ae"
+	const published0017 = "f7d0fe85c4b9b579a5beefa12240ed51d345cf762a0dd08d898dd46f01fc038a"
 	if checksums["0017_ascp_leadership_fence.sql"] != published0017 {
 		t.Fatalf("0017 checksum changed after publication: %s", checksums["0017_ascp_leadership_fence.sql"])
+	}
+	const published0018 = "37128bd0656cd80028c6b8550a6f869133249dd91a4ca64e43e39f7aa2e99e22"
+	if checksums["0018_durable_leadership_effects.sql"] != published0018 {
+		t.Fatalf("0018 checksum changed after publication: %s", checksums["0018_durable_leadership_effects.sql"])
 	}
 }

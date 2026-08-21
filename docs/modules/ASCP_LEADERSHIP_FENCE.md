@@ -18,32 +18,38 @@ immediately around their bounded effect.
 
 ## Inputs
 
-Every mutation binds an organization, exact expected epoch, constrained actor,
-lower-case SHA-256 evidence digest, and controller time. `Fence` binds the
+Bootstrap binds an organization, constrained actor, lower-case SHA-256 evidence
+digest, and controller time. Drain, advance, and abandonment also bind the exact
+expected epoch; abandonment binds the durable effect ID. `Fence` binds the
 organization, expected epoch, and one synchronous callback. Organization and
 actor values reject whitespace/control or out-of-contract characters.
 
 ## Internal behavior
 
-PostgreSQL stores one `ACTIVE` or `DRAINING` row per organization plus an
-append-only event history. Bootstrap is idempotent only for an exact replay.
+PostgreSQL stores one `ACTIVE` or `DRAINING` row per organization, an
+append-only epoch event history, and durable effect-admission records.
+Bootstrap is idempotent only for an exact replay.
 The only legal updates are `ACTIVE(N) -> DRAINING(N)` and
 `DRAINING(N) -> ACTIVE(N+1)`, and those two updates must commit in separate
 transactions. Database checks and triggers independently reject
 skipped epochs, illegal transitions, malformed identities, deletes, event
 mutation, duplicate state events, and events that do not match current state.
 
-`Fence`, `BeginDrain`, and `Advance` acquire the same transaction-scoped
-advisory lock derived from the full organization identifier. A drain therefore
-waits for an already-entered effect, and once draining is committed no new
-effect can enter. Hash collisions can serialize unrelated organizations but
-cannot permit concurrent leadership. The callback must be bounded; the lock
-and one database connection remain held until it returns.
+`Fence` commits an `IN_FLIGHT` record under the same organization advisory lock
+used by `BeginDrain` and `Advance`, then invokes the callback with no leadership
+transaction held. A drain can commit `DRAINING` while that callback runs, but
+does not return until every admitted effect is `COMPLETED` or explicitly
+`ABANDONED`; the database independently rejects advance while one remains.
+Connection loss after admission leaves the durable record in place, so it
+cannot release the cutover boundary. Hash collisions can serialize admission
+but cannot permit concurrent leadership. Callback database writes use their
+service transaction and are not rolled back by `Fence`; the controller
+credential remains isolated from the worker.
 
 ## Outputs and interfaces
 
-`Postgres` provides `Bootstrap`, `BeginDrain`, `Advance`, `Get`, `Current`, and
-`Fence`. It directly implements `ascprails.LeadershipGate` and returns shared
+`Postgres` provides `Bootstrap`, `BeginDrain`, `Advance`, `AbandonEffect`, `Get`,
+`Current`, and `Fence`. It directly implements `ascprails.LeadershipGate` and returns shared
 `ErrEpochChanged` identity for stale or draining egress. Records expose the
 durable epoch, state, actor, evidence digest, and update time. There is no UI
 mutation surface; `ascp-leadership status` is the operator read path and
@@ -52,9 +58,10 @@ an explicit validated schema, so temporary objects cannot shadow its tables.
 
 ## Authorization and security boundaries
 
-Only the dedicated role from `configure-leadership-role.sql` receives
-column-scoped insert and update rights. API and rails roles receive epoch `SELECT`
-only. The controller role has no table-wide update, delete, truncate, trigger,
+Only the dedicated role from `configure-leadership-role.sql` receives epoch
+mutation and evidence-bound effect-abandonment rights. The rails role receives
+only the column-scoped effect admission/completion rights required by `Fence`;
+API/runtime reads are read-only. The controller role has no table-wide update, delete, truncate, trigger,
 reference, schema-create, superuser, role-create, database-create, replication,
 or RLS-bypass authority, inheritance, inbound/outbound role memberships, or object ownership.
 The configuration script refuses pre-existing membership or ownership instead
@@ -65,10 +72,13 @@ credentials.
 ## Failure and recovery
 
 Missing, draining, stale, malformed, or unreadable leadership fails closed and
-does not invoke the effect. Callback failure rolls back the fence transaction
-and releases the lock. A database/commit error after callback execution is an
-ambiguous external-effect outcome, not proof the effect did not happen; each
-effect protocol must retain its own idempotency key and durable outcome fence.
+does not invoke the effect. Callback failure still resolves its admission, but
+the effect protocol must retain its own idempotency key and durable outcome
+fence for ambiguous external results. If completion persistence fails, the
+admission remains `IN_FLIGHT`, drain remains blocked, and advance fails at the
+database boundary. Only after reconciling the effect-specific outcome and
+proving the old host dead may an operator use `abandon-effect` with an exact
+epoch, effect ID, actor, and evidence digest.
 Controller retry is exact-CAS: a stale epoch or wrong state cannot advance.
 
 ## Observability and production operations
@@ -84,7 +94,8 @@ drain attempts, and recovery from an ambiguous effect before production.
 
 - Exact bootstrap replay returns the same epoch without a second event;
   substitution conflicts.
-- A drain cannot complete while an old-epoch fenced effect is running.
+- A drain cannot complete while an old-epoch durable effect is in flight, even
+  after the admitting database connection or process pool is lost.
 - After drain commits, old and same-epoch effects invoke no callback.
 - Advance succeeds only from exact `DRAINING(N)` to `ACTIVE(N+1)`.
 - Concurrent or stale mutation cannot skip, reuse, delete, or rewrite epochs or

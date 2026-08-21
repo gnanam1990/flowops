@@ -30,6 +30,9 @@ func TestDecodeStrictRejectsUnknownDuplicateAndTrailingInput(t *testing.T) {
 		`{"organizationId":"org","unknown":true}`,
 		`{"organizationId":"org","organizationId":"other"}`,
 		`{"organizationId":"org"}{"organizationId":"other"}`,
+		`[]`,
+		`null`,
+		`"org"`,
 	} {
 		var request request
 		if err := decodeStrict(strings.NewReader(raw), &request); err == nil {
@@ -53,24 +56,48 @@ func TestRunFailsBeforeDatabaseForUsageAndMissingURL(t *testing.T) {
 }
 
 func TestRequestValidationIsCommandSpecific(t *testing.T) {
+	one := uint64(1)
+	zero := uint64(0)
+	actor := "operator"
+	digest := "digest"
+	effectID := "effect"
 	valid := map[string]request{
-		"status":    {OrganizationID: "org"},
-		"bootstrap": {OrganizationID: "org", Actor: "operator", EvidenceDigest: "digest"},
-		"drain":     {OrganizationID: "org", ExpectedEpoch: 1, Actor: "operator", EvidenceDigest: "digest"},
-		"advance":   {OrganizationID: "org", ExpectedEpoch: 1, Actor: "operator", EvidenceDigest: "digest"},
+		"status":         {OrganizationID: "org"},
+		"bootstrap":      withFields(request{OrganizationID: "org", Actor: &actor, EvidenceDigest: &digest}, "actor", "evidenceDigest"),
+		"drain":          withFields(request{OrganizationID: "org", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest"),
+		"advance":        withFields(request{OrganizationID: "org", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest"),
+		"abandon-effect": withFields(request{OrganizationID: "org", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest, EffectID: &effectID}, "expectedEpoch", "actor", "evidenceDigest", "effectId"),
 	}
 	for command, payload := range valid {
 		if err := payload.validateFor(command); err != nil {
 			t.Fatalf("valid %s request: %v", command, err)
 		}
 	}
-	if err := (request{OrganizationID: "org", Actor: "ignored"}).validateFor("status"); err == nil {
+	if err := withFields(request{OrganizationID: "org", Actor: &actor}, "actor").validateFor("status"); err == nil {
 		t.Fatal("status accepted mutation fields")
 	}
-	if err := (request{OrganizationID: "org", ExpectedEpoch: 1, Actor: "operator", EvidenceDigest: "digest"}).validateFor("bootstrap"); err == nil {
+	if err := withFields(request{OrganizationID: "org", ExpectedEpoch: &zero, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest").validateFor("bootstrap"); err == nil {
 		t.Fatal("bootstrap accepted an ignored expected epoch")
 	}
-	if err := (request{OrganizationID: "org", Actor: "operator", EvidenceDigest: "digest"}).validateFor("drain"); err == nil {
+	if err := withFields(request{OrganizationID: "org", ExpectedEpoch: &zero, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest").validateFor("drain"); err == nil {
 		t.Fatal("drain accepted a missing expected epoch")
 	}
+	if err := withFields(request{OrganizationID: "", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest").validateFor("advance"); err == nil {
+		t.Fatal("advance accepted an empty organization")
+	}
+	var explicitNull request
+	if err := decodeStrict(strings.NewReader(`{"organizationId":"org","expectedEpoch":null}`), &explicitNull); err != nil {
+		t.Fatal(err)
+	}
+	if err := explicitNull.validateFor("status"); err == nil {
+		t.Fatal("status accepted an explicitly null forbidden field")
+	}
+}
+
+func withFields(payload request, fields ...string) request {
+	payload.fields = make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		payload.fields[field] = struct{}{}
+	}
+	return payload
 }

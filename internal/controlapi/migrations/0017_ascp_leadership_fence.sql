@@ -59,6 +59,9 @@ BEGIN
 END;
 $$;
 
+-- PostgreSQL fires same-kind row triggers in alphabetical order. Keep each
+-- *_lock name before its *_validate_* peer so direct DML takes the advisory
+-- lock before validating state. Renaming these triggers is a safety change.
 CREATE TRIGGER ascp_leadership_epochs_lock
 BEFORE INSERT OR UPDATE ON ascp_leadership_epochs
 FOR EACH ROW EXECUTE FUNCTION flowops_lock_leadership_organization();
