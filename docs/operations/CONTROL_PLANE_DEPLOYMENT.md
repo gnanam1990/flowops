@@ -19,8 +19,9 @@ production Base value as part of this procedure.
 - the private owner-only Sites project recorded in `.openai/hosting.json`.
 
 The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
-`/flowops/flowops-admin`, `/flowops/flowops-operator`, and
-`/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`, and
+`/flowops/flowops-admin`, `/flowops/flowops-operator`,
+`/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`,
+`/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, and
 `/flowops/postgres-readiness`. `railway.json` selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
@@ -393,3 +394,63 @@ tokens is not. Verify the old token fails exchange and the new token succeeds.
   access kill switch. It invalidates already issued dashboard sessions on their
   next API use. Re-enablement is intentionally a separate future recovery
   design, not a flag available in the pilot CLI.
+
+## ASCP verifier runtime
+
+Run `/flowops/ascp-verifier` as the dedicated `flowops` user in the same pod or
+host as its authenticated delivery producer. The listener rejects non-loopback
+addresses. PostgreSQL 11 or newer is required for the call-scoped
+`hashtextextended` advisory lock. Apply migration
+`0020_ascp_verifier_runtime.sql` and
+`0021_harden_ascp_verifier_runtime.sql`, create a LOGIN role
+with no memberships or owned objects, then apply:
+
+```sh
+psql "$MIGRATION_OWNER_DATABASE_URL" \
+  --set=verifier_role="$FLOWOPS_VERIFIER_DATABASE_ROLE" \
+  --file=deploy/control-plane/configure-verifier-role.sql
+```
+
+The role contract revokes database `TEMPORARY`, schema `CREATE`, table and
+sequence privileges, and routine execution from `PUBLIC`. Apply it as every
+role that owns migrations so future routines do not restore implicit
+execution. Explicitly re-grant only reviewed capabilities to other application
+roles after impact review.
+
+Required runtime configuration:
+
+| Variable | Contract |
+| --- | --- |
+| `FLOWOPS_VERIFIER_DATABASE_URL` | Dedicated verifier role; PostgreSQL URL with exactly `sslmode=verify-full` |
+| `FLOWOPS_VERIFIER_LISTEN_ADDRESS` | Explicit `127.0.0.1` or `::1` and non-privileged port, for example `127.0.0.1:8083` |
+| `FLOWOPS_VERIFIER_CHAIN_ID` | `8453` or `84532` |
+| `FLOWOPS_VERIFIER_ESCROW_CONTRACT` | Exact lowercase nonzero escrow address |
+| `FLOWOPS_VERIFIER_EPOCH` | Positive finalized verifier epoch |
+| `FLOWOPS_VERIFIER_SOFTWARE_HASH` | Nonzero lowercase `0x`-prefixed 32-byte digest |
+| `FLOWOPS_VERIFIER_INTAKE_KEYS_JSON` | Strict key-id to canonical base64 32-byte HMAC key map |
+| `FLOWOPS_VERIFIER_SIGNER_KEY_FILE` | Absolute, regular, non-symlink owner-private lowercase secp256k1 key file; local/test adapter only |
+| `FLOWOPS_VERIFIER_SIGNER_ADDRESS` | Address derived from the key file; mismatch fails startup and every signature |
+| `FLOWOPS_VERIFIER_ATTESTATION_TTL` | Optional, default `10m`, maximum `15m` |
+| `FLOWOPS_VERIFIER_GOVERNANCE_MAX_AGE` | Optional finalized observation freshness, default `1m`, maximum `10m` |
+| `FLOWOPS_VERIFIER_REQUEST_SKEW` | Optional intake timestamp tolerance, default `30s`, maximum `1m` |
+
+The intake MAC is lowercase hex HMAC-SHA256 over:
+
+```text
+ASCP_VERIFIER_INTAKE_V2\n<key-id>\nPOST\n/v1/verdicts\n<unix-seconds>\n<nonce>\n<lowercase-sha256-body>
+```
+
+Send it with `X-FlowOps-Verifier-Key-Id`,
+`X-FlowOps-Verifier-Timestamp`, `X-FlowOps-Verifier-Nonce`, and
+`X-FlowOps-Verifier-Signature` to `POST /v1/verdicts`. Each retry uses a new
+authentication nonce; the ASCP call/input fingerprint supplies decision
+idempotency. Populate `ascp_verifier_key_observations_v2` only from the
+finalized chain-observer role, preserving the exact finalized block and log
+index so same-block epoch changes retain chain order. Legacy `0020` rows remain
+append-only history and are never used for authorization; re-ingest their exact
+finalized chain evidence into the v2 table before enabling the verifier. An
+empty v2 table fails closed. The verifier role can execute only the reviewed
+replay prune routine in addition to its table/sequence allowlist. Intake replay rows
+are immutable for 24 hours and pruned at startup and hourly; alert on prune
+failure and database growth. Verdict decisions and finalized key observations
+are never pruned. Do not run the file signer for production funds.

@@ -70,6 +70,17 @@ func (g *testKeyGate) CheckActive(context.Context, string, string, common.Addres
 
 func (g *testKeyGate) set(err error) { g.mu.Lock(); g.err = err; g.mu.Unlock() }
 
+type nonceSourceFunc func(context.Context) (*big.Int, error)
+
+func (f nonceSourceFunc) Next(ctx context.Context) (*big.Int, error) { return f(ctx) }
+
+type decisionJournalFunc func(context.Context, string, string, string, func(context.Context) (SignedDecision, error)) (SignedDecision, error)
+
+func (f decisionJournalFunc) Execute(ctx context.Context, callID, chainID, fingerprint string,
+	compute func(context.Context) (SignedDecision, error)) (SignedDecision, error) {
+	return f(ctx, callID, chainID, fingerprint, compute)
+}
+
 func (a *testNotesAuthorizer) Decide(_ context.Context, review NotesReview) (NotesDecision, error) {
 	a.review = review
 	return a.decision, a.err
@@ -249,6 +260,68 @@ func TestInvalidSignerOutputAndDuplicateNonceFailClosed(t *testing.T) {
 	}
 }
 
+func TestDurableNonceFailurePreservesStateUnavailableClassification(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	service, signer := newTestService(t, now, &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}, nil)
+	service.config.Nonces = nonceSourceFunc(func(context.Context) (*big.Int, error) {
+		return nil, ErrStateUnavailable
+	})
+	_, err := service.VerifyAndSign(t.Context(), testInput(t, now))
+	if !errors.Is(err, ErrStateUnavailable) || !errors.Is(err, ErrSigning) {
+		t.Fatalf("nonce error=%v", err)
+	}
+	if signer.calls.Load() != 0 {
+		t.Fatal("durable nonce failure reached signer")
+	}
+}
+
+func TestJournalReplayMustMatchCurrentVerifierAndRequestBindings(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	input := testInput(t, now)
+	oldService, _ := newTestService(t, now, &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}, nil)
+	oldService.config.VerifierSoftwareHash = testHash(76)
+	oldDecision, err := oldService.VerifyAndSign(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	currentService, signer := newTestService(t, now, &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}, nil)
+	currentService.config.DecisionJournal = decisionJournalFunc(func(context.Context, string, string, string,
+		func(context.Context) (SignedDecision, error)) (SignedDecision, error) {
+		return oldDecision, nil
+	})
+	if _, err := currentService.VerifyAndSign(t.Context(), input); !errors.Is(err, ErrStateUnavailable) {
+		t.Fatalf("mismatched verifier replay error=%v", err)
+	}
+	if signer.calls.Load() != 0 {
+		t.Fatal("mismatched durable replay reached current signer")
+	}
+}
+
+func TestJournalReplayRechecksRevocationAfterLockWait(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	input := testInput(t, now)
+	source, _ := newTestService(t, now, &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}, nil)
+	decision, err := source.VerifyAndSign(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gate := &testKeyGate{}
+	service, signer := newTestServiceWithGate(t, now, &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}, nil, gate)
+	service.config.DecisionJournal = decisionJournalFunc(func(context.Context, string, string, string,
+		func(context.Context) (SignedDecision, error)) (SignedDecision, error) {
+		gate.set(errors.New("revoked while waiting for the durable call lock"))
+		return decision, nil
+	})
+	if _, err := service.VerifyAndSign(t.Context(), input); !errors.Is(err, ErrVerifierInactive) {
+		t.Fatalf("post-lock revocation error=%v", err)
+	}
+	if gate.calls.Load() != 2 || signer.calls.Load() != 0 {
+		t.Fatalf("gate calls=%d signer calls=%d", gate.calls.Load(), signer.calls.Load())
+	}
+}
+
 func TestRevocationAndExpiryStopCachedBearerPublication(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	engine := &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}
@@ -262,6 +335,10 @@ func TestRevocationAndExpiryStopCachedBearerPublication(t *testing.T) {
 	gate.set(errors.New("revoked at finalized block"))
 	if _, err := service.VerifyAndSign(context.Background(), input); !errors.Is(err, ErrVerifierInactive) {
 		t.Fatalf("revoked cache error=%v", err)
+	}
+	gate.set(ErrStateUnavailable)
+	if _, err := service.VerifyAndSign(context.Background(), input); !errors.Is(err, ErrStateUnavailable) || errors.Is(err, ErrVerifierInactive) {
+		t.Fatalf("state-unavailable cache error=%v", err)
 	}
 	gate.set(nil)
 	service.config.Clock = func() time.Time { return time.Unix(int64(decision.Attestation.ValidUntil+1), 0) }
