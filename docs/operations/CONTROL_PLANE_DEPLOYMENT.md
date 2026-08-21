@@ -20,6 +20,7 @@ production Base value as part of this procedure.
 
 The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/flowops-admin`, `/flowops/flowops-operator`, and
+`/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`, and
 `/flowops/postgres-readiness`. `railway.json` selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
@@ -194,6 +195,40 @@ cannot perform it. Seller callback database writes use the rails credential,
 never the isolated controller credential. Database URLs and credentials
 belong only in the environment/secret mount, never JSON, arguments, logs, or
 tickets.
+
+Run `/flowops/ascp-seller-worker` as a separate supervised process, never as an
+API subcommand. It requires:
+
+| Variable | Requirement |
+|---|---|
+| `FLOWOPS_RAILS_DATABASE_URL` | Rails-role PostgreSQL URL with exactly one `sslmode=verify-full` and a database path |
+| `FLOWOPS_SELLER_WORKER_ID` | Unique stable replica identifier |
+| `FLOWOPS_SELLER_CHAIN_ID` | `84532` or separately admitted `8453` |
+| `FLOWOPS_SELLER_RPC_PROVIDERS_JSON` | Strict array of 2–5 unique names and distinct-host HTTPS endpoints; keep credential-bearing URLs in the secret manager |
+| `FLOWOPS_SELLER_RPC_QUORUM` | Integer from 2 through the configured provider count |
+| `FLOWOPS_SELLER_RPC_REQUEST_TIMEOUT` | Optional per-request timeout, default `5s`, maximum `10s`; a snapshot budgets three sequential requests per provider |
+| `FLOWOPS_SELLER_MAX_CHAIN_LAG` | Optional fail-closed maximum age of the agreed Base anchor, default `30s`, maximum `10m`; wall time can reject stale/future chain evidence but never advance an escrow deadline |
+| `FLOWOPS_SELLER_INTEGRITY_URL` | HTTPS port-443 endpoint for the isolated recovery verifier's latest signed proof; redirects are refused |
+| `FLOWOPS_SELLER_INTEGRITY_KEYS_JSON` | Map of recovery-verifier key ID to canonical base64 Ed25519 public key; never a private key |
+| `FLOWOPS_SELLER_INTEGRITY_TIMEOUT` | Optional positive duration, default `5s`, maximum `30s` |
+| `FLOWOPS_SELLER_INTEGRITY_MAX_TTL` | Optional accepted signed-proof lifetime, default `2m`, maximum `5m` |
+| `FLOWOPS_SELLER_INTERVAL` | Optional cycle interval, default `50s`, maximum `1m` |
+| `FLOWOPS_SELLER_CYCLE_TIMEOUT` | Optional whole-cycle timeout below the interval, default `45s` |
+| `FLOWOPS_SELLER_BATCH_SIZE` | Optional finalization and dispatch limit per cycle, default `20`, maximum `100` |
+| `FLOWOPS_SELLER_LEASE_DURATION` | Optional durable lease, default `55s`, maximum `1m` |
+| `FLOWOPS_SELLER_HTTP_TIMEOUT` | Optional seller request timeout, default `10s`; plus the 5s persistence margin must fit the lease |
+| `FLOWOPS_SELLER_RETRY_DELAY` | Optional exact-call retry delay, default `15s`, maximum `1h` |
+| `FLOWOPS_SELLER_MAX_OBSERVATION_AGE` | Optional RPC observation age, default `30s`, maximum `1m` |
+
+The recovery endpoint signs the `ASCP_EVENT_RECOVERY_ATTESTATION_V1` payload
+defined by `ascprails.IntegrityAttestation`. It must publish `VERIFIED` only
+after `ascpevents.VerifyRecovery` has verified the complete local chain, signed
+checkpoint, exact WORM bytes and monotonic remote head. Local and remote heads
+and checkpoint sequence must be identical; bounded uncheckpointed tails remain
+fail-closed for seller egress. Apply migration 0019 before granting the rails
+role. A process start proves configuration and connectivity only; pilot
+admission still requires live RPC-independence, recovery-verifier, WORM,
+remote-head, seller-idempotency and restore-drill evidence.
 
 SQL cannot prove provider backup retention, PITR, encryption at rest, or
 monitoring. A signed operator record is tamper evidence and an accountable
