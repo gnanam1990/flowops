@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"net/url"
 	"os"
@@ -29,7 +30,10 @@ func TestLoadConfigPinsLoopbackChainEscrowAndSigner(t *testing.T) {
 	t.Setenv("FLOWOPS_VERIFIER_SIGNER_KEY_FILE", keyPath)
 	t.Setenv("FLOWOPS_VERIFIER_SIGNER_ADDRESS", crypto.PubkeyToAddress(key.PublicKey).Hex())
 	config, err := loadConfig()
-	if err != nil || config.chainID != "84532" || config.signer.Address() != crypto.PubkeyToAddress(key.PublicKey) {
+	if err != nil || config.listenAddress != "127.0.0.1:8083" || config.chainID != "84532" ||
+		config.escrowContract != "0x1111111111111111111111111111111111111111" || config.verifierEpoch != 7 ||
+		config.softwareHash != "0x"+strings.Repeat("ab", 32) || !bytes.Equal(config.intakeKeys["delivery-key-1"], []byte(strings.Repeat("k", 32))) ||
+		config.signer.Address() != crypto.PubkeyToAddress(key.PublicKey) {
 		t.Fatalf("config=%+v err=%v", config, err)
 	}
 	t.Setenv("FLOWOPS_VERIFIER_SIGNER_ADDRESS", "0x2222222222222222222222222222222222222222")

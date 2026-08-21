@@ -38,14 +38,15 @@ func (g *PostgresVerifierKeyGate) CheckActive(ctx context.Context, chainID, escr
 	if chainID == "" || !canonicalAddress(escrow) || signer == (common.Address{}) || epoch == 0 || epoch > math.MaxInt64 {
 		return ErrInvalidConfiguration
 	}
+	var observedEpoch int64
 	var active bool
 	var observed time.Time
 	var evidence string
-	err := verifierQueryRower(ctx, g.db).QueryRowContext(ctx, `SELECT active,observed_at,evidence_digest
+	err := verifierQueryRower(ctx, g.db).QueryRowContext(ctx, `SELECT verifier_epoch,active,observed_at,evidence_digest
 		FROM ascp_verifier_key_observations
-		WHERE chain_id=$1 AND escrow_contract=$2 AND verifier_address=$3 AND verifier_epoch=$4
-		ORDER BY finalized_block DESC LIMIT 1`, chainID, strings.ToLower(escrow), strings.ToLower(signer.Hex()), epoch).
-		Scan(&active, &observed, &evidence)
+		WHERE chain_id=$1 AND escrow_contract=$2 AND verifier_address=$3
+		ORDER BY finalized_block DESC,finalized_log_index DESC LIMIT 1`, chainID, strings.ToLower(escrow), strings.ToLower(signer.Hex())).
+		Scan(&observedEpoch, &active, &observed, &evidence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: finalized verifier observation is missing", ErrVerifierInactive)
 	}
@@ -54,7 +55,7 @@ func (g *PostgresVerifierKeyGate) CheckActive(ctx context.Context, chainID, escr
 	}
 	now := g.clock().UTC()
 	observed = observed.UTC()
-	if !active || !canonicalHash(evidence, true) || observed.After(now) || now.Sub(observed) > g.maxAge {
+	if observedEpoch != int64(epoch) || !active || !canonicalHash(evidence, true) || observed.After(now) || now.Sub(observed) > g.maxAge {
 		return ErrVerifierInactive
 	}
 	return nil

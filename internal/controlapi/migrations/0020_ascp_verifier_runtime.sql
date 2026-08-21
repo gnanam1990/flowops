@@ -16,11 +16,15 @@ CREATE TABLE IF NOT EXISTS ascp_verifier_key_observations (
     verifier_address text NOT NULL CHECK (verifier_address ~ '^0x[0-9a-f]{40}$'),
     verifier_epoch bigint NOT NULL CHECK (verifier_epoch > 0),
     finalized_block bigint NOT NULL CHECK (finalized_block > 0),
+    finalized_log_index bigint NOT NULL CHECK (finalized_log_index >= 0),
     active boolean NOT NULL,
     evidence_digest text NOT NULL CHECK (evidence_digest ~ '^0x[0-9a-f]{64}$'),
     observed_at timestamptz NOT NULL,
-    PRIMARY KEY (chain_id, escrow_contract, verifier_address, verifier_epoch, finalized_block)
+    PRIMARY KEY (chain_id, escrow_contract, verifier_address, verifier_epoch, finalized_block, finalized_log_index)
 );
+
+CREATE INDEX IF NOT EXISTS ascp_verifier_key_signer_latest_idx
+ON ascp_verifier_key_observations (chain_id, escrow_contract, verifier_address, finalized_block DESC, finalized_log_index DESC);
 
 CREATE TABLE IF NOT EXISTS ascp_verifier_intake_replays (
     key_id text NOT NULL CHECK (key_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$'),

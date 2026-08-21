@@ -118,26 +118,31 @@ func TestPostgresVerifierKeyGateRequiresFreshFinalizedActiveObservation(t *testi
 	gate, _ := NewPostgresVerifierKeyGate(db, time.Minute, func() time.Time { return now })
 	key, _ := crypto.HexToECDSA(strings.Repeat("11", 32))
 	address := crypto.PubkeyToAddress(key.PublicKey)
-	query := regexp.QuoteMeta("SELECT active,observed_at,evidence_digest")
-	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex()), uint64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"active", "observed_at", "evidence_digest"}).AddRow(true, now.Add(-time.Second), testHash(8)))
+	query := regexp.QuoteMeta("SELECT verifier_epoch,active,observed_at,evidence_digest")
+	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex())).
+		WillReturnRows(sqlmock.NewRows([]string{"verifier_epoch", "active", "observed_at", "evidence_digest"}).AddRow(int64(7), true, now.Add(-time.Second), testHash(8)))
 	if err := gate.CheckActive(t.Context(), "8453", "0x1111111111111111111111111111111111111111", address, 7); err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex()), uint64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"active", "observed_at", "evidence_digest"}).AddRow(true, now.Add(-2*time.Minute), testHash(8)))
+	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex())).
+		WillReturnRows(sqlmock.NewRows([]string{"verifier_epoch", "active", "observed_at", "evidence_digest"}).AddRow(int64(7), true, now.Add(-2*time.Minute), testHash(8)))
 	if err := gate.CheckActive(t.Context(), "8453", "0x1111111111111111111111111111111111111111", address, 7); !errors.Is(err, ErrVerifierInactive) {
 		t.Fatalf("stale observation error=%v", err)
 	}
-	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex()), uint64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"active", "observed_at", "evidence_digest"}).AddRow(true, now.Add(time.Second), testHash(8)))
+	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex())).
+		WillReturnRows(sqlmock.NewRows([]string{"verifier_epoch", "active", "observed_at", "evidence_digest"}).AddRow(int64(7), true, now.Add(time.Second), testHash(8)))
 	if err := gate.CheckActive(t.Context(), "8453", "0x1111111111111111111111111111111111111111", address, 7); !errors.Is(err, ErrVerifierInactive) {
 		t.Fatalf("future observation error=%v", err)
 	}
-	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex()), uint64(7)).
+	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex())).
 		WillReturnError(errors.New("database unavailable"))
 	if err := gate.CheckActive(t.Context(), "8453", "0x1111111111111111111111111111111111111111", address, 7); !errors.Is(err, ErrStateUnavailable) {
 		t.Fatalf("database error=%v", err)
+	}
+	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex())).
+		WillReturnRows(sqlmock.NewRows([]string{"verifier_epoch", "active", "observed_at", "evidence_digest"}).AddRow(int64(8), true, now.Add(-time.Second), testHash(8)))
+	if err := gate.CheckActive(t.Context(), "8453", "0x1111111111111111111111111111111111111111", address, 7); !errors.Is(err, ErrVerifierInactive) {
+		t.Fatalf("newer signer epoch error=%v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -182,10 +187,10 @@ func TestPostgresVerifierUsesOneConnectionInsideDecisionTransaction(t *testing.T
 		t.Fatal("durable nonce source enabled the process-local nonce tracker")
 	}
 
-	gateQuery := regexp.QuoteMeta("SELECT active,observed_at,evidence_digest")
+	gateQuery := regexp.QuoteMeta("SELECT verifier_epoch,active,observed_at,evidence_digest")
 	expectGate := func() {
-		mock.ExpectQuery(gateQuery).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex()), uint64(7)).
-			WillReturnRows(sqlmock.NewRows([]string{"active", "observed_at", "evidence_digest"}).AddRow(true, now.Add(-time.Second), testHash(8)))
+		mock.ExpectQuery(gateQuery).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex())).
+			WillReturnRows(sqlmock.NewRows([]string{"verifier_epoch", "active", "observed_at", "evidence_digest"}).AddRow(int64(7), true, now.Add(-time.Second), testHash(8)))
 	}
 	expectGate()
 	mock.ExpectBegin()

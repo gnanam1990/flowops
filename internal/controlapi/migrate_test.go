@@ -30,7 +30,8 @@ func TestPublishedMigrationsRemainForwardOnly(t *testing.T) {
 	if checksums["0019_restricted_event_head.sql"] != published0019 {
 		t.Fatalf("0019 checksum changed after publication: %s", checksums["0019_restricted_event_head.sql"])
 	}
-	if checksums["0020_ascp_verifier_runtime.sql"] == "" {
-		t.Fatal("durable verifier runtime migration is missing")
+	const published0020 = "54aea82d73d0467a9f63030069f03c30a35aa6c34b0f86d52c2e8bd7df1f4bbc"
+	if checksums["0020_ascp_verifier_runtime.sql"] != published0020 {
+		t.Fatalf("0020 checksum changed after publication: %s", checksums["0020_ascp_verifier_runtime.sql"])
 	}
 }

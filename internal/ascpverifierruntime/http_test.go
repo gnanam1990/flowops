@@ -92,6 +92,14 @@ func TestHandlerAuthenticatesBindsAndRejectsReplay(t *testing.T) {
 	if crossResponse.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("cross-chain status=%d", crossResponse.Code)
 	}
+	chunked := signedRequest(t, now, key, "nonce_for_verifier_chunked_1", body)
+	chunked.ContentLength = -1
+	chunked.TransferEncoding = []string{"chunked"}
+	chunkedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(chunkedResponse, chunked)
+	if chunkedResponse.Code != http.StatusOK {
+		t.Fatalf("chunked request status=%d body=%s", chunkedResponse.Code, chunkedResponse.Body.String())
+	}
 }
 
 func TestHandlerRejectsBadMACDuplicateKeysAndUnavailableReplayState(t *testing.T) {

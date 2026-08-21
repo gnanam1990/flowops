@@ -286,6 +286,7 @@ for required in \
     'CREATE SEQUENCE IF NOT EXISTS ascp_verdict_nonce_seq' \
     'CREATE TABLE IF NOT EXISTS ascp_verdict_decisions' \
     'CREATE TABLE IF NOT EXISTS ascp_verifier_key_observations' \
+    'finalized_log_index bigint NOT NULL' \
     'CREATE TABLE IF NOT EXISTS ascp_verifier_intake_replays' \
     'reject_ascp_verifier_immutable_mutation' \
     'reject_ascp_verifier_replay_mutation' \
@@ -306,7 +307,9 @@ for required in \
     "REVOKE TEMPORARY ON DATABASE %I FROM %I', current_database(), :'verifier_role'" \
     'REVOKE CREATE ON SCHEMA public FROM PUBLIC' \
     'REVOKE CREATE ON SCHEMA public FROM :"verifier_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
     'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"verifier_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC' \
     'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"verifier_role"' \
     'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
     'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"verifier_role"' \

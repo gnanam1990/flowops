@@ -410,10 +410,11 @@ psql "$MIGRATION_OWNER_DATABASE_URL" \
   --file=deploy/control-plane/configure-verifier-role.sql
 ```
 
-The role contract revokes database `TEMPORARY`, schema `CREATE`, and public
-routine execution from `PUBLIC`. Apply it as every role that owns migrations so
-future routines do not restore implicit execution. Explicitly re-grant only
-reviewed capabilities to other application roles after impact review.
+The role contract revokes database `TEMPORARY`, schema `CREATE`, table and
+sequence privileges, and routine execution from `PUBLIC`. Apply it as every
+role that owns migrations so future routines do not restore implicit
+execution. Explicitly re-grant only reviewed capabilities to other application
+roles after impact review.
 
 Required runtime configuration:
 
@@ -443,7 +444,8 @@ Send it with `X-FlowOps-Verifier-Key-Id`,
 `X-FlowOps-Verifier-Signature` to `POST /v1/verdicts`. Each retry uses a new
 authentication nonce; the ASCP call/input fingerprint supplies decision
 idempotency. Populate `ascp_verifier_key_observations` only from the finalized
-chain-observer role. The verifier role can execute only the reviewed replay
+chain-observer role, preserving the exact finalized block and log index so
+same-block epoch changes retain chain order. The verifier role can execute only the reviewed replay
 prune routine in addition to its table/sequence allowlist. Intake replay rows
 are immutable for 24 hours and pruned at startup and hourly; alert on prune
 failure and database growth. Verdict decisions and finalized key observations

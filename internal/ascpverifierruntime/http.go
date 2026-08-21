@@ -135,7 +135,7 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		writeError(response, http.StatusServiceUnavailable, "VERIFIER_BUSY")
 		return
 	}
-	if request.ContentLength < 0 || request.ContentLength > maxRequestBytes || request.Header.Get("Content-Encoding") != "" {
+	if request.ContentLength > maxRequestBytes || request.Header.Get("Content-Encoding") != "" {
 		writeError(response, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
