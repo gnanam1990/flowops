@@ -145,6 +145,7 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 		"ascp_chain_observations":            {"SELECT": true, "INSERT": true},
 		"ascp_ledger_transactions":           {"SELECT": true, "INSERT": true},
 		"ascp_ledger_postings":               {"SELECT": true, "INSERT": true},
+		"ascp_seller_jobs":                   {"SELECT": true},
 		"ascp_events":                        {"SELECT": true, "INSERT": true},
 		"ascp_event_checkpoints":             {"SELECT": true},
 	}
@@ -174,6 +175,18 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 		}
 		mock.ExpectQuery(`(?s)SELECT column_name.*information_schema\.columns`).
 			WithArgs(contract.table).WillReturnRows(rows)
+	}
+	for _, contract := range runtimeColumnInserts {
+		rows := sqlmock.NewRows([]string{"column_name"})
+		columns := make([]string, 0, len(contract.columns))
+		for column := range contract.columns {
+			columns = append(columns, column)
+		}
+		sort.Strings(columns)
+		for _, column := range columns {
+			rows.AddRow(column)
+		}
+		mock.ExpectQuery(`(?s)SELECT column_name.*information_schema\.columns`).WithArgs(contract.table).WillReturnRows(rows)
 	}
 	return db, mock
 }

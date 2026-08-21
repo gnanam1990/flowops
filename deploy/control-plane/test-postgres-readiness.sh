@@ -22,6 +22,8 @@ for required in \
 	'GRANT UPDATE (state, attempts, delivered_at)' \
 	'GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts' \
 	'GRANT SELECT, INSERT ON ascp_keeper_jobs' \
+	'GRANT SELECT ON ascp_seller_jobs' \
+	'GRANT INSERT (job_id,operation_id,organization_id,chain_id,leadership_epoch,deliver_by,method,request_url' \
 	'GRANT SELECT, INSERT ON ascp_events' \
 	'GRANT SELECT ON ascp_event_checkpoints' \
 	'GRANT UPDATE (state, locked_transaction_hash, locked_block_number, locked_block_hash' \
@@ -48,6 +50,23 @@ done
 
 if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$keeper_grant_file"; then
     echo "keeper grant script contains a forbidden broad privilege" >&2
+    exit 1
+fi
+
+rails_grant_file=deploy/control-plane/configure-rails-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
+    'GRANT SELECT ON ascp_seller_jobs, ascp_seller_attempts, ascp_seller_responses' \
+    'GRANT SELECT ON ascp_payment_operations' \
+    'GRANT INSERT ON ascp_seller_attempts, ascp_seller_responses' \
+    'GRANT UPDATE (state,eligible_after,lease_owner,lease_token,lease_expires_at,attempt_count' \
+    'GRANT UPDATE (state,completed_at,result_code) ON ascp_seller_attempts'
+do
+    grep -F "$required" "$rails_grant_file" >/dev/null
+done
+
+if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$rails_grant_file"; then
+    echo "rails grant script contains a forbidden broad privilege" >&2
     exit 1
 fi
 

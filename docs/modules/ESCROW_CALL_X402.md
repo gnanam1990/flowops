@@ -93,10 +93,11 @@ Go tests pass its bytes through the official x402 v2 HTTP client.
 ## Production operations boundary
 
 This package performs no network or chain I/O and stores no state. Production
-activation still requires a durable rails worker/outbox, restricted egress,
-seller middleware that verifies finalized on-chain escrow state, a seller result
-store through `settleBy + 400 days`, response-content capture, metrics and audit
-events, and keeper/reconciliation integration. Those adapters must call
+activation uses `internal/ascprails` for the durable buyer worker, restricted
+egress and response capture. It still requires compatible seller middleware
+that verifies finalized on-chain escrow state, a seller result store through
+`settleBy + 400 days`, production metrics/audit export, and
+keeper/reconciliation integration. Those adapters must call
 `VerifyBeforeEgress`/`PaymentHeaders`; bypassing them is unsupported.
 
 ## Acceptance criteria
