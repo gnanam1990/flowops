@@ -181,6 +181,31 @@ contract ASCPCallEscrowTest is Test {
         );
     }
 
+    function testVerdictAttestationMatchesPublishedGoGoldenVector() public {
+        address fixedEscrow = 0x1111111111111111111111111111111111111111;
+        vm.etch(fixedEscrow, address(escrow).code);
+        vm.chainId(8453);
+        ASCPCallEscrow.VerdictAttestation memory a = ASCPCallEscrow.VerdictAttestation({
+            callId: bytes32(uint256(1)),
+            commitmentHash: bytes32(uint256(2)),
+            escrowContract: fixedEscrow,
+            verifierEpoch: 7,
+            verificationSpecHash: bytes32(uint256(3)),
+            verifierSoftwareHash: bytes32(uint256(4)),
+            deliveryHash: bytes32(uint256(5)),
+            deliveredAt: 1_800_000_000,
+            evidenceHash: bytes32(uint256(6)),
+            verdict: 1,
+            verdictNonce: 42,
+            issuedAt: 1_800_000_010,
+            validUntil: 1_800_000_610
+        });
+        assertEq(
+            ASCPCallEscrow(fixedEscrow).verdictAttestationDigest(a),
+            0xb5bd196d91f7d0069c355204391ebf4929c51064bb1fbac9213ea810ccbe56dc
+        );
+    }
+
     function testLockAcceptsActualCurrentServiceDirectoryProofs() public {
         uint256 publisherKey = 0xA11CE;
         address publisher = vm.addr(publisherKey);
