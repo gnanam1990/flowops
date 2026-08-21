@@ -26,7 +26,11 @@ Require current leadership, current reconciliation-owned
 `LOCKED_FINALIZED` operation state and confirmed Base time immediately before
 each send. The database independently binds the job to organization, chain,
 call, commitment, escrow, asset, payee and amount, and serializes operation
-state changes against the durable `SENDING` fence. Once that fence commits,
+state changes against the durable `SENDING` fence. The leadership gate holds a
+strongly consistent epoch fence until the bounded HTTP effect and durable
+outcome complete, so a cutover cannot interleave with seller egress. A current
+epoch read without that exclusion guarantee is not a valid implementation.
+Once the database send fence commits,
 seller-side finalized-escrow validation remains responsible for a later reorg
 because an in-flight HTTP request cannot be recalled. Use an internally marked
 HTTPS-only transport with connect-time DNS revalidation and no proxy,

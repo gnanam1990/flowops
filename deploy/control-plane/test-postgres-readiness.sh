@@ -68,8 +68,9 @@ done
 
 rails_grants_are_safe() {
 	awk 'BEGIN { RS=";" }
-	/GRANT/ {
+	{
 		statement=toupper($0)
+		if (statement !~ /GRANT/) next
 		gsub(/[[:space:]]+/, " ", statement)
 		sub(/^.*GRANT /, "", statement)
 		split(statement, parts, " ON ")
@@ -89,6 +90,10 @@ if printf '%s\n' 'GRANT SELECT, DELETE ON ascp_seller_jobs TO role;' | rails_gra
 fi
 if printf '%s\n' 'GRANT UPDATE ON ascp_seller_jobs TO role;' | rails_grants_are_safe; then
 	echo "rails grant checker failed to reject table-wide UPDATE" >&2
+	exit 1
+fi
+if printf '%s\n' 'grant select, delete on ascp_seller_jobs to role;' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject lowercase DELETE" >&2
 	exit 1
 fi
 printf '%s\n' 'GRANT UPDATE (state) ON ascp_seller_jobs TO role;' | rails_grants_are_safe

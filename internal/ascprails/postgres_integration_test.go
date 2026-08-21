@@ -206,6 +206,42 @@ func TestPostgresSellerEgressConcurrentClaimRecoveryAndImmutability(t *testing.T
 	}
 }
 
+func TestPostgresSellerEgressHardeningUpgradesPublishedMigration(t *testing.T) {
+	db := sellerDatabase(t)
+	ctx := t.Context()
+	if _, err := db.ExecContext(ctx, `
+		DROP TRIGGER ascp_seller_jobs_validate_operation ON ascp_seller_jobs;
+		CREATE TRIGGER ascp_seller_jobs_validate_operation BEFORE INSERT ON ascp_seller_jobs
+		FOR EACH ROW EXECUTE FUNCTION flowops_validate_seller_operation_binding();
+		DROP INDEX ascp_seller_jobs_finalize_idx;
+		CREATE INDEX ascp_seller_jobs_finalize_idx ON ascp_seller_jobs (updated_at,job_id) WHERE state='RESPONSE_STORED';
+		DELETE FROM flowops_schema_migrations WHERE name='0016_harden_ascp_seller_egress.sql'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlapi.ApplyMigrations(ctx, db); err != nil {
+		t.Fatalf("upgrade published 0015 with 0016: %v", err)
+	}
+	var checksum, indexDefinition, triggerDefinition string
+	if err := db.QueryRowContext(ctx, `SELECT checksum FROM flowops_schema_migrations WHERE name='0015_ascp_seller_egress.sql'`).Scan(&checksum); err != nil {
+		t.Fatal(err)
+	}
+	if checksum != "787e34a594ff237dd3123f103b3bd5d907baca14cc3b65d77990b6c899f9e102" {
+		t.Fatalf("published 0015 checksum=%s", checksum)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND indexname='ascp_seller_jobs_finalize_idx'`).Scan(&indexDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(indexDefinition, "eligible_after, created_at, job_id") {
+		t.Fatalf("finalization index=%s", indexDefinition)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid='ascp_seller_jobs'::regclass AND tgname='ascp_seller_jobs_validate_operation'`).Scan(&triggerDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(triggerDefinition, "INSERT OR UPDATE OF state, attempt_count") {
+		t.Fatalf("operation trigger=%s", triggerDefinition)
+	}
+}
+
 func seedSellerPaymentOperation(t *testing.T, db *sql.DB, fixture railsTestFixture) {
 	t.Helper()
 	input := fixture.input

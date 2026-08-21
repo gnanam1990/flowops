@@ -52,6 +52,7 @@ var (
 	ErrResponseTooBig         = errors.New("seller response exceeds capture limit")
 	ErrUnsafeResponse         = errors.New("seller response is not bound to the operation")
 	ErrOperationNotExecutable = errors.New("payment operation is not executable")
+	ErrLeadershipChanged      = errors.New("seller egress leadership epoch changed")
 	hashPattern               = regexp.MustCompile(`^0x[0-9a-f]{64}$`)
 	addressPattern            = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
 	identifierPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
@@ -134,10 +135,14 @@ type Store interface {
 	Get(context.Context, string) (Job, error)
 }
 
-// LeadershipGate must read current, finalized leadership state. A stale cached
-// epoch is not sufficient to permit paid seller egress.
+// LeadershipGate must read current, finalized leadership state. Fence invokes
+// effect synchronously at most once, only while expected is current, and must
+// prevent the current epoch from changing until effect returns. It rejects a
+// stale expected epoch without invoking effect. A stale cached epoch is not
+// sufficient to permit paid seller egress.
 type LeadershipGate interface {
 	Current(context.Context, string) (uint64, error)
+	Fence(context.Context, string, uint64, func(context.Context) error) error
 }
 
 // ChainClock returns a corroborated chain timestamp and evidence digest. Local
@@ -272,26 +277,36 @@ func (s *Service) DispatchOne(ctx context.Context) (Job, error) {
 	if err := s.integrity.Check(ctx); err != nil {
 		return s.failWithoutResponse(ctx, lease, "EVENT_INTEGRITY_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
 	}
-	currentEpoch, err = s.leadership.Current(ctx, job.OrganizationID)
-	if err != nil {
-		return s.failWithoutResponse(ctx, lease, "LEADERSHIP_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
-	}
-	if currentEpoch != job.LeadershipEpoch {
-		return s.failWithoutResponse(ctx, lease, "LEADERSHIP_EPOCH_CHANGED", StateDeadLetter, time.Time{})
-	}
 	if err := s.operations.Check(ctx, job); err != nil {
 		if errors.Is(err, ErrOperationNotExecutable) {
 			return s.failWithoutResponse(ctx, lease, "OPERATION_NOT_EXECUTABLE", StateDeadLetter, time.Time{})
 		}
 		return s.failWithoutResponse(ctx, lease, "OPERATION_STATE_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
 	}
-	job, err = s.store.MarkSending(ctx, lease, observation)
+	var result Job
+	effectCalled := false
+	fenceErr := s.leadership.Fence(ctx, job.OrganizationID, job.LeadershipEpoch, func(fencedContext context.Context) error {
+		effectCalled = true
+		result, err = s.dispatchUnderLeadershipFence(fencedContext, lease, observation, prepared)
+		return err
+	})
+	if effectCalled {
+		return result, fenceErr
+	}
+	if errors.Is(fenceErr, ErrLeadershipChanged) {
+		return s.failWithoutResponse(ctx, lease, "LEADERSHIP_EPOCH_CHANGED", StateDeadLetter, time.Time{})
+	}
+	return s.failWithoutResponse(ctx, lease, "LEADERSHIP_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
+}
+
+func (s *Service) dispatchUnderLeadershipFence(ctx context.Context, lease Lease, observation ChainObservation, prepared *http.Request) (Job, error) {
+	job, err := s.store.MarkSending(ctx, lease, observation)
 	if err != nil {
 		return Job{}, err
 	}
 	lease.Job = job
 	s.record(ctx, job, "EGRESS_STARTED")
-	response, err := s.client.Do(prepared)
+	response, err := s.client.Do(prepared.WithContext(ctx))
 	if err != nil {
 		state, next := s.retryState(job.AttemptCount)
 		return s.failWithoutResponse(ctx, lease, "TRANSPORT_AMBIGUOUS", state, next)

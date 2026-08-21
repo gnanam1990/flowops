@@ -175,6 +175,46 @@ func TestOperationChangeDuringPreparationBlocksNetworkBeforeSendingFence(t *test
 	}
 }
 
+func TestLeadershipChangeAtSendFenceBlocksNetworkAndAttempt(t *testing.T) {
+	fixture := railsFixture(t)
+	store := newMemoryStore(fixture.now)
+	transport := &fakeRestrictedTransport{}
+	leadership := changingLeadership{current: 7, fenced: 8}
+	service, err := NewService(store, leadership, &fakeChain{observations: []ChainObservation{fixture.observation}},
+		staticOperationGate{}, staticIntegrityGate{}, transport, testConfig(fixture.now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = service.Enqueue(t.Context(), fixture.input)
+	job, err := service.DispatchOne(t.Context())
+	if err != nil || job.State != StateDeadLetter || job.AttemptCount != 0 || job.LastError != "LEADERSHIP_EPOCH_CHANGED" || transport.calls != 0 {
+		t.Fatalf("state=%s attempts=%d code=%s calls=%d err=%v", job.State, job.AttemptCount, job.LastError, transport.calls, err)
+	}
+}
+
+func TestLeadershipFenceCoversSellerEffect(t *testing.T) {
+	fixture := railsFixture(t)
+	store := newMemoryStore(fixture.now)
+	leadership := &scopeLeadership{epoch: 7}
+	body := []byte(`{"result":"fenced"}`)
+	transport := &fakeRestrictedTransport{responses: []*http.Response{successResponse(t, fixture, body)}} //nolint:bodyclose // DispatchOne owns the synthetic response body.
+	transport.onRoundTrip = func() {
+		if !leadership.active {
+			t.Fatal("seller network effect escaped the leadership fence")
+		}
+	}
+	service, err := NewService(store, leadership, &fakeChain{observations: []ChainObservation{fixture.observation}},
+		staticOperationGate{}, staticIntegrityGate{}, transport, testConfig(fixture.now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = service.Enqueue(t.Context(), fixture.input)
+	job, err := service.DispatchOne(t.Context())
+	if err != nil || job.State != StateResponseStored || leadership.active || leadership.effects != 1 {
+		t.Fatalf("state=%s active=%t effects=%d err=%v", job.State, leadership.active, leadership.effects, err)
+	}
+}
+
 func TestDeadlineTransitionRecordsOperationalEvent(t *testing.T) {
 	fixture := railsFixture(t)
 	store := newMemoryStore(fixture.now)
@@ -382,6 +422,42 @@ type staticLeadership uint64
 
 func (s staticLeadership) Current(context.Context, string) (uint64, error) { return uint64(s), nil }
 
+func (s staticLeadership) Fence(ctx context.Context, _ string, expected uint64, effect func(context.Context) error) error {
+	if uint64(s) != expected {
+		return ErrLeadershipChanged
+	}
+	return effect(ctx)
+}
+
+type changingLeadership struct{ current, fenced uint64 }
+
+func (g changingLeadership) Current(context.Context, string) (uint64, error) { return g.current, nil }
+
+func (g changingLeadership) Fence(ctx context.Context, _ string, expected uint64, effect func(context.Context) error) error {
+	if g.fenced != expected {
+		return ErrLeadershipChanged
+	}
+	return effect(ctx)
+}
+
+type scopeLeadership struct {
+	epoch   uint64
+	active  bool
+	effects int
+}
+
+func (g *scopeLeadership) Current(context.Context, string) (uint64, error) { return g.epoch, nil }
+
+func (g *scopeLeadership) Fence(ctx context.Context, _ string, expected uint64, effect func(context.Context) error) error {
+	if g.epoch != expected {
+		return ErrLeadershipChanged
+	}
+	g.active = true
+	g.effects++
+	defer func() { g.active = false }()
+	return effect(ctx)
+}
+
 type fakeChain struct {
 	mu           sync.Mutex
 	observations []ChainObservation
@@ -435,17 +511,21 @@ func (f *fakeChain) Confirmed(context.Context, uint64) (ChainObservation, error)
 
 type requestRecord struct{ url, payment, body string }
 type fakeRestrictedTransport struct {
-	mu        sync.Mutex
-	responses []*http.Response
-	errors    []error
-	requests  []requestRecord
-	calls     int
+	mu          sync.Mutex
+	responses   []*http.Response
+	errors      []error
+	requests    []requestRecord
+	onRoundTrip func()
+	calls       int
 }
 
 func (*fakeRestrictedTransport) ascpRestrictedTransport() {}
 func (f *fakeRestrictedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.onRoundTrip != nil {
+		f.onRoundTrip()
+	}
 	body, _ := io.ReadAll(request.Body)
 	index := f.calls
 	f.calls++
