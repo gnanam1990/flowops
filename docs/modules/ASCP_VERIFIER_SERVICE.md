@@ -50,6 +50,11 @@ decisions and finalized key observations are permanently append-only; replay
 nonces are immutable for 24 hours and then pruned only through one reviewed
 routine. The process has no RPC writer or transaction broadcaster.
 
+Migration `0021` deliberately creates the ordered v2 observation table instead
+of inventing log indexes for legacy `0020` evidence. Authorization remains
+fail-closed until the finalized chain observer re-ingests exact block and log
+positions into v2; legacy rows remain immutable history and are never queried.
+
 The included private-file digest signer re-opens and validates its key before
 every signature. It is a local/test adapter, not an HSM claim. Production still
 requires an idempotent HSM operation handle, the finalized observation writer

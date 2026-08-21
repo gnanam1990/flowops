@@ -444,10 +444,13 @@ Send it with `X-FlowOps-Verifier-Key-Id`,
 `X-FlowOps-Verifier-Timestamp`, `X-FlowOps-Verifier-Nonce`, and
 `X-FlowOps-Verifier-Signature` to `POST /v1/verdicts`. Each retry uses a new
 authentication nonce; the ASCP call/input fingerprint supplies decision
-idempotency. Populate `ascp_verifier_key_observations` only from the finalized
-chain-observer role, preserving the exact finalized block and log index so
-same-block epoch changes retain chain order. The verifier role can execute only the reviewed replay
-prune routine in addition to its table/sequence allowlist. Intake replay rows
+idempotency. Populate `ascp_verifier_key_observations_v2` only from the
+finalized chain-observer role, preserving the exact finalized block and log
+index so same-block epoch changes retain chain order. Legacy `0020` rows remain
+append-only history and are never used for authorization; re-ingest their exact
+finalized chain evidence into the v2 table before enabling the verifier. An
+empty v2 table fails closed. The verifier role can execute only the reviewed
+replay prune routine in addition to its table/sequence allowlist. Intake replay rows
 are immutable for 24 hours and pruned at startup and hourly; alert on prune
 failure and database growth. Verdict decisions and finalized key observations
 are never pruned. Do not run the file signer for production funds.

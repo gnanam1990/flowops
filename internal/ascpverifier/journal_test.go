@@ -118,7 +118,7 @@ func TestPostgresVerifierKeyGateRequiresFreshFinalizedActiveObservation(t *testi
 	gate, _ := NewPostgresVerifierKeyGate(db, time.Minute, func() time.Time { return now })
 	key, _ := crypto.HexToECDSA(strings.Repeat("11", 32))
 	address := crypto.PubkeyToAddress(key.PublicKey)
-	query := regexp.QuoteMeta("SELECT verifier_epoch,active,observed_at,evidence_digest")
+	query := regexp.QuoteMeta("SELECT verifier_epoch,active,observed_at,evidence_digest\n\t\tFROM ascp_verifier_key_observations_v2")
 	mock.ExpectQuery(query).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex())).
 		WillReturnRows(sqlmock.NewRows([]string{"verifier_epoch", "active", "observed_at", "evidence_digest"}).AddRow(int64(7), true, now.Add(-time.Second), testHash(8)))
 	if err := gate.CheckActive(t.Context(), "8453", "0x1111111111111111111111111111111111111111", address, 7); err != nil {
@@ -187,7 +187,7 @@ func TestPostgresVerifierUsesOneConnectionInsideDecisionTransaction(t *testing.T
 		t.Fatal("durable nonce source enabled the process-local nonce tracker")
 	}
 
-	gateQuery := regexp.QuoteMeta("SELECT verifier_epoch,active,observed_at,evidence_digest")
+	gateQuery := regexp.QuoteMeta("SELECT verifier_epoch,active,observed_at,evidence_digest\n\t\tFROM ascp_verifier_key_observations_v2")
 	expectGate := func() {
 		mock.ExpectQuery(gateQuery).WithArgs("8453", "0x1111111111111111111111111111111111111111", strings.ToLower(address.Hex())).
 			WillReturnRows(sqlmock.NewRows([]string{"verifier_epoch", "active", "observed_at", "evidence_digest"}).AddRow(int64(7), true, now.Add(-time.Second), testHash(8)))

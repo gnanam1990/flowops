@@ -142,6 +142,13 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		writeError(response, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}
+	select {
+	case h.slots <- struct{}{}:
+		defer func() { <-h.slots }()
+	default:
+		writeError(response, http.StatusServiceUnavailable, "VERIFIER_BUSY")
+		return
+	}
 	if err := h.authenticate(request.Context(), request.Method, request.URL.Path, request.Header, raw); err != nil {
 		status := http.StatusUnauthorized
 		code := "UNAUTHENTICATED"
@@ -173,13 +180,6 @@ func (h *Handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	}
 	if envelope.Input.Commitment.ChainID != h.chainID || envelope.Input.Commitment.EscrowContract != h.escrow {
 		writeError(response, http.StatusUnprocessableEntity, "VERIFICATION_REJECTED")
-		return
-	}
-	select {
-	case h.slots <- struct{}{}:
-		defer func() { <-h.slots }()
-	default:
-		writeError(response, http.StatusServiceUnavailable, "VERIFIER_BUSY")
 		return
 	}
 	decision, err := h.verifier.VerifyAndSign(request.Context(), envelope.Input)

@@ -287,8 +287,8 @@ for required in \
     'CREATE SEQUENCE IF NOT EXISTS ascp_verdict_nonce_seq' \
     'CREATE TABLE IF NOT EXISTS ascp_verdict_decisions' \
     'CREATE TABLE IF NOT EXISTS ascp_verifier_key_observations' \
-    'ADD COLUMN finalized_log_index bigint' \
-    'ALTER COLUMN finalized_log_index SET NOT NULL' \
+    'CREATE TABLE ascp_verifier_key_observations_v2' \
+    'finalized_log_index bigint NOT NULL' \
     'CREATE TABLE IF NOT EXISTS ascp_verifier_intake_replays' \
     'reject_ascp_verifier_immutable_mutation' \
     'reject_ascp_verifier_replay_mutation' \
@@ -296,6 +296,7 @@ for required in \
     'REVOKE ALL ON FUNCTION prune_ascp_verifier_intake_replays() FROM PUBLIC' \
     'BEFORE TRUNCATE ON ascp_verdict_decisions' \
     'BEFORE TRUNCATE ON ascp_verifier_key_observations' \
+    'BEFORE TRUNCATE ON ascp_verifier_key_observations_v2' \
     'BEFORE TRUNCATE ON ascp_verifier_intake_replays'
 do
     grep -F "$required" "$verifier_migration_base" "$verifier_migration_hardening" >/dev/null
@@ -321,16 +322,23 @@ do
 done
 
 verifier_default_privileges_are_safe() {
-    awk 'BEGIN { RS=";"; found=0 }
+    awk 'BEGIN { sql=""; found=0; unsafe=0 }
     {
-        statement=toupper($0)
-        if (statement ~ /\/\*|--/) next
-        gsub(/[[:space:]]+/, " ", statement)
-        sub(/^ /, "", statement)
-        sub(/ $/, "", statement)
-        if (statement == "ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC") found=1
+        if ($0 ~ /\/\*|\*\/|--/) unsafe=1
+        sql=sql "\n" $0
     }
-    END { exit(found ? 0 : 1) }'
+    END {
+        if (unsafe) exit 1
+        count=split(sql, statements, ";")
+        for (i=1; i<=count; i++) {
+            statement=toupper(statements[i])
+            gsub(/[[:space:]]+/, " ", statement)
+            sub(/^ /, "", statement)
+            sub(/ $/, "", statement)
+            if (statement == "ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC") found=1
+        }
+        exit(found ? 0 : 1)
+    }'
 }
 verifier_default_privileges_are_safe <"$verifier_grant_file"
 if sed '/ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC/d' "$verifier_grant_file" | verifier_default_privileges_are_safe; then
@@ -339,6 +347,10 @@ if sed '/ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC/d' "$ve
 fi
 if printf '%s\n' '-- ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC;' | verifier_default_privileges_are_safe; then
     echo "verifier role checker accepted commented future-routine protection" >&2
+    exit 1
+fi
+if printf '%s\n' '-- ignored; ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC;' | verifier_default_privileges_are_safe; then
+    echo "verifier role checker accepted semicolon-split comment protection" >&2
     exit 1
 fi
 
@@ -353,7 +365,7 @@ verifier_grants_are_safe() {
         sub(/ $/, "", statement)
         if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT SELECT, INSERT ON PUBLIC.ASCP_VERDICT_DECISIONS TO :\"VERIFIER_ROLE\"") next
-        if (statement == "GRANT SELECT ON PUBLIC.ASCP_VERIFIER_KEY_OBSERVATIONS TO :\"VERIFIER_ROLE\"") next
+        if (statement == "GRANT SELECT ON PUBLIC.ASCP_VERIFIER_KEY_OBSERVATIONS_V2 TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT INSERT ON PUBLIC.ASCP_VERIFIER_INTAKE_REPLAYS TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT USAGE, SELECT ON SEQUENCE PUBLIC.ASCP_VERDICT_NONCE_SEQ TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT EXECUTE ON FUNCTION PUBLIC.PRUNE_ASCP_VERIFIER_INTAKE_REPLAYS() TO :\"VERIFIER_ROLE\"") next

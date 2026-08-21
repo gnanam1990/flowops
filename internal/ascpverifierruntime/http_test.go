@@ -304,6 +304,11 @@ func TestHandlerBoundsConcurrentVerificationWork(t *testing.T) {
 	}
 	close(release)
 	workers.Wait()
+	retryResponse := httptest.NewRecorder()
+	handler.ServeHTTP(retryResponse, signedRequest(t, now, key, "nonce_for_busy_overflow_01", body))
+	if retryResponse.Code != http.StatusOK {
+		t.Fatalf("busy retry status=%d body=%s", retryResponse.Code, retryResponse.Body.String())
+	}
 }
 
 func TestHandlerMapsDurableVerifierStateFailureToServiceUnavailable(t *testing.T) {

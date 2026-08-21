@@ -43,7 +43,7 @@ func (g *PostgresVerifierKeyGate) CheckActive(ctx context.Context, chainID, escr
 	var observed time.Time
 	var evidence string
 	err := verifierQueryRower(ctx, g.db).QueryRowContext(ctx, `SELECT verifier_epoch,active,observed_at,evidence_digest
-		FROM ascp_verifier_key_observations
+		FROM ascp_verifier_key_observations_v2
 		WHERE chain_id=$1 AND escrow_contract=$2 AND verifier_address=$3
 		ORDER BY finalized_block DESC,finalized_log_index DESC LIMIT 1`, chainID, strings.ToLower(escrow), strings.ToLower(signer.Hex())).
 		Scan(&observedEpoch, &active, &observed, &evidence)
