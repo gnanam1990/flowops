@@ -20,8 +20,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/gnanam1990/flowops/internal/ascpagent"
+	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/gnanam1990/flowops/internal/controlplane"
+	"github.com/gnanam1990/flowops/internal/directoryreader"
 	"github.com/gnanam1990/flowops/internal/mcp"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/pilotlimits"
@@ -51,6 +55,8 @@ type startupConfig struct {
 	reconciliationTimeout  time.Duration
 	signerReceiptKeys      []controlapi.BroadcastKey
 	pilotLimits            *pilotlimits.Limits
+	ascpDirectoryContract  string
+	ascpDirectoryMaxAge    time.Duration
 }
 
 func main() {
@@ -90,6 +96,31 @@ func run(ctx context.Context) error {
 	store, err := controlapi.NewPostgresStore(db, siteSessions)
 	if err != nil {
 		return err
+	}
+	var ascpAgentService *ascpagent.Service
+	if cfg.ascpDirectoryContract != "" {
+		intakeStore, err := ascpintake.NewPostgresStore(db)
+		if err != nil {
+			return fmt.Errorf("create ASCP intake store: %w", err)
+		}
+		intakeService, err := ascpintake.New(intakeStore, nil, nil)
+		if err != nil {
+			return fmt.Errorf("create ASCP intake service: %w", err)
+		}
+		directoryResolver, err := directoryreader.NewMaterializedResolver(db, cfg.observerConfig.ChainID, cfg.ascpDirectoryContract, cfg.ascpDirectoryMaxAge, cfg.observerConfig.MaxFutureClockSkew)
+		if err != nil {
+			return fmt.Errorf("create ASCP directory resolver: %w", err)
+		}
+		ascpAgentService, err = ascpagent.New(ascpagent.Config{
+			Intake: intakeService, Reader: intakeStore, Directory: directoryResolver,
+			DirectoryContract: cfg.ascpDirectoryContract, ChainID: cfg.observerConfig.ChainID,
+			Asset: cfg.observerConfig.EscrowAsset, SchemeVersion: 1,
+		})
+		if err != nil {
+			return fmt.Errorf("create ASCP agent service: %w", err)
+		}
+	} else {
+		slog.Warn("durable ASCP agent intake is disabled", "reason", "FLOWOPS_ASCP_DIRECTORY_CONTRACT is unset")
 	}
 	eventJournal, err := controlplane.OpenPostgresJournal(startupCtx, db)
 	if err != nil {
@@ -167,6 +198,7 @@ func run(ctx context.Context) error {
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
 		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
 		Reconciliation: reconciliationEngine,
+		ASCPAgent:      ascpAgentService,
 	})
 	if err != nil {
 		return err
@@ -259,9 +291,18 @@ func loadConfig() (startupConfig, error) {
 		address: strings.TrimSpace(os.Getenv("FLOWOPS_CONTROL_ADDR")), databaseURL: strings.TrimSpace(os.Getenv("FLOWOPS_DATABASE_URL")),
 		envelopeKeyID: strings.TrimSpace(os.Getenv("FLOWOPS_ENVELOPE_KEY_ID")),
 		envelopeKey:   key, siteSessionKey: siteSessionKey,
-		reconciliation:    strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
-		mcpAllowedOrigins: splitMCPOrigins(os.Getenv("FLOWOPS_MCP_ALLOWED_ORIGINS")),
+		reconciliation:        strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
+		mcpAllowedOrigins:     splitMCPOrigins(os.Getenv("FLOWOPS_MCP_ALLOWED_ORIGINS")),
+		ascpDirectoryContract: strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT"))),
 	}
+	ascpDirectoryMaxAge, err := parseDurationEnv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE", os.Getenv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE"), time.Minute)
+	if err != nil {
+		return startupConfig{}, err
+	}
+	if ascpDirectoryMaxAge > 5*time.Minute {
+		return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_MAX_AGE cannot exceed 5m")
+	}
+	cfg.ascpDirectoryMaxAge = ascpDirectoryMaxAge
 	operatorKey, err := decodeSymmetricKey("FLOWOPS_OPERATOR_CONTROL_KEY_B64", os.Getenv("FLOWOPS_OPERATOR_CONTROL_KEY_B64"))
 	if err != nil {
 		return startupConfig{}, err
@@ -290,6 +331,14 @@ func loadConfig() (startupConfig, error) {
 	cfg.observerTimeout = observerRuntime.timeout
 	cfg.reconciliationInterval = observerRuntime.reconciliationInterval
 	cfg.reconciliationTimeout = observerRuntime.reconciliationTimeout
+	if cfg.ascpDirectoryContract != "" {
+		if len(cfg.ascpDirectoryContract) != 42 || !common.IsHexAddress(cfg.ascpDirectoryContract) || common.HexToAddress(cfg.ascpDirectoryContract) == (common.Address{}) {
+			return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_CONTRACT must be a non-zero canonical address")
+		}
+		if cfg.observerConfig.EscrowAsset == "" {
+			return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_CONTRACT requires the reviewed escrow deployment tuple")
+		}
+	}
 	if cfg.observerConfig.ChainID == 8453 {
 		if err := cfg.pilotLimits.RequireInitialBaseMainnetProfile(); err != nil {
 			return startupConfig{}, err

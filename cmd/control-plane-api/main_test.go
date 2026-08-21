@@ -35,8 +35,17 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.address != defaultAddress || cfg.trustProxy || !cfg.applyMigrations || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 {
+	if cfg.address != defaultAddress || cfg.trustProxy || !cfg.applyMigrations || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 || cfg.ascpDirectoryMaxAge != time.Minute {
 		t.Fatalf("configuration was not normalized: %+v", cfg)
+	}
+	t.Setenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT", "0x0000000000000000000000000000000000000000")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("zero ASCP directory contract was accepted")
+	}
+	t.Setenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT", "0x1111111111111111111111111111111111111111")
+	t.Setenv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE", "6m")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("oversized ASCP directory freshness window was accepted")
 	}
 }
 

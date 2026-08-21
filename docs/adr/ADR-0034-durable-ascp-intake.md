@@ -20,10 +20,13 @@ any policy, reservation, signer, network, or fund action occurs.
 
 ## Production boundary
 
-This module is not mounted on REST/MCP yet. The caller must provide already
-verified finalized ServiceDirectory evidence; that reader/proof module is
-next. The legacy `PaymentIntent` endpoint remains a different pre-ASCP flow
-and does not create rows in `ascp_intents`.
+At the time of this decision the module was not mounted on REST/MCP and its
+internal caller had to provide already verified finalized ServiceDirectory
+evidence. ADR-0036 now mounts a separate agent adapter which derives identity,
+builds the PurchaseSpec, and resolves current materialized directory evidence
+before calling this unchanged internal service. The legacy `PaymentIntent`
+endpoint remains a different pre-ASCP flow and does not create rows in
+`ascp_intents`.
 
 The database migration is immutable and runtime API credentials must retain
 only the DML permissions needed for this table. SQL serialization failures are

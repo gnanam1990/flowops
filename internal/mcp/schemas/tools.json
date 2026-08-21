@@ -2,9 +2,92 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "tools": [
     {
+      "name": "ascp.operation.create",
+      "title": "Create durable ASCP operation",
+      "description": "Submit untrusted purchase and SellerQuote input to durable ASCP intake. Authenticated identity, deployment terms, and current finalized directory evidence are derived by the server. This never accepts approval or signer evidence and never signs or broadcasts.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["request", "idempotencyKey"],
+        "properties": {
+          "request": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["taskId", "method", "url", "responseContract", "category", "sellerQuote", "sellerQuoteSignature"],
+            "properties": {
+              "taskId": {"type": "string", "minLength": 1, "maxLength": 1024},
+              "method": {"type": "string", "minLength": 1, "maxLength": 16},
+              "url": {"type": "string", "format": "uri", "maxLength": 8192},
+              "requestBodyBase64": {"type": "string", "contentEncoding": "base64"},
+              "headers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "value"],
+                  "properties": {"name": {"type": "string"}, "value": {"type": "string"}}
+                }
+              },
+              "responseContract": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["contentType", "schemaRef"],
+                "properties": {"contentType": {"type": "string"}, "schemaRef": {"type": "string"}}
+              },
+              "category": {"type": "string", "minLength": 1, "maxLength": 1024},
+              "reasonRef": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["blobRef", "contentHash"],
+                "properties": {
+                  "blobRef": {"type": "string", "minLength": 1, "maxLength": 4096},
+                  "contentHash": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"}
+                }
+              },
+              "sellerQuote": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["purchaseSpecHash", "sellerId", "resourceId", "directoryVersion", "schemeVersion", "chainId", "asset", "amountBaseUnits", "payTo", "ackAuthority", "verificationSpecHash", "declaredWorkTime", "verificationBudgetSeconds", "quoteExpiresAt", "quoteNonce"],
+                "properties": {
+                  "purchaseSpecHash": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+                  "sellerId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+                  "resourceId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+                  "directoryVersion": {"type": "integer", "minimum": 1},
+                  "schemeVersion": {"type": "integer", "minimum": 1},
+                  "chainId": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+                  "asset": {"type": "string", "pattern": "^0x[0-9a-f]{40}$"},
+                  "amountBaseUnits": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+                  "payTo": {"type": "string", "pattern": "^0x[0-9a-f]{40}$"},
+                  "ackAuthority": {"type": "string", "pattern": "^0x[0-9a-f]{40}$"},
+                  "verificationSpecHash": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+                  "declaredWorkTime": {"type": "integer", "minimum": 1},
+                  "verificationBudgetSeconds": {"type": "integer", "minimum": 1},
+                  "quoteExpiresAt": {"type": "integer", "minimum": 1},
+                  "quoteNonce": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"}
+                }
+              },
+              "sellerQuoteSignature": {"type": "string", "pattern": "^0x[0-9a-f]{130}$"}
+            }
+          },
+          "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    },
+    {
+      "name": "ascp.operation.get",
+      "title": "Get durable ASCP operation",
+      "description": "Read the redacted immutable operation owned by the authenticated agent. Cross-agent and cross-organization records are concealed.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operationId"],
+        "properties": {"operationId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"}}
+      }
+    },
+    {
       "name": "ascp.intent.create",
       "title": "Create spend intent",
-      "description": "Submit one bounded payment intent through the same policy and approval path as REST. This never signs or broadcasts a payment.",
+      "description": "Legacy pre-ASCP compatibility tool. Submit one bounded PaymentIntent through the legacy policy and approval path. This does not create a durable ASCP operation and never signs or broadcasts a payment.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,

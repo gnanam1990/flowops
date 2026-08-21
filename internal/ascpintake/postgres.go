@@ -74,6 +74,52 @@ func (s *PostgresStore) Create(ctx context.Context, input StoreInput) (Operation
 	return existing, true, nil
 }
 
+func (s *PostgresStore) Lookup(ctx context.Context, organizationID, actorID, idempotencyKey string) (Operation, string, bool, error) {
+	var operation Operation
+	var canonicalInputHash string
+	var createdAt time.Time
+	err := s.db.QueryRowContext(ctx, `
+		SELECT operation_id, organization_id, actor_id, quote_hash, purchase_spec_hash, quote_nonce,
+		       directory_version, directory_contract, seller_signer, created_at, canonical_input_hash
+		FROM ascp_intents
+		WHERE organization_id=$1 AND actor_id=$2 AND endpoint=$3 AND idempotency_key=$4`,
+		organizationID, actorID, Endpoint, idempotencyKey).Scan(
+		&operation.OperationID, &operation.OrganizationID, &operation.ActorID, &operation.QuoteHash,
+		&operation.PurchaseSpecHash, &operation.QuoteNonce, &operation.DirectoryVersion,
+		&operation.DirectoryContract, &operation.SellerSigner, &createdAt, &canonicalInputHash,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Operation{}, "", false, nil
+	}
+	if err != nil {
+		return Operation{}, "", false, fmt.Errorf("lookup ASCP idempotency result: %w", err)
+	}
+	operation.CreatedAt = createdAt.UTC().Unix()
+	return operation, canonicalInputHash, true, nil
+}
+
+func (s *PostgresStore) Get(ctx context.Context, organizationID, actorID, operationID string) (Operation, error) {
+	var operation Operation
+	var createdAt time.Time
+	err := s.db.QueryRowContext(ctx, `
+		SELECT operation_id, organization_id, actor_id, quote_hash, purchase_spec_hash, quote_nonce,
+		       directory_version, directory_contract, seller_signer, created_at
+		FROM ascp_intents
+		WHERE operation_id=$1 AND organization_id=$2 AND actor_id=$3`, operationID, organizationID, actorID).Scan(
+		&operation.OperationID, &operation.OrganizationID, &operation.ActorID, &operation.QuoteHash,
+		&operation.PurchaseSpecHash, &operation.QuoteNonce, &operation.DirectoryVersion,
+		&operation.DirectoryContract, &operation.SellerSigner, &createdAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Operation{}, ErrNotFound
+	}
+	if err != nil {
+		return Operation{}, fmt.Errorf("read ASCP operation: %w", err)
+	}
+	operation.CreatedAt = createdAt.UTC().Unix()
+	return operation, nil
+}
+
 func classifyInsertError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) && pgError.Code == "23505" && pgError.ConstraintName == "ascp_intents_quote_nonce_unique" {

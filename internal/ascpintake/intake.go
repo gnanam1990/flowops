@@ -69,7 +69,17 @@ type StoreInput struct {
 // idempotent replay.
 type Store interface {
 	Create(context.Context, StoreInput) (Operation, bool, error)
+	Lookup(context.Context, string, string, string) (Operation, string, bool, error)
 }
+
+// Reader exposes the immutable, redacted operation projection needed by
+// agent-facing status APIs. Implementations must enforce both tenant and actor
+// scope in the storage query rather than filtering an unscoped result later.
+type Reader interface {
+	Get(context.Context, string, string, string) (Operation, error)
+}
+
+var ErrNotFound = errors.New("ASCP operation not found")
 
 type Service struct {
 	store Store
@@ -94,8 +104,8 @@ func New(store Store, clock func() time.Time, random io.Reader) (*Service, error
 // durable operation+nonce claim. An idempotent retry is returned from Store;
 // therefore a newly generated operation ID never changes a successful retry.
 func (s *Service) Create(ctx context.Context, request Request) (Operation, error) {
-	if err := validateScope(request); err != nil {
-		return Operation{}, err
+	if replayed, found, err := s.Replay(ctx, request); err != nil || found {
+		return replayed, err
 	}
 	if _, err := purchasespec.ValidatePersisted(request.CanonicalPurchaseSpec, request.RequestBody); err != nil {
 		return Operation{}, fmt.Errorf("purchase specification: %w", err)
@@ -129,6 +139,43 @@ func (s *Service) Create(ctx context.Context, request Request) (Operation, error
 	}
 	stored.Replayed = replayed
 	return stored, nil
+}
+
+// Replay returns a previously committed exact request without reapplying
+// mutable expiry, directory-head, or overlay checks. The immutable quote
+// signature and PurchaseSpec/body binding are still recomputed, so a changed
+// request cannot borrow an old idempotency result.
+func (s *Service) Replay(ctx context.Context, request Request) (Operation, bool, error) {
+	if err := validateScope(request); err != nil {
+		return Operation{}, false, err
+	}
+	stored, storedHash, found, err := s.store.Lookup(ctx, request.OrganizationID, request.ActorID, request.IdempotencyKey)
+	if err != nil || !found {
+		return Operation{}, false, err
+	}
+	if _, err := purchasespec.ValidatePersisted(request.CanonicalPurchaseSpec, request.RequestBody); err != nil {
+		return Operation{}, false, fmt.Errorf("purchase specification: %w", err)
+	}
+	if purchasespec.Hash(request.CanonicalPurchaseSpec) != request.Quote.PurchaseSpecHash {
+		return Operation{}, false, ErrPurchaseSpecBinding
+	}
+	// The directory contract is part of the committed operation, not public
+	// request input. Replays remain stable across a later deployment change.
+	request.DirectoryContract = stored.DirectoryContract
+	quoteHash, err := request.Quote.Digest(stored.DirectoryContract)
+	if err != nil {
+		return Operation{}, false, err
+	}
+	signer, err := request.Quote.RecoverSigner(stored.DirectoryContract, request.Signature)
+	if err != nil {
+		return Operation{}, false, err
+	}
+	inputHash := canonicalInputHash(request, quoteHash.Hex(), strings.ToLower(signer.Hex()))
+	if storedHash != inputHash {
+		return Operation{}, false, ErrIdempotencyConflict
+	}
+	stored.Replayed = true
+	return stored, true, nil
 }
 
 func validateScope(request Request) error {
@@ -213,4 +260,32 @@ func (s *MemoryStore) Create(ctx context.Context, input StoreInput) (Operation, 
 	s.byScope[scope] = memoryRecord{hash: input.CanonicalInputHash, operation: stored}
 	s.byNonce[input.Operation.QuoteNonce] = input.Operation.OperationID
 	return stored, false, nil
+}
+
+func (s *MemoryStore) Lookup(ctx context.Context, organizationID, actorID, idempotencyKey string) (Operation, string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Operation{}, "", false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, found := s.byScope[organizationID+"\x00"+actorID+"\x00"+Endpoint+"\x00"+idempotencyKey]
+	if !found {
+		return Operation{}, "", false, nil
+	}
+	return record.operation, record.hash, true, nil
+}
+
+func (s *MemoryStore) Get(ctx context.Context, organizationID, actorID, operationID string) (Operation, error) {
+	if err := ctx.Err(); err != nil {
+		return Operation{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, record := range s.byScope {
+		operation := record.operation
+		if operation.OperationID == operationID && operation.OrganizationID == organizationID && operation.ActorID == actorID {
+			return operation, nil
+		}
+	}
+	return Operation{}, ErrNotFound
 }
