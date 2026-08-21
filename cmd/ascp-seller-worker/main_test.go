@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfigAcceptsCompleteFailClosedWorker(t *testing.T) {
@@ -15,6 +17,28 @@ func TestLoadConfigAcceptsCompleteFailClosedWorker(t *testing.T) {
 	}
 	if config.chainID != 84532 || config.rpcQuorum != 2 || len(config.rpcProviders) != 2 || len(config.integrityKeys) != 1 || config.workerID != "seller-worker-1" {
 		t.Fatalf("config=%+v", config)
+	}
+}
+
+func TestStartupIntegrityReceivesConfiguredTimeoutAboveDatabaseBudget(t *testing.T) {
+	setValidEnvironment(t)
+	t.Setenv("FLOWOPS_SELLER_INTEGRITY_TIMEOUT", "20s")
+	t.Setenv("FLOWOPS_SELLER_RPC_REQUEST_TIMEOUT", "1s")
+	t.Setenv("FLOWOPS_SELLER_HTTP_TIMEOUT", "1s")
+	t.Setenv("FLOWOPS_SELLER_CYCLE_TIMEOUT", "50s")
+	t.Setenv("FLOWOPS_SELLER_INTERVAL", "55s")
+	t.Setenv("FLOWOPS_SELLER_LEASE_DURATION", "55s")
+	config, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := &deadlineIntegrityGate{}
+	started := time.Now()
+	if err := checkStartupIntegrity(t.Context(), gate, config.integrityTimeout); err != nil {
+		t.Fatal(err)
+	}
+	if gate.deadline.Before(started.Add(19*time.Second)) || gate.deadline.After(started.Add(21*time.Second)) {
+		t.Fatalf("integrity deadline=%s configured=%s", gate.deadline, config.integrityTimeout)
 	}
 }
 
@@ -95,4 +119,15 @@ func setValidEnvironment(t *testing.T) {
 		"FLOWOPS_SELLER_MAX_CHAIN_LAG"} {
 		t.Setenv(name, "")
 	}
+}
+
+type deadlineIntegrityGate struct{ deadline time.Time }
+
+func (g *deadlineIntegrityGate) Check(ctx context.Context) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return context.DeadlineExceeded
+	}
+	g.deadline = deadline
+	return nil
 }

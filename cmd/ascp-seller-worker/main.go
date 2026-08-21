@@ -72,10 +72,11 @@ func run(ctx context.Context) error {
 	db.SetMaxIdleConns(4)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	startupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
 	if err := db.PingContext(startupCtx); err != nil {
+		cancel()
 		return fmt.Errorf("connect to rails PostgreSQL: %w", err)
 	}
+	cancel()
 	store, err := ascprails.NewPostgresStore(db)
 	if err != nil {
 		return err
@@ -113,8 +114,8 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create event-integrity gate: %w", err)
 	}
-	if err := integrityGate.Check(startupCtx); err != nil {
-		return fmt.Errorf("event-integrity startup gate: %w", err)
+	if err := checkStartupIntegrity(ctx, integrityGate, config.integrityTimeout); err != nil {
+		return err
 	}
 	transport, err := ascprails.NewRestrictedTransport()
 	if err != nil {
@@ -140,6 +141,18 @@ func run(ctx context.Context) error {
 	slog.Info("ASCP seller worker started", "workerId", config.workerID, "chainId", config.chainID,
 		"rpcProviders", len(config.rpcProviders), "rpcQuorum", config.rpcQuorum)
 	return worker.Run(ctx)
+}
+
+func checkStartupIntegrity(ctx context.Context, gate ascprails.IntegrityGate, timeout time.Duration) error {
+	if gate == nil || timeout < time.Second || timeout > 30*time.Second {
+		return errors.New("event-integrity startup configuration is invalid")
+	}
+	integrityCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := gate.Check(integrityCtx); err != nil {
+		return fmt.Errorf("event-integrity startup gate: %w", err)
+	}
+	return nil
 }
 
 type logRecorder struct{}

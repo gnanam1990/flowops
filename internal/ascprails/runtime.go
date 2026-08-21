@@ -47,8 +47,8 @@ type QuorumChainClock struct {
 }
 
 func NewQuorumChainClock(source SnapshotSource, chainID uint64, quorum int, maxChainLag time.Duration, clocks ...func() time.Time) (*QuorumChainClock, error) {
-	if source == nil || chainID != 8453 && chainID != 84532 || quorum < 2 || quorum > 5 ||
-		maxChainLag < time.Second || maxChainLag > 10*time.Minute || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
+	if source == nil || (chainID != 8453 && chainID != 84532) || quorum < 2 || quorum > 5 ||
+		maxChainLag < time.Second || maxChainLag > 10*time.Minute || len(clocks) > 1 || (len(clocks) == 1 && clocks[0] == nil) {
 		return nil, ErrInvalidConfig
 	}
 	clock := time.Now
@@ -64,12 +64,11 @@ func (c *QuorumChainClock) Confirmed(ctx context.Context, chainID uint64) (Chain
 	}
 	result := c.source.Snapshot(ctx)
 	type anchorGroup struct {
-		number      uint64
-		hash        string
-		timestamp   time.Time
-		observedAt  time.Time
-		providers   []string
-		observation []reconciliation.Observation
+		number     uint64
+		hash       string
+		timestamp  time.Time
+		observedAt time.Time
+		providers  []string
 	}
 	groups := make(map[string]*anchorGroup)
 	seenProviders := make(map[string]struct{})
@@ -81,7 +80,7 @@ func (c *QuorumChainClock) Confirmed(ctx context.Context, chainID uint64) (Chain
 			continue
 		}
 		if _, duplicate := seenProviders[observation.Provider]; duplicate {
-			return ChainObservation{}, errors.New("Base observer returned a duplicate provider")
+			return ChainObservation{}, errors.New("base chain observer returned a duplicate provider")
 		}
 		seenProviders[observation.Provider] = struct{}{}
 		key := fmt.Sprintf("%d\x00%s\x00%d", observation.AnchorNumber, observation.AnchorHash, observation.AnchorTime.UTC().Unix())
@@ -95,7 +94,6 @@ func (c *QuorumChainClock) Confirmed(ctx context.Context, chainID uint64) (Chain
 			group.observedAt = observation.ObservedAt.UTC()
 		}
 		group.providers = append(group.providers, observation.Provider)
-		group.observation = append(group.observation, observation)
 	}
 	var agreed *anchorGroup
 	for _, group := range groups {
@@ -103,16 +101,16 @@ func (c *QuorumChainClock) Confirmed(ctx context.Context, chainID uint64) (Chain
 			continue
 		}
 		if agreed != nil {
-			return ChainObservation{}, errors.New("Base observer quorum is ambiguous")
+			return ChainObservation{}, errors.New("base chain observer quorum is ambiguous")
 		}
 		agreed = group
 	}
 	if agreed == nil {
-		return ChainObservation{}, errors.New("Base observer quorum is unavailable")
+		return ChainObservation{}, errors.New("base chain observer quorum is unavailable")
 	}
 	now := c.clock().UTC()
 	if agreed.timestamp.After(now.Add(5*time.Second)) || now.Sub(agreed.timestamp) > c.maxChainLag {
-		return ChainObservation{}, errors.New("Base observer quorum anchor is stale or in the future")
+		return ChainObservation{}, errors.New("base chain observer quorum anchor is stale or in the future")
 	}
 	sort.Strings(agreed.providers)
 	evidence := fmt.Sprintf("ASCP_CHAIN_CLOCK_V1\x00%d\x00%d\x00%s\x00%d\x00%s",
@@ -206,7 +204,7 @@ type AttestedIntegrityGate struct {
 
 func NewAttestedIntegrityGate(head EventHeadReader, source IntegrityAttestationSource, keys map[string]ed25519.PublicKey, maxTTL time.Duration, clocks ...func() time.Time) (*AttestedIntegrityGate, error) {
 	if head == nil || source == nil || len(keys) == 0 || maxTTL < time.Second || maxTTL > 5*time.Minute ||
-		len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
+		len(clocks) > 1 || (len(clocks) == 1 && clocks[0] == nil) {
 		return nil, ErrInvalidConfig
 	}
 	cloned := make(map[string]ed25519.PublicKey, len(keys))

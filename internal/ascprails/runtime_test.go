@@ -78,7 +78,23 @@ func TestAttestedIntegrityGateBindsSignatureExpiryAndLiveHead(t *testing.T) {
 	if err := gate.Check(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	source.attestation = attestation
+	source.attestation.KeyID = "recovery-key-2"
+	if err := gate.Check(t.Context()); err == nil {
+		t.Fatal("unknown key ID passed integrity gate")
+	}
+	source.attestation = attestation
+	source.attestation.Signature += "=="
+	if err := gate.Check(t.Context()); err == nil {
+		t.Fatal("non-canonical signature encoding passed integrity gate")
+	}
+	source.attestation = attestation
+	source.attestation.State = "PENDING"
+	if err := gate.Check(t.Context()); err == nil {
+		t.Fatal("unverified state passed integrity gate")
+	}
 
+	source.attestation = attestation
 	source.attestation.LocalSequence++
 	if err := gate.Check(t.Context()); err == nil {
 		t.Fatal("substituted sequence passed signature verification")

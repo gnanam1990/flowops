@@ -65,6 +65,8 @@ for required in \
     'GRANT INSERT ON ascp_seller_attempts, ascp_seller_responses' \
 	'GRANT INSERT (effect_id,organization_id,epoch,state,started_at)' \
 	'GRANT UPDATE (state,resolved_at) ON ascp_leadership_effects' \
+	'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
+	'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"rails_role"' \
 	'GRANT EXECUTE ON FUNCTION public.ascp_current_event_head()' \
     'GRANT UPDATE (state,eligible_after,lease_owner,lease_token,lease_expires_at,attempt_count' \
     'GRANT UPDATE (state,completed_at,result_code) ON ascp_seller_attempts'

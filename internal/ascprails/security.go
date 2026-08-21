@@ -143,16 +143,15 @@ func ValidateRestrictedURLShape(raw string) error {
 	if err != nil {
 		return err
 	}
-	if literal, parseErr := netip.ParseAddr(strings.Trim(parsed.Hostname(), "[]")); parseErr == nil && !isPublic(literal.Unmap()) {
+	if _, public, literal := publicLiteral(parsed.Hostname()); literal && !public {
 		return ErrUnsafeDestination
 	}
 	return nil
 }
 
 func resolvePublic(ctx context.Context, resolver Resolver, host string) ([]netip.Addr, error) {
-	if literal, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
-		literal = literal.Unmap()
-		if !isPublic(literal) {
+	if literal, public, parsed := publicLiteral(host); parsed {
+		if !public {
 			return nil, ErrUnsafeDestination
 		}
 		return []netip.Addr{literal}, nil
@@ -170,6 +169,15 @@ func resolvePublic(ctx context.Context, resolver Resolver, host string) ([]netip
 		result = append(result, address)
 	}
 	return result, nil
+}
+
+func publicLiteral(host string) (netip.Addr, bool, bool) {
+	literal, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil {
+		return netip.Addr{}, false, false
+	}
+	literal = literal.Unmap()
+	return literal, isPublic(literal), true
 }
 
 var blockedRanges = mustPrefixes(
