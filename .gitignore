@@ -15,4 +15,5 @@ contracts/cache/
 contracts/out/
 contracts/broadcast/
 /broadcast/
+/cache/
 apps/dashboard/.next/
