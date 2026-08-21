@@ -54,7 +54,7 @@ func (s *PostgresStore) enqueueOnce(ctx context.Context, input EnqueueInput, now
 	if err != nil {
 		return Job{}, false, fmt.Errorf("begin keeper enqueue: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if existing, err := loadJob(ctx, tx, input.JobID, false); err == nil {
 		if !sameInput(existing, input) {
 			return Job{}, false, ErrStateConflict
@@ -93,7 +93,7 @@ func (s *PostgresStore) enqueueOnce(ctx context.Context, input EnqueueInput, now
 }
 
 func (s *PostgresStore) Claim(ctx context.Context, keeperID, gasPayer string, chainID uint64, duration time.Duration) (Lease, error) {
-	if !identifier(keeperID) || !address(gasPayer) || (chainID != 8453 && chainID != 84532) || duration < time.Second || duration > time.Minute {
+	if !identifier(keeperID) || !address(gasPayer) || !supportedChain(chainID) || duration < time.Second || duration > time.Minute {
 		return Lease{}, ErrInvalidConfig
 	}
 	now := s.clock().UTC()
@@ -105,7 +105,7 @@ func (s *PostgresStore) Claim(ctx context.Context, keeperID, gasPayer string, ch
 	if err != nil {
 		return Lease{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var jobID string
 	err = tx.QueryRowContext(ctx, `
 		SELECT job_id FROM ascp_keeper_jobs
@@ -139,7 +139,7 @@ func (s *PostgresStore) Claim(ctx context.Context, keeperID, gasPayer string, ch
 }
 
 func (s *PostgresStore) ClaimObservation(ctx context.Context, keeperID, gasPayer string, chainID uint64, duration time.Duration) (Lease, error) {
-	if !identifier(keeperID) || !address(gasPayer) || (chainID != 8453 && chainID != 84532) || duration < time.Second || duration > time.Minute {
+	if !identifier(keeperID) || !address(gasPayer) || !supportedChain(chainID) || duration < time.Second || duration > time.Minute {
 		return Lease{}, ErrInvalidConfig
 	}
 	now := s.clock().UTC()
@@ -151,7 +151,7 @@ func (s *PostgresStore) ClaimObservation(ctx context.Context, keeperID, gasPayer
 	if err != nil {
 		return Lease{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var jobID string
 	err = tx.QueryRowContext(ctx, `SELECT job_id FROM ascp_keeper_jobs
 		WHERE keeper_id=$1 AND gas_payer=$2 AND chain_id=$3 AND state IN ('AMBIGUOUS','SUBMITTED','CONFIRMED')
@@ -187,7 +187,7 @@ func (s *PostgresStore) AllocateNonce(ctx context.Context, lease Lease, observed
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	job, err := loadLeasedJob(ctx, tx, lease, now)
 	if err != nil {
 		return 0, err
@@ -457,7 +457,7 @@ func (s *PostgresStore) transition(ctx context.Context, lease Lease, change func
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	job, err := loadLeasedJob(ctx, tx, lease, now)
 	if err != nil {
 		return Job{}, err

@@ -16,6 +16,29 @@ type runtimeFixture struct {
 
 type containedRuntimeFixture struct{ calls int }
 
+type slowObservationFixture struct {
+	observed int
+	relayed  int
+}
+
+func (f *slowObservationFixture) ObserveOnce(ctx context.Context) (Job, error) {
+	select {
+	case <-time.After(75 * time.Millisecond):
+		f.observed++
+		return Job{State: StateConfirmed}, nil
+	case <-ctx.Done():
+		return Job{}, ctx.Err()
+	}
+}
+
+func (f *slowObservationFixture) RunOnce(context.Context) (Job, error) {
+	if f.relayed > 0 {
+		return Job{}, ErrNoWork
+	}
+	f.relayed++
+	return Job{State: StateSubmitted}, nil
+}
+
 func (f *containedRuntimeFixture) ObserveOnce(context.Context) (Job, error) { return Job{}, ErrNoWork }
 func (f *containedRuntimeFixture) RunOnce(context.Context) (Job, error) {
 	f.calls++
@@ -121,6 +144,22 @@ func TestWorkerContinuesAfterDurablyContainedRelayOutcome(t *testing.T) {
 	}
 	if service.calls != 3 || cycle.Relayed != 2 || cycle.Ambiguous != 1 || cycle.DeadLetter != 1 {
 		t.Fatalf("unexpected contained cycle: calls=%d cycle=%+v", service.calls, cycle)
+	}
+}
+
+func TestWorkerSlowSuccessfulObservationsCannotStarveExpiryAndRelay(t *testing.T) {
+	service := &slowObservationFixture{}
+	scanner := &scannerFixture{created: 1}
+	worker, err := NewWorker(service, scanner, WorkerConfig{Interval: 2 * time.Second, CycleTimeout: time.Second, BatchSize: 10, ExpiryLimit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.observed != 1 || service.relayed != 1 || cycle.Observed != 1 || cycle.ExpiryEnqueued != 1 || cycle.Relayed != 1 || cycle.Submitted != 1 {
+		t.Fatalf("phase starvation: service=%+v cycle=%+v", service, cycle)
 	}
 }
 

@@ -170,7 +170,7 @@ func loadConfig() (startupConfig, error) {
 		databaseURL: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_DATABASE_URL")),
 		keeperID:    strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_ID")),
 		gasPayer:    strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_GAS_PAYER")),
-		interval:    time.Minute, cycleTimeout: 50 * time.Second, leaseDuration: 55 * time.Second, boundaryTimeout: 5 * time.Second,
+		interval:    time.Minute, cycleTimeout: 50 * time.Second, leaseDuration: 55 * time.Second, boundaryTimeout: 3 * time.Second,
 		batchSize: 20, expiryLimit: 100, maxFeeBumps: 3, maxGasLimit: 1_000_000,
 		feeCap:  ascpkeeper.Fee{MaxFeePerGasWei: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_MAX_FEE_PER_GAS_WEI")), MaxPriorityFeePerGasWei: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_MAX_PRIORITY_FEE_PER_GAS_WEI"))},
 		sockets: map[string]string{},
@@ -223,9 +223,10 @@ func loadConfig() (startupConfig, error) {
 	if config.maxGasLimit, err = parseUint("FLOWOPS_KEEPER_MAX_GAS_LIMIT", config.maxGasLimit); err != nil {
 		return startupConfig{}, err
 	}
-	minimumEffectBudget := 8*config.boundaryTimeout + 5*time.Second
-	if config.interval < time.Second || config.interval > 5*time.Minute || config.cycleTimeout < minimumEffectBudget || config.cycleTimeout >= config.interval ||
-		config.leaseDuration < minimumEffectBudget || config.leaseDuration > time.Minute || config.boundaryTimeout < time.Second || config.boundaryTimeout > 10*time.Second ||
+	minimumRelayBudget := 10*config.boundaryTimeout + 5*time.Second
+	if config.interval < time.Second || config.interval > 5*time.Minute || config.cycleTimeout >= config.interval ||
+		config.cycleTimeout/10 < config.boundaryTimeout || config.cycleTimeout*8/10 < minimumRelayBudget ||
+		config.leaseDuration < minimumRelayBudget || config.leaseDuration > time.Minute || config.boundaryTimeout < time.Second || config.boundaryTimeout > 10*time.Second ||
 		config.batchSize < 1 || config.batchSize > 100 || config.expiryLimit < 1 || config.expiryLimit > 1000 || config.maxFeeBumps < 0 || config.maxFeeBumps > 3 ||
 		config.maxGasLimit == 0 || config.maxGasLimit > 30_000_000 || !validFeeCap(config.feeCap) {
 		return startupConfig{}, errors.New("ASCP keeper timing, batch, gas, or fee configuration is outside safe bounds")

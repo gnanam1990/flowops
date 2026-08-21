@@ -301,10 +301,10 @@ execution from `PUBLIC`.
 | `FLOWOPS_KEEPER_MAX_PRIORITY_FEE_PER_GAS_WEI` | Canonical nonnegative decimal hard cap no greater than the max-fee cap |
 | `FLOWOPS_KEEPER_MAX_GAS_LIMIT` | Optional positive deployment cap, default `1000000`, maximum `30000000` |
 | `FLOWOPS_KEEPER_MAX_FEE_BUMPS` | Optional `0` through `3`, default `3` |
-| `FLOWOPS_KEEPER_BOUNDARY_TIMEOUT` | Optional per-sidecar timeout, default `5s`, maximum `10s` |
+| `FLOWOPS_KEEPER_BOUNDARY_TIMEOUT` | Optional per-sidecar timeout, default `3s`, maximum `10s` subject to the cycle and lease budgets |
 | `FLOWOPS_KEEPER_INTERVAL` | Optional cycle interval, default `1m`, maximum `5m` |
-| `FLOWOPS_KEEPER_CYCLE_TIMEOUT` | Optional whole-cycle timeout; must include eight boundary timeouts plus five seconds and remain below the interval |
-| `FLOWOPS_KEEPER_LEASE_DURATION` | Optional fenced lease; must include the same worst-case effect budget, default `55s`, maximum `1m` |
+| `FLOWOPS_KEEPER_CYCLE_TIMEOUT` | Optional whole-cycle timeout; 10% is reserved for observation, 10% for expiry proof, and 80% for relay; the relay share must include ten boundary timeouts plus five seconds and the total must remain below the interval |
+| `FLOWOPS_KEEPER_LEASE_DURATION` | Optional fenced lease; must include ten boundary timeouts plus five seconds, default `55s`, maximum `1m` |
 | `FLOWOPS_KEEPER_BATCH_SIZE` | Optional observation and relay limit per cycle, default `20`, maximum `100` |
 | `FLOWOPS_KEEPER_EXPIRY_LIMIT` | Optional independently proved expiry scan limit, default `100`, maximum `1000` |
 

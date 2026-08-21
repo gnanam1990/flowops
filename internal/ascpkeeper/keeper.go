@@ -298,7 +298,7 @@ func NewService(store Store, artifacts ArtifactSource, assembler Assembler, veri
 ) (*Service, error) {
 	if store == nil || artifacts == nil || assembler == nil || verifier == nil || wallet == nil || sealer == nil ||
 		broadcaster == nil || fees == nil || nonces == nil || replacements == nil || outcomes == nil || leadership == nil || !identifier(config.KeeperID) ||
-		(config.ChainID != 8453 && config.ChainID != 84532) ||
+		!supportedChain(config.ChainID) ||
 		!address(config.GasPayer) || config.LeaseDuration < time.Second || config.LeaseDuration > time.Minute ||
 		config.MaxFeeBumps < 0 || config.MaxFeeBumps > 3 || config.MaxGasLimit == 0 || !validFee(config.FeeCap) {
 		return nil, ErrInvalidConfig
@@ -329,7 +329,7 @@ func validateOutcome(job Job, attempt Attempt, outcome Outcome, now time.Time) e
 func validateInput(input EnqueueInput, now time.Time) error {
 	input.ValidAfter, input.ValidBefore, input.EligibleAfter = input.ValidAfter.UTC(), input.ValidBefore.UTC(), input.EligibleAfter.UTC()
 	if !hash(input.JobID) || !hash(input.OperationID) || !identifier(input.OrganizationID) || !validAction(input.Action) ||
-		(input.ChainID != 8453 && input.ChainID != 84532) || !identifier(input.KeeperID) || !address(input.GasPayer) ||
+		!supportedChain(input.ChainID) || !identifier(input.KeeperID) || !address(input.GasPayer) ||
 		!address(input.Target) || input.ValueWei != "0" || len(input.CanonicalPayload) == 0 ||
 		len(input.CanonicalPayload) > 256*1024 || canonicalPayloadHash(input.CanonicalPayload) != input.CanonicalPayloadHash ||
 		input.EligibleAfter.IsZero() {
@@ -356,6 +356,10 @@ func validateInput(input EnqueueInput, now time.Time) error {
 		return ErrInvalidJob
 	}
 	return nil
+}
+
+func supportedChain(chainID uint64) bool {
+	return chainID == 8453 || chainID == 84532
 }
 
 func validateUnsigned(job Job, tx UnsignedTransaction, config Config) error {

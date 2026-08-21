@@ -72,36 +72,59 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) RunOnce(ctx context.Context) (WorkerCycle, error) {
 	cycle := WorkerCycle{}
+	observationCtx, cancelObservation := context.WithTimeout(ctx, w.config.CycleTimeout/10)
 	for index := 0; index < w.config.BatchSize; index++ {
-		job, err := w.service.ObserveOnce(ctx)
+		job, err := w.service.ObserveOnce(observationCtx)
 		if errors.Is(err, ErrNoWork) {
 			break
 		}
 		if err != nil {
+			if phaseEnded(ctx, observationCtx, err) {
+				break
+			}
+			cancelObservation()
 			return cycle, fmt.Errorf("observe keeper outcome: %w", err)
 		}
 		cycle.Observed++
 		cycle.count(job.State)
 	}
-	created, err := w.expiry.Scan(ctx, w.config.ExpiryLimit)
-	if err != nil {
+	cancelObservation()
+
+	expiryCtx, cancelExpiry := context.WithTimeout(ctx, w.config.CycleTimeout/10)
+	created, err := w.expiry.Scan(expiryCtx, w.config.ExpiryLimit)
+	expiryEnded := phaseEnded(ctx, expiryCtx, err)
+	cancelExpiry()
+	cycle.ExpiryEnqueued = created
+	if err != nil && !expiryEnded {
 		return cycle, fmt.Errorf("scan independently proved keeper expiries: %w", err)
 	}
-	cycle.ExpiryEnqueued = created
+
+	relayCtx, cancelRelay := context.WithTimeout(ctx, w.config.CycleTimeout*8/10)
+	defer cancelRelay()
 	for index := 0; index < w.config.BatchSize; index++ {
-		job, err := w.service.RunOnce(ctx)
-		if errors.Is(err, ErrNoWork) {
+		job, relayErr := w.service.RunOnce(relayCtx)
+		if errors.Is(relayErr, ErrNoWork) {
 			break
 		}
-		if err != nil {
+		if relayErr != nil {
+			if phaseEnded(ctx, relayCtx, relayErr) {
+				break
+			}
 			if !containedRelayOutcome(job) {
-				return cycle, fmt.Errorf("advance keeper relay: %w", err)
+				return cycle, fmt.Errorf("advance keeper relay: %w", relayErr)
 			}
 		}
 		cycle.Relayed++
 		cycle.count(job.State)
 	}
 	return cycle, nil
+}
+
+func phaseEnded(parent, phase context.Context, err error) bool {
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return phase.Err() != nil || parent.Err() != nil
 }
 
 func containedRelayOutcome(job Job) bool {
@@ -155,7 +178,7 @@ func nilInterface(value any) bool {
 	}
 	reflected := reflect.ValueOf(value)
 	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
 		return reflected.IsNil()
 	default:
 		return false

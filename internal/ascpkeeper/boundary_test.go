@@ -24,7 +24,7 @@ func unixBoundaryServer(t *testing.T, handler http.Handler) string {
 		t.Fatal(err)
 	}
 	path := filepath.Join(directory, "boundary.sock")
-	listener, err := net.Listen("unix", path)
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}

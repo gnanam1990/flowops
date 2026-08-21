@@ -41,7 +41,7 @@ type ExpiryScanner struct {
 }
 
 func NewExpiryScanner(store Store, source ExpirySource, keeperID, gasPayer string, chainID uint64, clocks ...func() time.Time) (*ExpiryScanner, error) {
-	if store == nil || source == nil || !identifier(keeperID) || !address(gasPayer) || (chainID != 8453 && chainID != 84532) || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
+	if store == nil || source == nil || !identifier(keeperID) || !address(gasPayer) || !supportedChain(chainID) || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
 		return nil, ErrInvalidConfig
 	}
 	clock := time.Now
@@ -87,7 +87,7 @@ func (s *ExpiryScanner) Scan(ctx context.Context, limit int) (int, error) {
 }
 
 func validateExpiredCall(call ExpiredCall, now time.Time) error {
-	if !hash(call.OperationID) || !identifier(call.OrganizationID) || (call.ChainID != 8453 && call.ChainID != 84532) ||
+	if !hash(call.OperationID) || !identifier(call.OrganizationID) || !supportedChain(call.ChainID) ||
 		!address(call.Escrow) || !hash(call.CallID) || call.SettleBy.IsZero() || call.ObservedChainTime.IsZero() ||
 		!call.ObservedChainTime.After(call.SettleBy) || !hash(call.EvidenceDigest) || call.ObservedAt.IsZero() ||
 		call.ObservedAt.After(now.Add(time.Minute)) || now.Sub(call.ObservedAt) > time.Minute {

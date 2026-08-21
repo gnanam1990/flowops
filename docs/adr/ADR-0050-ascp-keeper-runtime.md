@@ -1,7 +1,7 @@
 # ADR-0050: Isolated ASCP keeper runtime
 
 - Status: accepted
-- Date: 2026-08-22
+- Date: 2026-08-21
 
 ## Context
 

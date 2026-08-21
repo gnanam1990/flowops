@@ -115,9 +115,10 @@ adapter and cannot broadcast. Its
 keeper kernel before durable state changes. A non-success broadcast response
 is deterministic only when the trusted chain adapter emits `REJECTED` or
 `UNDERPRICED`; every other code and every transport error is ambiguous. The
-runtime first observes already-broadcast attempts, then scans expiry proofs,
-and finally advances relay work. A boundary or database failure stops the supervised
-process instead of skipping proof gates.
+runtime reserves 10% of each cycle for already-broadcast outcomes, 10% for
+expiry proofs, and 80% for relay work, so a slow successful phase cannot starve
+the phases behind it. A phase-local deadline safely yields to the next phase;
+an uncontained boundary or database failure stops the supervised process.
 
 The runtime is executable integration infrastructure, not a claim that the
 external signer, HSM, KMS or Base-provider set has been deployed. Production

@@ -102,7 +102,7 @@ func (b *UnixBoundary) call(ctx context.Context, method, endpoint string, input,
 	if err != nil {
 		return fmt.Errorf("call keeper %s boundary: %w", b.name, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	limited := io.LimitReader(response.Body, maxBoundaryBodyBytes+1)
 	raw, err := io.ReadAll(limited)
 	defer clear(raw)

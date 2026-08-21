@@ -19,8 +19,9 @@ import (
 
 func TestPostgresKeeperDurableNonceAndBroadcastLifecycle(t *testing.T) {
 	db := keeperDatabase(t)
+	ctx := context.Background()
 	var runtimeIndexes int
-	if err := db.QueryRow(`SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname IN
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname IN
 		('ascp_keeper_jobs_runtime_claim_idx','ascp_keeper_jobs_runtime_observation_idx')`).Scan(&runtimeIndexes); err != nil || runtimeIndexes != 2 {
 		t.Fatalf("keeper runtime indexes=%d err=%v", runtimeIndexes, err)
 	}
