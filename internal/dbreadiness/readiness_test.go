@@ -145,6 +145,8 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 		"ascp_chain_observations":            {"SELECT": true, "INSERT": true},
 		"ascp_ledger_transactions":           {"SELECT": true, "INSERT": true},
 		"ascp_ledger_postings":               {"SELECT": true, "INSERT": true},
+		"ascp_events":                        {"SELECT": true, "INSERT": true},
+		"ascp_event_checkpoints":             {"SELECT": true},
 	}
 	for _, table := range runtimeTables {
 		for _, privilege := range tablePrivileges {

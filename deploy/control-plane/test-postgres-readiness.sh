@@ -22,6 +22,8 @@ for required in \
 	'GRANT UPDATE (state, attempts, delivered_at)' \
 	'GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts' \
 	'GRANT SELECT, INSERT ON ascp_keeper_jobs' \
+	'GRANT SELECT, INSERT ON ascp_events' \
+	'GRANT SELECT ON ascp_event_checkpoints' \
 	'GRANT UPDATE (state, locked_transaction_hash, locked_block_number, locked_block_hash' \
 	'GRANT UPDATE (state, resolved_at, block_number, block_hash, evidence_digest, canonical_checked_at)'
 do
@@ -46,6 +48,20 @@ done
 
 if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$keeper_grant_file"; then
     echo "keeper grant script contains a forbidden broad privilege" >&2
+    exit 1
+fi
+
+checkpointer_grant_file=deploy/control-plane/configure-checkpointer-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
+    'GRANT SELECT ON ascp_events' \
+    'GRANT SELECT, INSERT ON ascp_event_checkpoints'
+do
+    grep -F "$required" "$checkpointer_grant_file" >/dev/null
+done
+
+if grep -Eq 'GRANT (ALL|DELETE|UPDATE|TRUNCATE|TRIGGER|REFERENCES)' "$checkpointer_grant_file"; then
+    echo "checkpointer grant script contains a forbidden broad privilege" >&2
     exit 1
 fi
 

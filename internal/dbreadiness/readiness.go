@@ -63,6 +63,8 @@ var runtimeTables = []tableContract{
 	{name: "ascp_chain_observations", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_ledger_transactions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_ledger_postings", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_events", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_event_checkpoints", allowed: set("SELECT")},
 }
 
 var tablePrivileges = []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
