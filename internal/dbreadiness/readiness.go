@@ -210,7 +210,7 @@ func VerifyRuntimeSQL(ctx context.Context, db *sql.DB) (SQLReport, error) {
 		for rows.Next() {
 			var column string
 			if err := rows.Scan(&column); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return report, fmt.Errorf("scan %s column UPDATE privilege: %w", contract.table, err)
 			}
 			actual[column] = true

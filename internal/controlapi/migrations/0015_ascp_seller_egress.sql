@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS ascp_seller_jobs (
     leadership_epoch bigint NOT NULL CHECK (leadership_epoch > 0),
     deliver_by bigint NOT NULL CHECK (deliver_by > 0),
     method text NOT NULL CHECK (method ~ '^[A-Z]{1,16}$'),
-    request_url text NOT NULL CHECK (octet_length(request_url) BETWEEN 9 AND 8192 AND request_url LIKE 'https://%'),
+    request_url text NOT NULL CHECK (octet_length(request_url) BETWEEN 9 AND 2048 AND request_url LIKE 'https://%'),
     headers_json jsonb NOT NULL CHECK (jsonb_typeof(headers_json) = 'object' AND octet_length(headers_json::text) <= 262144),
     request_body bytea NOT NULL CHECK (octet_length(request_body) <= 8388608),
     canonical_spec_json bytea NOT NULL CHECK (octet_length(canonical_spec_json) BETWEEN 1 AND 33554432),

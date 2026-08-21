@@ -25,7 +25,7 @@ func TestDispatchCapturesThenFinalizesWithoutSecondEgress(t *testing.T) {
 	store := newMemoryStore(fixture.now)
 	chain := &fakeChain{observations: []ChainObservation{fixture.observation, {Timestamp: uint64(fixture.now.Unix() + 5), EvidenceDigest: testHash("32"), ObservedAt: fixture.now}}}
 	body := []byte(`{"result":"ok"}`)
-	transport := &fakeRestrictedTransport{responses: []*http.Response{successResponse(t, fixture, body)}}
+	transport := &fakeRestrictedTransport{responses: []*http.Response{successResponse(t, fixture, body)}} //nolint:bodyclose // DispatchOne owns the synthetic response body.
 	service := newTestService(t, store, chain, transport, fixture.now)
 	if _, replay, err := service.Enqueue(context.Background(), fixture.input); err != nil || replay {
 		t.Fatalf("enqueue replay=%t err=%v", replay, err)
@@ -51,7 +51,7 @@ func TestResponseStoredRecoveryNeverRecontactsSellerWhenChainClockFails(t *testi
 	fixture := railsFixture(t)
 	store := newMemoryStore(fixture.now)
 	chain := &fakeChain{observations: []ChainObservation{fixture.observation}, errors: []error{nil, errors.New("observer quorum unavailable")}}
-	transport := &fakeRestrictedTransport{responses: []*http.Response{successResponse(t, fixture, []byte("answer"))}}
+	transport := &fakeRestrictedTransport{responses: []*http.Response{successResponse(t, fixture, []byte("answer"))}} //nolint:bodyclose // DispatchOne owns the synthetic response body.
 	service := newTestService(t, store, chain, transport, fixture.now)
 	_, _, _ = service.Enqueue(context.Background(), fixture.input)
 	if job, err := service.DispatchOne(context.Background()); err != nil || job.State != StateResponseStored {
@@ -217,7 +217,7 @@ func TestInvalidPaymentResponseAndOversizedBodyDeadLetter(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			store := newMemoryStore(fixture.now)
-			service := newTestService(t, store, &fakeChain{observations: []ChainObservation{fixture.observation}}, &fakeRestrictedTransport{responses: []*http.Response{test.response()}}, fixture.now)
+			service := newTestService(t, store, &fakeChain{observations: []ChainObservation{fixture.observation}}, &fakeRestrictedTransport{responses: []*http.Response{test.response()}}, fixture.now) //nolint:bodyclose // DispatchOne owns the synthetic response body.
 			_, _, _ = service.Enqueue(context.Background(), fixture.input)
 			job, err := service.DispatchOne(context.Background())
 			if err != nil || job.State != StateDeadLetter || job.LastError != test.code {
