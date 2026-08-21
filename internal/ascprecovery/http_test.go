@@ -78,6 +78,15 @@ func TestRestrictedReadersRefusePrivateAndCredentialedURLs(t *testing.T) {
 			t.Fatalf("unsafe URL accepted: %s", raw)
 		}
 	}
+	_, client, err := restrictedClient("https://example.com/head", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com/head", nil)
+	redirect := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://other.example/head", nil)
+	if err := client.CheckRedirect(redirect, []*http.Request{original}); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("redirect policy error=%v", err)
+	}
 }
 
 func TestHandlerReturnsSignedProofAndRedactsFailures(t *testing.T) {
@@ -87,7 +96,7 @@ func TestHandlerReturnsSignedProofAndRedactsFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/v1/recovery", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/recovery", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	var got ascprails.IntegrityAttestation
@@ -102,12 +111,12 @@ func TestHandlerReturnsSignedProofAndRedactsFailures(t *testing.T) {
 		t.Fatalf("failure response=%d body=%s failures=%d", response.Code, response.Body.String(), failures.Load())
 	}
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/recovery?x=1", nil))
+	handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/recovery?x=1", nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("query endpoint status=%d", response.Code)
 	}
 	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/recovery", strings.NewReader("unexpected")))
+	handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/recovery", strings.NewReader("unexpected")))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("body endpoint status=%d", response.Code)
 	}

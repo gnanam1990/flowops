@@ -113,7 +113,8 @@ func run(ctx context.Context) error {
 	server := &http.Server{Addr: config.listenAddress, Handler: handler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 10 * time.Second, WriteTimeout: config.verificationLimit + 5*time.Second, IdleTimeout: 30 * time.Second,
 		MaxHeaderBytes: 16 << 10}
-	listener, err := net.Listen("tcp", config.listenAddress)
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", config.listenAddress)
 	if err != nil {
 		return fmt.Errorf("listen for event-recovery requests: %w", err)
 	}
