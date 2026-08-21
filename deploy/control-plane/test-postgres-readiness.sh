@@ -41,7 +41,33 @@ fi
 keeper_grant_file=deploy/control-plane/configure-keeper-role.sql
 
 keeper_contract_is_complete() {
-	awk 'BEGIN { RS=";" }
+	awk 'BEGIN {
+		RS=";"
+		allowed["\\SET ON_ERROR_STOP ON \\IF :{?KEEPER_ROLE} \\ELSE \\ECHO \047KEEPER_ROLE PSQL VARIABLE IS REQUIRED\047 SELECT 1/0"]=1
+		allowed["\\ENDIF SELECT COALESCE((SELECT ROLCANLOGIN FROM PG_ROLES WHERE ROLNAME = :\047KEEPER_ROLE\047), FALSE) AS KEEPER_ROLE_CAN_LOGIN \\GSET \\IF :KEEPER_ROLE_CAN_LOGIN \\ELSE \\ECHO \047KEEPER_ROLE MUST EXIST AND HAVE LOGIN\047 SELECT 1/0"]=1
+		allowed["\\ENDIF SELECT EXISTS ( SELECT 1 FROM PG_AUTH_MEMBERS WHERE MEMBER = (SELECT OID FROM PG_ROLES WHERE ROLNAME = :\047KEEPER_ROLE\047) OR ROLEID = (SELECT OID FROM PG_ROLES WHERE ROLNAME = :\047KEEPER_ROLE\047) ) AS KEEPER_ROLE_HAS_MEMBERSHIP \\GSET \\IF :KEEPER_ROLE_HAS_MEMBERSHIP \\ECHO \047KEEPER_ROLE MUST NOT PARTICIPATE IN ROLE MEMBERSHIPS\047 SELECT 1/0"]=1
+		allowed["\\ENDIF SELECT EXISTS ( SELECT 1 FROM PG_SHDEPEND WHERE REFCLASSID = \047PG_AUTHID\047::REGCLASS AND REFOBJID = (SELECT OID FROM PG_ROLES WHERE ROLNAME = :\047KEEPER_ROLE\047) AND DEPTYPE = \047O\047 ) AS KEEPER_ROLE_OWNS_DATABASE_OBJECT \\GSET \\IF :KEEPER_ROLE_OWNS_DATABASE_OBJECT \\ECHO \047KEEPER_ROLE MUST NOT OWN DATABASE OBJECTS\047 SELECT 1/0"]=1
+		allowed["\\ENDIF BEGIN"]=1
+		allowed["ALTER ROLE :\"KEEPER_ROLE\" NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT"]=1
+		allowed["ALTER ROLE :\"KEEPER_ROLE\" SET SEARCH_PATH = PUBLIC"]=1
+		allowed["SELECT FORMAT(\047REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC\047, CURRENT_DATABASE()) \\GEXEC SELECT FORMAT(\047REVOKE TEMPORARY ON DATABASE %I FROM %I\047, CURRENT_DATABASE(), :\047KEEPER_ROLE\047) \\GEXEC REVOKE CREATE ON SCHEMA PUBLIC FROM PUBLIC"]=1
+		allowed["REVOKE CREATE ON SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
+		allowed["GRANT USAGE ON SCHEMA PUBLIC TO :\"KEEPER_ROLE\""]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA PUBLIC FROM PUBLIC"]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA PUBLIC FROM PUBLIC"]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA PUBLIC FROM PUBLIC"]=1
+		allowed["REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
+		allowed["ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC"]=1
+		allowed["GRANT SELECT, INSERT ON PUBLIC.ASCP_KEEPER_JOBS, PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES, PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT UPDATE (LEASE_OWNER, LEASE_TOKEN, LEASE_EXPIRES_AT, NONCE, STATE, ATTEMPT_COUNT, CURRENT_ATTEMPT, LAST_ERROR, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_JOBS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT UPDATE (NEXT_NONCE, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT UPDATE (STATE, BROADCAST_AT, LAST_ERROR, EVIDENCE_DIGEST, OBSERVED_AT) ON PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\""]=1
+		allowed["COMMIT"]=1
+		expected_count=23
+	}
 	function normalize(raw, lines, count, idx, line, result) {
 		count=split(raw, lines, "\n")
 		result=""
@@ -60,36 +86,11 @@ keeper_contract_is_complete() {
 		if ($0 ~ /\/\*|\*\//) { unsafe=1; next }
 		statement=normalize($0)
 		if (statement == "") next
-		if (index(statement, "KEEPER_ROLE MUST EXIST AND HAVE LOGIN")) login=1
-		if (index(statement, "KEEPER_ROLE MUST NOT PARTICIPATE IN ROLE MEMBERSHIPS")) memberships=1
-		if (index(statement, "KEEPER_ROLE MUST NOT OWN DATABASE OBJECTS")) ownership=1
-		if (statement == "ALTER ROLE :\"KEEPER_ROLE\" NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT") role=1
-		if (statement == "ALTER ROLE :\"KEEPER_ROLE\" SET SEARCH_PATH = PUBLIC") search_path=1
-		if (index(statement, "SELECT FORMAT(\047REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC\047, CURRENT_DATABASE())")) temp_public=1
-		if (index(statement, "SELECT FORMAT(\047REVOKE TEMPORARY ON DATABASE %I FROM %I\047, CURRENT_DATABASE(), :\047KEEPER_ROLE\047)")) temp_role=1
-		if (index(statement, "REVOKE CREATE ON SCHEMA PUBLIC FROM PUBLIC")) schema_public=1
-		if (statement == "REVOKE CREATE ON SCHEMA PUBLIC FROM :\"KEEPER_ROLE\"") schema_role=1
-		if (statement == "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA PUBLIC FROM PUBLIC") tables_public=1
-		if (statement == "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\"") tables_role=1
-		if (statement == "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA PUBLIC FROM PUBLIC") sequences_public=1
-		if (statement == "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\"") sequences_role=1
-		if (statement == "REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA PUBLIC FROM PUBLIC") routines_public=1
-		if (statement == "REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\"") routines_role=1
-		if (statement == "ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC") defaults=1
-		if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"KEEPER_ROLE\"") grant_schema=1
-		else if (statement == "GRANT SELECT, INSERT ON PUBLIC.ASCP_KEEPER_JOBS, PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES, PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\"") grant_tables=1
-		else if (statement == "GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS TO :\"KEEPER_ROLE\"") grant_leadership=1
-		else if (statement == "GRANT UPDATE (LEASE_OWNER, LEASE_TOKEN, LEASE_EXPIRES_AT, NONCE, STATE, ATTEMPT_COUNT, CURRENT_ATTEMPT, LAST_ERROR, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_JOBS TO :\"KEEPER_ROLE\"") grant_jobs=1
-		else if (statement == "GRANT UPDATE (NEXT_NONCE, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES TO :\"KEEPER_ROLE\"") grant_nonces=1
-		else if (statement == "GRANT UPDATE (STATE, BROADCAST_AT, LAST_ERROR, EVIDENCE_DIGEST, OBSERVED_AT) ON PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\"") grant_attempts=1
-		else if (statement ~ /^GRANT /) unsafe=1
+		if (!(statement in allowed) || ++seen[statement] != 1) unsafe=1
+		accepted++
 	}
 	END {
-		complete=login && memberships && ownership && role && search_path && temp_public && temp_role &&
-			schema_public && schema_role && tables_public && tables_role && sequences_public && sequences_role &&
-			routines_public && routines_role && defaults && grant_schema && grant_tables && grant_leadership &&
-			grant_jobs && grant_nonces && grant_attempts
-		exit(unsafe || !complete)
+		exit(unsafe || accepted != expected_count)
 	}' "$@"
 }
 
@@ -98,51 +99,24 @@ if ! keeper_contract_is_complete "$keeper_grant_file"; then
 	exit 1
 fi
 
-keeper_grants_are_safe() {
-	awk 'BEGIN { RS=";" }
-	{
-		statement=toupper($0)
-		if (statement !~ /GRANT/) next
-		if (statement ~ /\/\*|--/) exit 1
-		gsub(/[[:space:]]+/, " ", statement)
-		sub(/^ /, "", statement)
-		sub(/ $/, "", statement)
-		if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"KEEPER_ROLE\"") next
-		if (statement == "GRANT SELECT, INSERT ON PUBLIC.ASCP_KEEPER_JOBS, PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES, PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\"") next
-		if (statement == "GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS TO :\"KEEPER_ROLE\"") next
-		if (statement == "GRANT UPDATE (LEASE_OWNER, LEASE_TOKEN, LEASE_EXPIRES_AT, NONCE, STATE, ATTEMPT_COUNT, CURRENT_ATTEMPT, LAST_ERROR, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_JOBS TO :\"KEEPER_ROLE\"") next
-		if (statement == "GRANT UPDATE (NEXT_NONCE, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES TO :\"KEEPER_ROLE\"") next
-		if (statement == "GRANT UPDATE (STATE, BROADCAST_AT, LAST_ERROR, EVIDENCE_DIGEST, OBSERVED_AT) ON PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\"") next
-		exit 1
-	}' "$@"
-}
-
-if ! keeper_grants_are_safe "$keeper_grant_file"; then
-	echo "keeper grant script contains a forbidden or unexpected privilege" >&2
+if { cat "$keeper_grant_file"; printf '%s\n' 'ALTER ROLE :"keeper_role" SUPERUSER;'; } | keeper_contract_is_complete; then
+	echo "keeper role checker accepted an appended SUPERUSER statement" >&2
 	exit 1
 fi
-if printf '%s\n' 'GRANT SELECT, DELETE ON public.ascp_keeper_jobs TO role;' | keeper_grants_are_safe; then
-	echo "keeper grant checker failed to reject DELETE" >&2
+if sed 's/^GRANT SELECT ON public.ascp_leadership_epochs/GRANT SELECT, DELETE ON public.ascp_leadership_epochs/' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted a substituted DELETE grant" >&2
 	exit 1
 fi
-if printf '%s\n' 'GRANT UPDATE ON public.ascp_keeper_jobs TO role;' | keeper_grants_are_safe; then
-	echo "keeper grant checker failed to reject table-wide UPDATE" >&2
+if sed 's/^GRANT UPDATE (next_nonce, updated_at)/GRANT UPDATE/' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted table-wide UPDATE" >&2
 	exit 1
 fi
-if printf '%s\n' 'GRANT EXECUTE ON FUNCTION public.dangerous() TO role;' | keeper_grants_are_safe; then
-	echo "keeper grant checker failed to reject routine execution" >&2
+if sed 's/^GRANT USAGE ON SCHEMA public/GRANT EXECUTE ON FUNCTION public.dangerous()/' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted routine execution" >&2
 	exit 1
 fi
-if printf '%s\n' 'GRANT UPDATE (state), DELETE ON public.ascp_keeper_jobs TO role;' | keeper_grants_are_safe; then
-	echo "keeper grant checker failed to reject mixed privileges" >&2
-	exit 1
-fi
-if printf '%s\n' 'GRANT UPDATE/*hidden*/ ON public.ascp_keeper_jobs TO role;' | keeper_grants_are_safe; then
-	echo "keeper grant checker failed to reject comments" >&2
-	exit 1
-fi
-if printf '%s\n' 'GRANT DELETE ON public.ascp_keeper_jobs TO role GRANT USAGE ON SCHEMA public TO :"keeper_role";' | keeper_grants_are_safe; then
-	echo "keeper grant checker failed to reject a prefixed forbidden grant" >&2
+if sed 's/^GRANT USAGE ON SCHEMA public/GRANT UPDATE\/\*hidden\*\//g' "$keeper_grant_file" | keeper_contract_is_complete; then
+	echo "keeper role checker accepted a block-comment mutation" >&2
 	exit 1
 fi
 if sed 's/^ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC;/-- &/' "$keeper_grant_file" | keeper_contract_is_complete; then
