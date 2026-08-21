@@ -203,7 +203,12 @@ func TestLeadershipFenceCoversSellerEffect(t *testing.T) {
 			t.Fatal("seller network effect escaped the leadership fence")
 		}
 	}
-	service, err := NewService(store, leadership, &fakeChain{observations: []ChainObservation{fixture.observation}},
+	chain := &fakeChain{observations: []ChainObservation{fixture.observation}, onConfirmed: func() {
+		if !leadership.active {
+			t.Fatal("chain time was confirmed outside the leadership fence")
+		}
+	}}
+	service, err := NewService(store, leadership, chain,
 		staticOperationGate{}, staticIntegrityGate{}, transport, testConfig(fixture.now))
 	if err != nil {
 		t.Fatal(err)
@@ -462,6 +467,7 @@ type fakeChain struct {
 	mu           sync.Mutex
 	observations []ChainObservation
 	errors       []error
+	onConfirmed  func()
 	calls        int
 }
 
@@ -494,6 +500,9 @@ func (r *eventRecorder) Record(_ context.Context, event Event) { r.events = appe
 func (f *fakeChain) Confirmed(context.Context, uint64) (ChainObservation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.onConfirmed != nil {
+		f.onConfirmed()
+	}
 	index := f.calls
 	f.calls++
 	var err error

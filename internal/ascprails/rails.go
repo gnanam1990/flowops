@@ -252,6 +252,33 @@ func (s *Service) DispatchOne(ctx context.Context) (Job, error) {
 		}
 		return s.failWithoutResponse(ctx, lease, "OPERATION_STATE_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
 	}
+	var result Job
+	effectCalled := false
+	fenceErr := s.leadership.Fence(ctx, job.OrganizationID, job.LeadershipEpoch, func(fencedContext context.Context) error {
+		effectCalled = true
+		result, err = s.dispatchUnderLeadershipFence(fencedContext, lease)
+		return err
+	})
+	if effectCalled {
+		return result, fenceErr
+	}
+	if errors.Is(fenceErr, ErrLeadershipChanged) {
+		return s.failWithoutResponse(ctx, lease, "LEADERSHIP_EPOCH_CHANGED", StateDeadLetter, time.Time{})
+	}
+	return s.failWithoutResponse(ctx, lease, "LEADERSHIP_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
+}
+
+func (s *Service) dispatchUnderLeadershipFence(ctx context.Context, lease Lease) (Job, error) {
+	job := lease.Job
+	if err := s.integrity.Check(ctx); err != nil {
+		return s.failWithoutResponse(ctx, lease, "EVENT_INTEGRITY_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
+	}
+	if err := s.operations.Check(ctx, job); err != nil {
+		if errors.Is(err, ErrOperationNotExecutable) {
+			return s.failWithoutResponse(ctx, lease, "OPERATION_NOT_EXECUTABLE", StateDeadLetter, time.Time{})
+		}
+		return s.failWithoutResponse(ctx, lease, "OPERATION_STATE_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
+	}
 	observation, err := s.chain.Confirmed(ctx, job.ChainID)
 	if err != nil || s.validateFreshObservation(observation) != nil || observation.Timestamp < job.ValidatedChainTime {
 		return s.failWithoutResponse(ctx, lease, "CHAIN_TIME_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
@@ -271,36 +298,9 @@ func (s *Service) DispatchOne(ctx context.Context) (Job, error) {
 	if err != nil {
 		return s.failWithoutResponse(ctx, lease, "PRE_EGRESS_BINDING_FAILED", StateDeadLetter, time.Time{})
 	}
-	// Revalidate immediately before the durable SENDING fence. The PostgreSQL
-	// store also locks and rechecks the payment operation while committing that
-	// fence, so an operation-state update cannot interleave with it.
-	if err := s.integrity.Check(ctx); err != nil {
-		return s.failWithoutResponse(ctx, lease, "EVENT_INTEGRITY_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
-	}
-	if err := s.operations.Check(ctx, job); err != nil {
-		if errors.Is(err, ErrOperationNotExecutable) {
-			return s.failWithoutResponse(ctx, lease, "OPERATION_NOT_EXECUTABLE", StateDeadLetter, time.Time{})
-		}
-		return s.failWithoutResponse(ctx, lease, "OPERATION_STATE_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
-	}
-	var result Job
-	effectCalled := false
-	fenceErr := s.leadership.Fence(ctx, job.OrganizationID, job.LeadershipEpoch, func(fencedContext context.Context) error {
-		effectCalled = true
-		result, err = s.dispatchUnderLeadershipFence(fencedContext, lease, observation, prepared)
-		return err
-	})
-	if effectCalled {
-		return result, fenceErr
-	}
-	if errors.Is(fenceErr, ErrLeadershipChanged) {
-		return s.failWithoutResponse(ctx, lease, "LEADERSHIP_EPOCH_CHANGED", StateDeadLetter, time.Time{})
-	}
-	return s.failWithoutResponse(ctx, lease, "LEADERSHIP_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
-}
-
-func (s *Service) dispatchUnderLeadershipFence(ctx context.Context, lease Lease, observation ChainObservation, prepared *http.Request) (Job, error) {
-	job, err := s.store.MarkSending(ctx, lease, observation)
+	// MarkSending locks and rechecks the payment operation while committing the
+	// durable fence, so an operation-state update cannot interleave with it.
+	job, err = s.store.MarkSending(ctx, lease, observation)
 	if err != nil {
 		return Job{}, err
 	}
