@@ -63,6 +63,8 @@ var runtimeTables = []tableContract{
 	{name: "ascp_chain_observations", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_ledger_transactions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_ledger_postings", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_seller_jobs", allowed: set("SELECT")},
+	{name: "ascp_seller_responses", allowed: set("SELECT")},
 	{name: "ascp_events", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_event_checkpoints", allowed: set("SELECT")},
 }
@@ -81,6 +83,12 @@ var runtimeColumnUpdates = []columnUpdateContract{
 	{table: "ascp_signer_outbox", columns: set("state", "attempts", "delivered_at")},
 	{table: "ascp_payment_operations", columns: set("state", "locked_transaction_hash", "locked_block_number", "locked_block_hash", "terminal_action", "terminal_transaction_hash", "terminal_block_number", "terminal_block_hash", "updated_at")},
 	{table: "ascp_payment_attempts", columns: set("state", "resolved_at", "block_number", "block_hash", "evidence_digest", "canonical_checked_at")},
+}
+
+var runtimeColumnInserts = []columnUpdateContract{
+	{table: "ascp_seller_jobs", columns: set("job_id", "operation_id", "organization_id", "chain_id", "leadership_epoch", "deliver_by", "method", "request_url",
+		"headers_json", "request_body", "canonical_spec_json", "offer_json", "payment_json", "binding_json", "locked_transaction_hash", "payer",
+		"validated_chain_time", "input_hash", "eligible_after", "created_at", "updated_at")},
 }
 
 func set(values ...string) map[string]bool {
@@ -203,7 +211,7 @@ func VerifyRuntimeSQL(ctx context.Context, db *sql.DB) (SQLReport, error) {
 		for rows.Next() {
 			var column string
 			if err := rows.Scan(&column); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return report, fmt.Errorf("scan %s column UPDATE privilege: %w", contract.table, err)
 			}
 			actual[column] = true
@@ -216,6 +224,38 @@ func VerifyRuntimeSQL(ctx context.Context, db *sql.DB) (SQLReport, error) {
 		}
 		report.add("columns_"+contract.table+"_update", sameSet(actual, contract.columns),
 			fmt.Sprintf("column UPDATE privileges must match the reviewed mutable fields for %s", contract.table))
+	}
+	for _, contract := range runtimeColumnInserts {
+		rows, err := db.QueryContext(ctx, `
+			SELECT column_name
+			FROM information_schema.columns
+			WHERE table_schema=current_schema() AND table_name=$1
+			  AND has_column_privilege(
+			      current_user,
+			      quote_ident(table_schema) || '.' || quote_ident(table_name),
+			      column_name,
+			      'INSERT')
+			ORDER BY ordinal_position`, contract.table)
+		if err != nil {
+			return report, fmt.Errorf("inspect %s column INSERT privileges: %w", contract.table, err)
+		}
+		actual := map[string]bool{}
+		for rows.Next() {
+			var column string
+			if err := rows.Scan(&column); err != nil {
+				_ = rows.Close()
+				return report, fmt.Errorf("scan %s column INSERT privilege: %w", contract.table, err)
+			}
+			actual[column] = true
+		}
+		if err := rows.Close(); err != nil {
+			return report, fmt.Errorf("close %s column INSERT privileges: %w", contract.table, err)
+		}
+		if err := rows.Err(); err != nil {
+			return report, fmt.Errorf("iterate %s column INSERT privileges: %w", contract.table, err)
+		}
+		report.add("columns_"+contract.table+"_insert", sameSet(actual, contract.columns),
+			fmt.Sprintf("column INSERT privileges must match the reviewed enqueue fields for %s", contract.table))
 	}
 	report.Ready = true
 	for _, check := range report.Checks {

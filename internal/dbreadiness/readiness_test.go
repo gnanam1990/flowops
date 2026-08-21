@@ -68,6 +68,20 @@ func TestVerifyRuntimeSQLRejectsSurplusSignerColumnUpdatePrivilege(t *testing.T)
 	}
 }
 
+func TestVerifyRuntimeSQLRejectsSurplusSellerJobInsertColumnPrivilege(t *testing.T) {
+	db, mock := readinessDB(t, true, nil, map[string][]string{"ascp_seller_jobs": {"state"}})
+	report, err := VerifyRuntimeSQL(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Ready {
+		t.Fatal("surplus seller state INSERT privilege was marked ready")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateRuntimeURLRequiresVerifiedTLS(t *testing.T) {
 	postgresURL := func(mode string) string {
 		return strings.Join([]string{"postgresql", "://runtime@", "db.example/flowops?sslmode=", mode}, "")
@@ -145,6 +159,8 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 		"ascp_chain_observations":            {"SELECT": true, "INSERT": true},
 		"ascp_ledger_transactions":           {"SELECT": true, "INSERT": true},
 		"ascp_ledger_postings":               {"SELECT": true, "INSERT": true},
+		"ascp_seller_jobs":                   {"SELECT": true},
+		"ascp_seller_responses":              {"SELECT": true},
 		"ascp_events":                        {"SELECT": true, "INSERT": true},
 		"ascp_event_checkpoints":             {"SELECT": true},
 	}
@@ -174,6 +190,19 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 		}
 		mock.ExpectQuery(`(?s)SELECT column_name.*information_schema\.columns`).
 			WithArgs(contract.table).WillReturnRows(rows)
+	}
+	for _, contract := range runtimeColumnInserts {
+		rows := sqlmock.NewRows([]string{"column_name"})
+		columns := make([]string, 0, len(contract.columns))
+		for column := range contract.columns {
+			columns = append(columns, column)
+		}
+		sort.Strings(columns)
+		columns = append(columns, columnExtras[contract.table]...)
+		for _, column := range columns {
+			rows.AddRow(column)
+		}
+		mock.ExpectQuery(`(?s)SELECT column_name.*information_schema\.columns`).WithArgs(contract.table).WillReturnRows(rows)
 	}
 	return db, mock
 }

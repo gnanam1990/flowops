@@ -22,6 +22,8 @@ for required in \
 	'GRANT UPDATE (state, attempts, delivered_at)' \
 	'GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts' \
 	'GRANT SELECT, INSERT ON ascp_keeper_jobs' \
+	'GRANT SELECT ON ascp_seller_jobs, ascp_seller_responses' \
+	'GRANT INSERT (job_id,operation_id,organization_id,chain_id,leadership_epoch,deliver_by,method,request_url' \
 	'GRANT SELECT, INSERT ON ascp_events' \
 	'GRANT SELECT ON ascp_event_checkpoints' \
 	'GRANT UPDATE (state, locked_transaction_hash, locked_block_number, locked_block_hash' \
@@ -37,7 +39,7 @@ fi
 
 keeper_grant_file=deploy/control-plane/configure-keeper-role.sql
 for required in \
-    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
+	'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
     'GRANT SELECT, INSERT ON ascp_keeper_jobs, ascp_keeper_nonce_sequences' \
     'GRANT UPDATE (lease_owner, lease_token, lease_expires_at, nonce, state' \
     'GRANT UPDATE (next_nonce, updated_at)' \
@@ -50,6 +52,60 @@ if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$keeper_grant_file
     echo "keeper grant script contains a forbidden broad privilege" >&2
     exit 1
 fi
+
+rails_grant_file=deploy/control-plane/configure-rails-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
+	'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
+    'GRANT SELECT ON ascp_seller_jobs, ascp_seller_attempts, ascp_seller_responses' \
+    'GRANT SELECT ON ascp_payment_operations' \
+    'GRANT INSERT ON ascp_seller_attempts, ascp_seller_responses' \
+    'GRANT UPDATE (state,eligible_after,lease_owner,lease_token,lease_expires_at,attempt_count' \
+    'GRANT UPDATE (state,completed_at,result_code) ON ascp_seller_attempts'
+do
+	grep -F "$required" "$rails_grant_file" >/dev/null
+done
+
+rails_grants_are_safe() {
+	awk 'BEGIN { RS=";" }
+	{
+		statement=toupper($0)
+		if (statement !~ /GRANT/) next
+		gsub(/[[:space:]]+/, " ", statement)
+		sub(/^.*GRANT /, "", statement)
+		split(statement, parts, " ON ")
+		privileges=parts[1]
+		gsub(/[ ]*,[ ]*/, ",", privileges)
+		if (privileges ~ /(^|,)(ALL([ ]+PRIVILEGES)?|DELETE|TRUNCATE|TRIGGER|REFERENCES|UPDATE)(,|$)/) exit 1
+	}' "$@"
+}
+
+if ! rails_grants_are_safe "$rails_grant_file"; then
+	echo "rails grant script contains a forbidden broad privilege" >&2
+	exit 1
+fi
+
+if printf '%s\n' 'GRANT SELECT, DELETE ON ascp_seller_jobs TO role;' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject a mixed DELETE grant" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT UPDATE ON ascp_seller_jobs TO role;' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject table-wide UPDATE" >&2
+	exit 1
+fi
+if printf '%s\n' 'grant select, delete on ascp_seller_jobs to role;' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject lowercase DELETE" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT UPDATE, SELECT ON ascp_seller_jobs TO role;' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject mixed table-wide UPDATE" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT SELECT,UPDATE ON ascp_seller_jobs TO role;' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject no-space mixed table-wide UPDATE" >&2
+	exit 1
+fi
+printf '%s\n' 'GRANT UPDATE (state) ON ascp_seller_jobs TO role;' | rails_grants_are_safe
 
 checkpointer_grant_file=deploy/control-plane/configure-checkpointer-role.sql
 for required in \

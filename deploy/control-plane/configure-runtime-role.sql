@@ -31,6 +31,11 @@ GRANT SELECT, INSERT ON ascp_bearer_handles, ascp_sign_requests,
 GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts,
     ascp_chain_observations, ascp_ledger_transactions, ascp_ledger_postings TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_keeper_jobs TO :"runtime_role";
+GRANT SELECT ON ascp_seller_jobs, ascp_seller_responses TO :"runtime_role";
+GRANT INSERT (job_id,operation_id,organization_id,chain_id,leadership_epoch,deliver_by,method,request_url,
+    headers_json,request_body,canonical_spec_json,offer_json,payment_json,binding_json,locked_transaction_hash,
+    payer,validated_chain_time,input_hash,eligible_after,created_at,updated_at)
+    ON ascp_seller_jobs TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_events TO :"runtime_role";
 GRANT SELECT ON ascp_event_checkpoints TO :"runtime_role";
 GRANT UPDATE (state) ON ascp_bearer_handles TO :"runtime_role";
