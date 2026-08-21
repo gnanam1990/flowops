@@ -59,6 +59,18 @@ contract EscrowDirectoryGovernor {
     function approve(ServiceDirectory directory, uint64 versionId, bytes32 proposalHash) external {
         directory.approveVersion(versionId, proposalHash);
     }
+
+    function addVerifier(ASCPCallEscrow escrow, address key, uint64 epoch) external {
+        escrow.addVerifier(key, epoch);
+    }
+
+    function revokeVerifier(ASCPCallEscrow escrow, address key) external {
+        escrow.revokeVerifier(key);
+    }
+
+    function pause(ASCPCallEscrow escrow) external {
+        escrow.setEmergencyPause();
+    }
 }
 
 contract EscrowSafeHarness {
@@ -82,6 +94,7 @@ contract ASCPCallEscrowTest is Test {
     MockUSDC internal usdc;
     DirectoryLockHarness internal directory;
     ASCPCallEscrow internal escrow;
+    EscrowDirectoryGovernor internal settlementGovernor;
     EscrowSafeHarness internal buyer;
     ServiceDirectory.SellerLeaf internal seller;
     ServiceDirectory.ResourceLeaf internal resource;
@@ -91,7 +104,10 @@ contract ASCPCallEscrowTest is Test {
         usdc = new MockUSDC();
         directory = new DirectoryLockHarness();
         buyer = new EscrowSafeHarness();
-        escrow = new ASCPCallEscrow(IERC20(address(usdc)), IServiceDirectory(address(directory)), address(buyer));
+        settlementGovernor = new EscrowDirectoryGovernor();
+        escrow = new ASCPCallEscrow(
+            IERC20(address(usdc)), IServiceDirectory(address(directory)), address(buyer), address(settlementGovernor)
+        );
         seller = ServiceDirectory.SellerLeaf({
             sellerId: keccak256("seller"),
             payoutAddress: makeAddr("pay-to"),
@@ -209,8 +225,12 @@ contract ASCPCallEscrowTest is Test {
         uint64 activatesAt = realDirectory.getProposal(proposalHash).effectiveActivatesAt;
         vm.warp(activatesAt);
 
-        ASCPCallEscrow realEscrow =
-            new ASCPCallEscrow(IERC20(address(usdc)), IServiceDirectory(address(realDirectory)), address(buyer));
+        ASCPCallEscrow realEscrow = new ASCPCallEscrow(
+            IERC20(address(usdc)),
+            IServiceDirectory(address(realDirectory)),
+            address(buyer),
+            address(settlementGovernor)
+        );
         ASCPCallEscrow.ExecutionCommitment memory c = _commitment();
         c.escrowContract = address(realEscrow);
         c.directoryVersion = 1;
@@ -312,8 +332,12 @@ contract ASCPCallEscrowTest is Test {
 
     function testLockRejectsFeeOnTransferAssetAtomically() public {
         FeeToken feeToken = new FeeToken();
-        ASCPCallEscrow feeEscrow =
-            new ASCPCallEscrow(IERC20(address(feeToken)), IServiceDirectory(address(directory)), address(buyer));
+        ASCPCallEscrow feeEscrow = new ASCPCallEscrow(
+            IERC20(address(feeToken)),
+            IServiceDirectory(address(directory)),
+            address(buyer),
+            address(settlementGovernor)
+        );
         ASCPCallEscrow.ExecutionCommitment memory c = _commitment();
         c.asset = address(feeToken);
         c.escrowContract = address(feeEscrow);
@@ -344,6 +368,53 @@ contract ASCPCallEscrowTest is Test {
         assertEq(usdc.balanceOf(address(buyer)), 1_000_000);
         assertEq(escrow.totalLocked(), 0);
         assertEq(uint8(escrow.getCall(callId).state), uint8(ASCPCallEscrow.State.Refunded));
+    }
+
+    function testAckMovesNoFundsAndStillExpiresToBuyerRefund() public {
+        ASCPCallEscrow.ExecutionCommitment memory c = _commitment();
+        bytes32 callId =
+            keccak256(abi.encodePacked(escrow.executionCommitmentDigest(c, address(escrow), block.chainid)));
+        buyer.lock(escrow, c, seller, resource, new bytes32[](0), new bytes32[](0));
+        vm.prank(seller.ackAuthority);
+        escrow.ack(callId);
+        assertEq(uint8(escrow.getCall(callId).state), uint8(ASCPCallEscrow.State.Acked));
+        assertEq(usdc.balanceOf(seller.payoutAddress), 0);
+        vm.warp(c.settleBy + 1);
+        escrow.claimExpired(callId);
+        assertEq(uint8(escrow.getCall(callId).state), uint8(ASCPCallEscrow.State.Refunded));
+    }
+
+    function testVerifierReleaseIsEpochBoundSingleUseAndRevocable() public {
+        uint256 verifierKey = 0xBEEF;
+        address verifier = vm.addr(verifierKey);
+        settlementGovernor.addVerifier(escrow, verifier, 7);
+        vm.expectRevert(abi.encodeWithSelector(ASCPCallEscrow.VerifierActivationPending.selector, verifier));
+        escrow.activateVerifier(verifier);
+        vm.warp(block.timestamp + escrow.VERIFIER_ACTIVATION_DELAY());
+        escrow.activateVerifier(verifier);
+        ASCPCallEscrow.ExecutionCommitment memory c = _commitment();
+        bytes32 callId =
+            keccak256(abi.encodePacked(escrow.executionCommitmentDigest(c, address(escrow), block.chainid)));
+        buyer.lock(escrow, c, seller, resource, new bytes32[](0), new bytes32[](0));
+        ASCPCallEscrow.VerdictAttestation memory a = _releaseAttestation(callId, c, 7, 11);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(verifierKey, escrow.verdictAttestationDigest(a));
+        escrow.release(callId, a, abi.encodePacked(r, s, v));
+        assertEq(usdc.balanceOf(seller.payoutAddress), c.amount);
+        assertEq(uint8(escrow.getCall(callId).state), uint8(ASCPCallEscrow.State.Released));
+        vm.expectRevert(
+            abi.encodeWithSelector(ASCPCallEscrow.WrongState.selector, callId, ASCPCallEscrow.State.Released)
+        );
+        escrow.release(callId, a, abi.encodePacked(r, s, v));
+
+        c.operationId = keccak256("revoked-operation");
+        bytes32 second =
+            keccak256(abi.encodePacked(escrow.executionCommitmentDigest(c, address(escrow), block.chainid)));
+        buyer.lock(escrow, c, seller, resource, new bytes32[](0), new bytes32[](0));
+        a = _releaseAttestation(second, c, 7, 12);
+        (v, r, s) = vm.sign(verifierKey, escrow.verdictAttestationDigest(a));
+        settlementGovernor.revokeVerifier(escrow, verifier);
+        vm.expectRevert(abi.encodeWithSelector(ASCPCallEscrow.VerifierNotActive.selector, verifier, 7));
+        escrow.release(second, a, abi.encodePacked(r, s, v));
     }
 
     function _commitment() internal view returns (ASCPCallEscrow.ExecutionCommitment memory c) {
@@ -377,5 +448,28 @@ contract ASCPCallEscrowTest is Test {
     function _proof(bytes32 sibling) internal pure returns (bytes32[] memory proof) {
         proof = new bytes32[](1);
         proof[0] = sibling;
+    }
+
+    function _releaseAttestation(
+        bytes32 callId,
+        ASCPCallEscrow.ExecutionCommitment memory c,
+        uint64 epoch,
+        uint256 nonce
+    ) internal view returns (ASCPCallEscrow.VerdictAttestation memory) {
+        return ASCPCallEscrow.VerdictAttestation({
+            callId: callId,
+            commitmentHash: escrow.executionCommitmentDigest(c, address(escrow), block.chainid),
+            escrowContract: address(escrow),
+            verifierEpoch: epoch,
+            verificationSpecHash: c.verificationSpecHash,
+            verifierSoftwareHash: keccak256("verifier-v1"),
+            deliveryHash: keccak256("delivery"),
+            deliveredAt: uint64(block.timestamp),
+            evidenceHash: keccak256("evidence"),
+            verdict: escrow.VERDICT_RELEASE(),
+            verdictNonce: nonce,
+            issuedAt: uint64(block.timestamp),
+            validUntil: uint64(block.timestamp + 5 minutes)
+        });
     }
 }

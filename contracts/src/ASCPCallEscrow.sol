@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ServiceDirectory} from "./ServiceDirectory.sol";
 
 interface IServiceDirectory {
@@ -40,11 +41,41 @@ contract ASCPCallEscrow is ReentrancyGuard {
     uint8 public constant PROTECTION_ESCROW = 1;
     uint64 public constant MIN_SETTLEMENT_MARGIN = 30 minutes;
     uint64 public constant MIN_ONCHAIN_VERIFICATION_BUFFER = 120 seconds;
+    uint64 public constant VERIFIER_ACTIVATION_DELAY = 24 hours;
+    uint64 public constant MAX_ATTESTATION_WINDOW = 15 minutes;
+    uint8 public constant VERDICT_RELEASE = 1;
+    uint8 public constant VERDICT_EARLY_REFUND = 2;
+    bytes32 public constant VERDICT_ATTESTATION_TYPEHASH = keccak256(
+        "VerdictAttestation(bytes32 callId,bytes32 commitmentHash,address escrowContract,uint64 verifierEpoch,bytes32 verificationSpecHash,bytes32 verifierSoftwareHash,bytes32 deliveryHash,uint64 deliveredAt,bytes32 evidenceHash,uint8 verdict,uint256 verdictNonce,uint64 issuedAt,uint64 validUntil)"
+    );
 
     enum State {
         None,
         Locked,
+        Acked,
+        Released,
         Refunded
+    }
+
+    struct VerdictAttestation {
+        bytes32 callId;
+        bytes32 commitmentHash;
+        address escrowContract;
+        uint64 verifierEpoch;
+        bytes32 verificationSpecHash;
+        bytes32 verifierSoftwareHash;
+        bytes32 deliveryHash;
+        uint64 deliveredAt;
+        bytes32 evidenceHash;
+        uint8 verdict;
+        uint256 verdictNonce;
+        uint64 issuedAt;
+        uint64 validUntil;
+    }
+
+    struct PendingVerifier {
+        uint64 epoch;
+        uint64 activatesAt;
     }
 
     struct ExecutionCommitment {
@@ -90,8 +121,14 @@ contract ASCPCallEscrow is ReentrancyGuard {
     IERC20 public immutable usdc;
     IServiceDirectory public immutable serviceDirectory;
     address public immutable safe;
+    address public immutable governor;
     uint256 public totalLocked;
     mapping(bytes32 callId => Call call_) private _calls;
+    mapping(address key => uint64 epoch) public activeVerifierEpoch;
+    mapping(address key => PendingVerifier pending) public pendingVerifier;
+    mapping(address key => bool revoked) public verifierRevoked;
+    mapping(uint256 nonce => bool used) public usedVerdictNonces;
+    bool public emergencyPaused;
 
     event CallLocked(
         bytes32 indexed callId,
@@ -103,10 +140,35 @@ contract ASCPCallEscrow is ReentrancyGuard {
         uint64 settleBy
     );
     event CallRefunded(bytes32 indexed callId, bytes32 indexed operationId, address indexed buyer, uint256 amount);
+    event CallAcked(bytes32 indexed callId, bytes32 indexed operationId);
+    event CallReleased(
+        bytes32 indexed callId,
+        bytes32 indexed operationId,
+        bytes32 indexed commitmentHash,
+        bytes32 deliveryHash,
+        bytes32 evidenceHash,
+        address payTo,
+        uint256 amount
+    );
+    event VerifierAdded(address indexed key, uint64 epoch, uint64 activatesAt);
+    event VerifierActivated(address indexed key, uint64 epoch);
+    event VerifierRevoked(address indexed key, uint64 epoch);
+    event EmergencyPauseSet();
 
     error AssetNotContract(address asset);
     error DirectoryNotContract(address directory);
     error SafeNotContract(address safe);
+    error GovernorNotContract(address governor);
+    error NotGovernor(address caller);
+    error NotAckAuthority(address caller);
+    error WrongState(bytes32 callId, State have);
+    error AckWindowClosed();
+    error EmergencyPaused();
+    error InvalidVerdict();
+    error VerifierNotActive(address signer, uint64 epoch);
+    error VerdictNonceUsed(uint256 nonce);
+    error VerifierActivationPending(address key);
+    error InvalidVerifier();
     error NotSafe(address caller);
     error InvalidCommitment();
     error ChainMismatch(uint256 expected, uint256 actual);
@@ -121,13 +183,15 @@ contract ASCPCallEscrow is ReentrancyGuard {
     error InexactFunding(uint256 expected, uint256 received);
     error RefundNotAvailable(bytes32 callId, State state, uint64 settleBy, uint256 nowTs);
 
-    constructor(IERC20 usdc_, IServiceDirectory serviceDirectory_, address safe_) {
+    constructor(IERC20 usdc_, IServiceDirectory serviceDirectory_, address safe_, address governor_) {
         if (address(usdc_).code.length == 0) revert AssetNotContract(address(usdc_));
         if (address(serviceDirectory_).code.length == 0) revert DirectoryNotContract(address(serviceDirectory_));
         if (safe_.code.length == 0) revert SafeNotContract(safe_);
+        if (governor_.code.length == 0) revert GovernorNotContract(governor_);
         usdc = usdc_;
         serviceDirectory = serviceDirectory_;
         safe = safe_;
+        governor = governor_;
     }
 
     /// @notice Locks the exact EIP-712 commitment. The caller is stored as the
@@ -206,12 +270,104 @@ contract ASCPCallEscrow is ReentrancyGuard {
         return _calls[callId];
     }
 
+    function addVerifier(address key, uint64 epoch) external {
+        if (msg.sender != governor) revert NotGovernor(msg.sender);
+        if (key == address(0) || epoch == 0 || epoch <= activeVerifierEpoch[key]) revert InvalidVerifier();
+        pendingVerifier[key] = PendingVerifier(epoch, uint64(block.timestamp) + VERIFIER_ACTIVATION_DELAY);
+        verifierRevoked[key] = false;
+        emit VerifierAdded(key, epoch, uint64(block.timestamp) + VERIFIER_ACTIVATION_DELAY);
+    }
+
+    function activateVerifier(address key) external {
+        PendingVerifier memory p = pendingVerifier[key];
+        if (p.epoch == 0 || block.timestamp < p.activatesAt) revert VerifierActivationPending(key);
+        activeVerifierEpoch[key] = p.epoch;
+        delete pendingVerifier[key];
+        emit VerifierActivated(key, p.epoch);
+    }
+
+    function revokeVerifier(address key) external {
+        if (msg.sender != governor) revert NotGovernor(msg.sender);
+        verifierRevoked[key] = true;
+        emit VerifierRevoked(key, activeVerifierEpoch[key]);
+    }
+
+    function setEmergencyPause() external {
+        if (msg.sender != governor) revert NotGovernor(msg.sender);
+        emergencyPaused = true;
+        emit EmergencyPauseSet();
+    }
+
+    function ack(bytes32 callId) external nonReentrant {
+        Call storage call_ = _calls[callId];
+        if (call_.state != State.Locked) revert WrongState(callId, call_.state);
+        if (msg.sender != call_.ackAuthority) revert NotAckAuthority(msg.sender);
+        if (block.timestamp > call_.acceptBy) revert AckWindowClosed();
+        call_.state = State.Acked;
+        emit CallAcked(callId, call_.operationId);
+    }
+
+    function release(bytes32 callId, VerdictAttestation calldata a, bytes calldata signature) external nonReentrant {
+        Call storage call_ = _consumeVerdict(callId, a, signature, VERDICT_RELEASE);
+        call_.state = State.Released;
+        totalLocked -= call_.amount;
+        usdc.safeTransfer(call_.payTo, call_.amount);
+        emit CallReleased(
+            callId, call_.operationId, call_.commitmentHash, a.deliveryHash, a.evidenceHash, call_.payTo, call_.amount
+        );
+    }
+
+    function refundWithVerdict(bytes32 callId, VerdictAttestation calldata a, bytes calldata signature)
+        external
+        nonReentrant
+    {
+        Call storage call_ = _consumeVerdict(callId, a, signature, VERDICT_EARLY_REFUND);
+        call_.state = State.Refunded;
+        totalLocked -= call_.amount;
+        usdc.safeTransfer(call_.buyer, call_.amount);
+        emit CallRefunded(callId, call_.operationId, call_.buyer, call_.amount);
+    }
+
+    function verdictAttestationDigest(VerdictAttestation calldata a) public view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                keccak256(abi.encode(EIP712_DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this))),
+                keccak256(abi.encode(VERDICT_ATTESTATION_TYPEHASH, a))
+            )
+        );
+    }
+
+    function _consumeVerdict(bytes32 callId, VerdictAttestation calldata a, bytes calldata signature, uint8 verdict)
+        private
+        returns (Call storage call_)
+    {
+        if (emergencyPaused) revert EmergencyPaused();
+        call_ = _calls[callId];
+        if (call_.state != State.Locked && call_.state != State.Acked) revert WrongState(callId, call_.state);
+        if (
+            a.verdict != verdict || a.callId != callId || a.commitmentHash != call_.commitmentHash
+                || a.escrowContract != address(this) || a.verificationSpecHash != call_.verificationSpecHash
+                || a.verifierSoftwareHash == bytes32(0) || a.deliveryHash == bytes32(0) || a.evidenceHash == bytes32(0)
+                || a.deliveredAt == 0 || a.deliveredAt > call_.deliverBy || a.deliveredAt > a.issuedAt
+                || a.issuedAt > block.timestamp || a.validUntil <= a.issuedAt
+                || a.validUntil - a.issuedAt > MAX_ATTESTATION_WINDOW || a.validUntil > call_.settleBy
+                || block.timestamp > a.validUntil
+        ) revert InvalidVerdict();
+        if (usedVerdictNonces[a.verdictNonce]) revert VerdictNonceUsed(a.verdictNonce);
+        address signer = ECDSA.recover(verdictAttestationDigest(a), signature);
+        if (verifierRevoked[signer] || activeVerifierEpoch[signer] != a.verifierEpoch || a.verifierEpoch == 0) {
+            revert VerifierNotActive(signer, a.verifierEpoch);
+        }
+        usedVerdictNonces[a.verdictNonce] = true;
+    }
+
     /// @notice The non-bypassable recovery path for a lock that has not yet
     /// received a verdict settlement. It pays only the snapshotted buyer.
     function claimExpired(bytes32 callId) external nonReentrant {
         Call storage call_ = _calls[callId];
         // forge-lint: disable-next-line(block-timestamp)
-        if (call_.state != State.Locked || block.timestamp <= call_.settleBy) {
+        if ((call_.state != State.Locked && call_.state != State.Acked) || block.timestamp <= call_.settleBy) {
             revert RefundNotAvailable(callId, call_.state, call_.settleBy, block.timestamp);
         }
         call_.state = State.Refunded;
