@@ -37,9 +37,23 @@ The signer interface accepts only a 32-byte digest and returns a signature. The 
 - Different delivery for an already decided call: conflict; no second signature.
 - Expired or revoked cached bearer: withheld. The on-chain escrow independently rechecks every binding and retains `claimExpired` as the non-bypassable recovery path.
 
-## Production operations boundary
+## Durable runtime
 
-The core requires production adapters before activation: durable exclusive nonce allocation, durable per-call decision/signature journal across restarts and replicas, finalized verifier-governance reads with startup/backfill reconciliation, HSM or isolated key custody, authenticated delivery capture, metrics/audit export, and keeper submission. `MemoryNonceSource` and the in-process decision cache are deliberately non-production. No code in this module broadcasts a transaction.
+`cmd/ascp-verifier` now supplies a loopback-only authenticated runtime. It pins
+one Base chain and escrow, consumes HMAC-authenticated captured-delivery bodies
+with durable replay nonces, allocates PostgreSQL verdict nonces, serializes one
+append-only decision per call across replicas, revalidates stored signatures,
+and reads only fresh finalized verifier-key observations. Migration `0020` and
+`configure-verifier-role.sql` enforce the append-only and least-privilege DB
+contract. The process has no RPC writer or transaction broadcaster.
+
+The included private-file digest signer re-opens and validates its key before
+every signature. It is a local/test adapter, not an HSM claim. Production still
+requires an idempotent HSM operation handle, the finalized observation writer
+and backfill reconciliation, authenticated seller-worker delivery wiring,
+metrics/audit export, restore drills, and keeper submission. Moving the service
+off-host additionally requires authenticated encrypted transport. No code in
+this module broadcasts a transaction.
 
 ## Acceptance criteria
 

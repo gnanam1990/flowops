@@ -281,6 +281,69 @@ fi
 printf '%s\n' 'GRANT USAGE ON SCHEMA public TO :"recovery_role";' \
     'GRANT SELECT ON public.ascp_events, public.ascp_event_checkpoints TO :"recovery_role";' | recovery_grants_are_safe
 
+verifier_migration=internal/controlapi/migrations/0020_ascp_verifier_runtime.sql
+for required in \
+    'CREATE SEQUENCE IF NOT EXISTS ascp_verdict_nonce_seq' \
+    'CREATE TABLE IF NOT EXISTS ascp_verdict_decisions' \
+    'CREATE TABLE IF NOT EXISTS ascp_verifier_key_observations' \
+    'CREATE TABLE IF NOT EXISTS ascp_verifier_intake_replays' \
+    'reject_ascp_verifier_immutable_mutation'
+do
+    grep -F "$required" "$verifier_migration" >/dev/null
+done
+
+verifier_grant_file=deploy/control-plane/configure-verifier-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT' \
+    'ALTER ROLE :"verifier_role" SET search_path = public' \
+    'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC' \
+    "REVOKE TEMPORARY ON DATABASE %I FROM %I', current_database(), :'verifier_role'" \
+    'REVOKE CREATE ON SCHEMA public FROM PUBLIC' \
+    'REVOKE CREATE ON SCHEMA public FROM :"verifier_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"verifier_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM :"verifier_role"' \
+    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"verifier_role"'
+do
+    grep -F "$required" "$verifier_grant_file" >/dev/null
+done
+
+verifier_grants_are_safe() {
+    awk 'BEGIN { RS=";" }
+    {
+        statement=toupper($0)
+        if (statement !~ /GRANT/) next
+        if (statement ~ /\/\*|--/) exit 1
+        gsub(/[[:space:]]+/, " ", statement)
+        sub(/^ /, "", statement)
+        sub(/ $/, "", statement)
+        if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"VERIFIER_ROLE\"") next
+        if (statement == "GRANT SELECT, INSERT ON PUBLIC.ASCP_VERDICT_DECISIONS TO :\"VERIFIER_ROLE\"") next
+        if (statement == "GRANT SELECT ON PUBLIC.ASCP_VERIFIER_KEY_OBSERVATIONS TO :\"VERIFIER_ROLE\"") next
+        if (statement == "GRANT INSERT ON PUBLIC.ASCP_VERIFIER_INTAKE_REPLAYS TO :\"VERIFIER_ROLE\"") next
+        if (statement == "GRANT USAGE, SELECT ON SEQUENCE PUBLIC.ASCP_VERDICT_NONCE_SEQ TO :\"VERIFIER_ROLE\"") next
+        exit 1
+    }' "$@"
+}
+
+if ! verifier_grants_are_safe "$verifier_grant_file"; then
+    echo "verifier grant script contains an unapproved privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'grant select, update on public.ascp_verdict_decisions to :"verifier_role";' | verifier_grants_are_safe; then
+    echo "verifier grant checker failed to reject lowercase UPDATE" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT SELECT/*hidden*/, DELETE ON public.ascp_verdict_decisions TO :"verifier_role";' | verifier_grants_are_safe; then
+    echo "verifier grant checker failed to reject a comment-obfuscated privilege" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT SELECT ON public.ascp_payment_operations TO :"verifier_role";' | verifier_grants_are_safe; then
+    echo "verifier grant checker failed to reject unrelated table access" >&2
+    exit 1
+fi
+verifier_grants_are_safe "$verifier_grant_file"
+
 if [ -n "${FLOWOPS_DATABASE_URL:-}" ]; then
     go run ./cmd/postgres-readiness sql
 else

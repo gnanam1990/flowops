@@ -42,6 +42,7 @@ var (
 	ErrAttestationExpired   = errors.New("cached verdict attestation expired")
 	ErrVerifierInactive     = errors.New("verifier key is not active at the configured epoch")
 	ErrSigning              = errors.New("verdict signing failed")
+	ErrStateUnavailable     = errors.New("verifier durable state unavailable")
 )
 
 type Verdict string
@@ -106,6 +107,14 @@ type NonceSource interface {
 	Next(context.Context) (*big.Int, error)
 }
 
+// durableNonceSource is implemented only by sources whose storage layer
+// guarantees global uniqueness. Those sources do not need the process-local
+// duplicate guard, which would otherwise grow for the lifetime of the process.
+type durableNonceSource interface {
+	NonceSource
+	durableNonceSource()
+}
+
 // VerifierKeyGate reads finalized chain governance state. It is checked both
 // before evaluation and immediately before signing or returning a cached
 // bearer, so revocation stops publication without relying only on execution-
@@ -124,6 +133,7 @@ type Config struct {
 	Signer               DigestSigner
 	Nonces               NonceSource
 	VerifierKeyGate      VerifierKeyGate
+	DecisionJournal      DecisionJournal
 }
 
 type SignedDecision struct {
@@ -145,15 +155,10 @@ type SignedDecision struct {
 }
 
 type Service struct {
-	config Config
-	mu     sync.Mutex
-	byCall map[string]cachedDecision
-	nonces map[string]struct{}
-}
-
-type cachedDecision struct {
-	fingerprint string
-	decision    SignedDecision
+	config      Config
+	nonceMu     sync.Mutex
+	nonces      map[string]struct{}
+	trackNonces bool
 }
 
 func New(config Config) (*Service, error) {
@@ -178,7 +183,11 @@ func New(config Config) (*Service, error) {
 		engines[class] = engine
 	}
 	config.Engines = engines
-	return &Service{config: config, byCall: make(map[string]cachedDecision), nonces: make(map[string]struct{})}, nil
+	if config.DecisionJournal == nil {
+		config.DecisionJournal = NewMemoryDecisionJournal()
+	}
+	_, durableNonces := config.Nonces.(durableNonceSource)
+	return &Service{config: config, nonces: make(map[string]struct{}), trackNonces: !durableNonces}, nil
 }
 
 // VerifyAndSign performs all spec and evidence checks before asking the
@@ -212,21 +221,62 @@ func (s *Service) VerifyAndSign(ctx context.Context, input Input) (SignedDecisio
 	if err := s.config.VerifierKeyGate.CheckActive(
 		ctx, input.Commitment.ChainID, input.Commitment.EscrowContract, s.config.Signer.Address(), s.config.VerifierEpoch,
 	); err != nil {
+		if errors.Is(err, ErrStateUnavailable) {
+			return SignedDecision{}, err
+		}
 		return SignedDecision{}, fmt.Errorf("%w: %v", ErrVerifierInactive, err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if existing, ok := s.byCall[callID]; ok {
-		if existing.fingerprint != fingerprint {
-			return SignedDecision{}, ErrDecisionConflict
+	decision, err := s.config.DecisionJournal.Execute(ctx, callID, input.Commitment.ChainID, fingerprint, func(workCtx context.Context) (SignedDecision, error) {
+		computed, computeErr := s.evaluateAndSign(workCtx, callID, commitmentHash, canonicalSpec, input, recomputedDigest, deliveryHash)
+		if computeErr != nil {
+			return SignedDecision{}, computeErr
 		}
-		if uint64(s.config.Clock().UTC().Unix()) > existing.decision.Attestation.ValidUntil {
-			return SignedDecision{}, ErrAttestationExpired
+		if bindingErr := s.validateDecisionBinding(computed, callID, commitmentHash.Hex(), canonicalSpec.Hash, deliveryHash, input,
+			s.config.Clock().UTC().Unix()); bindingErr != nil {
+			s.forgetNonce(computed.Attestation.VerdictNonce)
+			return SignedDecision{}, bindingErr
 		}
-		return existing.decision, nil
+		return computed, nil
+	})
+	if err != nil {
+		return SignedDecision{}, err
 	}
+	now := s.config.Clock().UTC().Unix()
+	if err := s.validateDecisionBinding(decision, callID, commitmentHash.Hex(), canonicalSpec.Hash, deliveryHash, input, now); err != nil {
+		return SignedDecision{}, err
+	}
+	if uint64(now) > decision.Attestation.ValidUntil {
+		return SignedDecision{}, ErrAttestationExpired
+	}
+	if err := s.config.VerifierKeyGate.CheckActive(
+		ctx, input.Commitment.ChainID, input.Commitment.EscrowContract, s.config.Signer.Address(), s.config.VerifierEpoch,
+	); err != nil {
+		if errors.Is(err, ErrStateUnavailable) {
+			return SignedDecision{}, err
+		}
+		return SignedDecision{}, fmt.Errorf("%w: %v", ErrVerifierInactive, err)
+	}
+	return decision, nil
+}
 
+func (s *Service) validateDecisionBinding(decision SignedDecision, callID, commitmentHash, specHash, deliveryHash string,
+	input Input, now int64) error {
+	if err := validateStoredDecision(decision, callID, input.Commitment.ChainID); err != nil {
+		return fmt.Errorf("%w: journal decision validation: %v", ErrStateUnavailable, err)
+	}
+	if now <= 0 || decision.CommitmentHash != commitmentHash || decision.SpecHash != specHash || decision.DeliveryHash != deliveryHash ||
+		decision.Attestation.EscrowContract != input.Commitment.EscrowContract || decision.Attestation.VerifierEpoch != s.config.VerifierEpoch ||
+		decision.Attestation.VerifierSoftwareHash != s.config.VerifierSoftwareHash || decision.Attestation.DeliveredAt != input.Delivery.CapturedAt ||
+		decision.Attestation.IssuedAt > uint64(now) || decision.Attestation.ValidUntil > input.Commitment.SettleBy ||
+		decision.Signer != strings.ToLower(s.config.Signer.Address().Hex()) {
+		return fmt.Errorf("%w: journal decision does not match the active request or verifier", ErrStateUnavailable)
+	}
+	return nil
+}
+
+func (s *Service) evaluateAndSign(ctx context.Context, callID string, commitmentHash common.Hash, canonicalSpec CanonicalSpec,
+	input Input, recomputedDigest, deliveryHash string) (SignedDecision, error) {
 	result, err := s.evaluate(ctx, canonicalSpec.Spec, input.Delivery, recomputedDigest, input.Commitment.DeliverBy)
 	if err != nil {
 		return SignedDecision{}, err
@@ -267,11 +317,14 @@ func (s *Service) VerifyAndSign(ctx context.Context, input Input) (SignedDecisio
 		return SignedDecision{}, ErrInvalidDelivery
 	}
 	nonce, err := s.config.Nonces.Next(ctx)
-	if err != nil || nonce == nil || nonce.Sign() < 0 || nonce.BitLen() > 256 {
+	if err != nil {
+		return SignedDecision{}, fmt.Errorf("%w: nonce source: %w", ErrSigning, err)
+	}
+	if nonce == nil || nonce.Sign() < 0 || nonce.BitLen() > 256 {
 		return SignedDecision{}, fmt.Errorf("%w: nonce source", ErrSigning)
 	}
 	nonceText := nonce.String()
-	if _, duplicate := s.nonces[nonceText]; duplicate {
+	if !s.reserveNonce(nonceText) {
 		return SignedDecision{}, fmt.Errorf("%w: duplicate nonce", ErrSigning)
 	}
 	contractVerdict := ContractVerdictRelease
@@ -287,19 +340,26 @@ func (s *Service) VerifyAndSign(ctx context.Context, input Input) (SignedDecisio
 	}
 	digest, err := attestation.Digest(input.Commitment.ChainID)
 	if err != nil {
+		s.forgetNonce(nonceText)
 		return SignedDecision{}, err
 	}
 	if err := s.config.VerifierKeyGate.CheckActive(
 		ctx, input.Commitment.ChainID, input.Commitment.EscrowContract, s.config.Signer.Address(), s.config.VerifierEpoch,
 	); err != nil {
+		s.forgetNonce(nonceText)
+		if errors.Is(err, ErrStateUnavailable) {
+			return SignedDecision{}, err
+		}
 		return SignedDecision{}, fmt.Errorf("%w: %v", ErrVerifierInactive, err)
 	}
 	signature, err := s.config.Signer.SignDigest(ctx, digest)
 	if err != nil {
+		s.forgetNonce(nonceText)
 		return SignedDecision{}, fmt.Errorf("%w: %v", ErrSigning, err)
 	}
 	normalizedSignature, signer, err := normalizeAndRecover(signature, digest)
 	if err != nil || signer != s.config.Signer.Address() {
+		s.forgetNonce(nonceText)
 		return SignedDecision{}, fmt.Errorf("%w: signature did not recover configured signer", ErrSigning)
 	}
 	decision := SignedDecision{
@@ -309,9 +369,29 @@ func (s *Service) VerifyAndSign(ctx context.Context, input Input) (SignedDecisio
 		Signer: strings.ToLower(signer.Hex()), Signature: "0x" + hex.EncodeToString(normalizedSignature),
 		CanonicalSpec: canonicalSpec.CanonicalJSON, VerificationTime: uint64(now.Unix()),
 	}
-	s.nonces[nonceText] = struct{}{}
-	s.byCall[callID] = cachedDecision{fingerprint: fingerprint, decision: decision}
 	return decision, nil
+}
+
+func (s *Service) reserveNonce(nonce string) bool {
+	if !s.trackNonces {
+		return true
+	}
+	s.nonceMu.Lock()
+	defer s.nonceMu.Unlock()
+	if _, duplicate := s.nonces[nonce]; duplicate {
+		return false
+	}
+	s.nonces[nonce] = struct{}{}
+	return true
+}
+
+func (s *Service) forgetNonce(nonce string) {
+	if !s.trackNonces {
+		return
+	}
+	s.nonceMu.Lock()
+	delete(s.nonces, nonce)
+	s.nonceMu.Unlock()
 }
 
 func (s *Service) evaluate(ctx context.Context, spec VerificationSpec, delivery Delivery, recomputedDigest string, deliverBy uint64) (EngineResult, error) {
