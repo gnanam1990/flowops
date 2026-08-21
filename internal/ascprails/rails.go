@@ -306,6 +306,10 @@ func (s *Service) dispatchUnderLeadershipFence(ctx context.Context, lease Lease)
 	}
 	lease.Job = job
 	s.record(ctx, job, "EGRESS_STARTED")
+	if job.LeaseExpiresAt.Sub(s.config.Clock().UTC()) < s.config.HTTPTimeout+leaseWriteMargin {
+		state, next := s.retryState(job.AttemptCount)
+		return s.failWithoutResponse(ctx, lease, "LEASE_BUDGET_EXHAUSTED_BEFORE_EGRESS", state, next)
+	}
 	response, err := s.client.Do(prepared.WithContext(ctx))
 	if err != nil {
 		state, next := s.retryState(job.AttemptCount)

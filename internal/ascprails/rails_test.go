@@ -220,6 +220,30 @@ func TestLeadershipFenceCoversSellerEffect(t *testing.T) {
 	}
 }
 
+func TestExhaustedLeaseBudgetBlocksSellerEffect(t *testing.T) {
+	fixture := railsFixture(t)
+	store := newMemoryStore(fixture.now)
+	currentTime := fixture.now
+	transport := &fakeRestrictedTransport{}
+	chain := &fakeChain{observations: []ChainObservation{fixture.observation}, onConfirmed: func() {
+		currentTime = currentTime.Add(6 * time.Second)
+		store.now = currentTime
+	}}
+	config := testConfig(fixture.now)
+	config.Clock = func() time.Time { return currentTime }
+	service, err := NewService(store, staticLeadership(7), chain,
+		staticOperationGate{}, staticIntegrityGate{}, transport, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = service.Enqueue(t.Context(), fixture.input)
+	job, err := service.DispatchOne(t.Context())
+	if err != nil || job.State != StateRetryWait || job.AttemptCount != 1 ||
+		job.LastError != "LEASE_BUDGET_EXHAUSTED_BEFORE_EGRESS" || transport.calls != 0 {
+		t.Fatalf("state=%s attempts=%d code=%s calls=%d err=%v", job.State, job.AttemptCount, job.LastError, transport.calls, err)
+	}
+}
+
 func TestDeadlineTransitionRecordsOperationalEvent(t *testing.T) {
 	fixture := railsFixture(t)
 	store := newMemoryStore(fixture.now)

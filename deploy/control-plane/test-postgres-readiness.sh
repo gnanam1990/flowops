@@ -75,7 +75,7 @@ rails_grants_are_safe() {
 		sub(/^.*GRANT /, "", statement)
 		split(statement, parts, " ON ")
 		privileges=parts[1]
-		if (privileges ~ /(^|, )(ALL([ ]+PRIVILEGES)?|DELETE|TRUNCATE|TRIGGER|REFERENCES)(,|$)/ || privileges ~ /(^|, )UPDATE$/) exit 1
+		if (privileges ~ /(^|, )(ALL([ ]+PRIVILEGES)?|DELETE|TRUNCATE|TRIGGER|REFERENCES|UPDATE)(,|$)/) exit 1
 	}' "$@"
 }
 
@@ -94,6 +94,10 @@ if printf '%s\n' 'GRANT UPDATE ON ascp_seller_jobs TO role;' | rails_grants_are_
 fi
 if printf '%s\n' 'grant select, delete on ascp_seller_jobs to role;' | rails_grants_are_safe; then
 	echo "rails grant checker failed to reject lowercase DELETE" >&2
+	exit 1
+fi
+if printf '%s\n' 'GRANT UPDATE, SELECT ON ascp_seller_jobs TO role;' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject mixed table-wide UPDATE" >&2
 	exit 1
 fi
 printf '%s\n' 'GRANT UPDATE (state) ON ascp_seller_jobs TO role;' | rails_grants_are_safe
