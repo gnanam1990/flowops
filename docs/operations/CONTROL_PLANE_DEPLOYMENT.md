@@ -136,6 +136,65 @@ or run owner bootstrap commands.
    `FLOWOPS_DB_EVIDENCE_FILE` are present; otherwise it prints `NOT RUN` and the
    deployment gate stays open.
 
+Seller egress and other controlled effects use two additional credentials.
+Apply `configure-leadership-role.sql` to the isolated leadership-controller
+role; it alone may bootstrap, drain, and advance epochs. Apply
+`configure-rails-role.sql` to the seller-egress worker role. The rails and API
+roles can only read the active epoch, while the controller receives only the
+column updates, event inserts, and event sequence access required by the
+state machine:
+
+```sh
+psql "$FLOWOPS_DATABASE_ADMIN_URL" \
+  --set=leadership_role=flowops_leadership \
+  --file=deploy/control-plane/configure-leadership-role.sql
+psql "$FLOWOPS_DATABASE_ADMIN_URL" \
+  --set=rails_role=flowops_rails \
+  --file=deploy/control-plane/configure-rails-role.sql
+```
+
+Do not share the leadership credential with the API, seller worker, signer,
+keeper, or reconciliation services. Run the following only as transient trusted
+operator jobs with `FLOWOPS_LEADERSHIP_DATABASE_URL` set through the secret
+manager; it must use `sslmode=verify-full`. Bootstrap once with
+`/flowops/ascp-leadership bootstrap` and strict JSON on stdin. Use `status` as a
+read-only verification query. A cutover runs the shipped `drain` command and,
+only after its documented checks succeed, the `advance` command:
+
+```sh
+printf '%s\n' '{"organizationId":"org-id","actor":"operator-id","evidenceDigest":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}' \
+  | /flowops/ascp-leadership bootstrap
+printf '%s\n' '{"organizationId":"org-id"}' \
+  | /flowops/ascp-leadership status
+printf '%s\n' '{"organizationId":"org-id","expectedEpoch":1,"actor":"operator-id","evidenceDigest":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
+  | /flowops/ascp-leadership drain
+# Wait for success, then stop and verify all old-epoch hosts.
+printf '%s\n' '{"organizationId":"org-id","expectedEpoch":1,"actor":"operator-id","evidenceDigest":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' \
+  | /flowops/ascp-leadership advance
+```
+
+The drain command does not return until prior fenced effects have exited. Never
+advance merely because a client timeout occurred; first query
+`/flowops/ascp-leadership status`, reconcile the durable state/event evidence,
+and verify old-host shutdown. Status includes durable `inFlightEffectIds` when
+completion persistence was lost. Those IDs are a fail-closed recovery queue,
+not permission to clear work on a timer. First reconcile the effect-specific
+idempotency key and durable seller/payment outcome. Only after independently
+proving the old effect host dead, preserve that proof as a lower-case SHA-256
+digest and run:
+
+```sh
+printf '%s\n' '{"organizationId":"org-id","expectedEpoch":1,"effectId":"0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","actor":"recovery-operator","evidenceDigest":"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}' \
+  | /flowops/ascp-leadership abandon-effect
+```
+
+Re-run status and require an empty in-flight list before advance. Abandonment is
+allowed only in `DRAINING` and is permanently attributable; the rails worker
+cannot perform it. Seller callback database writes use the rails credential,
+never the isolated controller credential. Database URLs and credentials
+belong only in the environment/secret mount, never JSON, arguments, logs, or
+tickets.
+
 SQL cannot prove provider backup retention, PITR, encryption at rest, or
 monitoring. A signed operator record is tamper evidence and an accountable
 snapshot, not an independent provider attestation. Before pilot admission,

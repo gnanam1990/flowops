@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
 	"github.com/gnanam1990/flowops/internal/ascpverifier"
 	"github.com/gnanam1990/flowops/pkg/escrowcall"
 	"github.com/gnanam1990/flowops/pkg/purchasespec"
@@ -52,7 +53,7 @@ var (
 	ErrResponseTooBig         = errors.New("seller response exceeds capture limit")
 	ErrUnsafeResponse         = errors.New("seller response is not bound to the operation")
 	ErrOperationNotExecutable = errors.New("payment operation is not executable")
-	ErrLeadershipChanged      = errors.New("seller egress leadership epoch changed")
+	ErrLeadershipChanged      = ascpleadership.ErrEpochChanged
 	hashPattern               = regexp.MustCompile(`^0x[0-9a-f]{64}$`)
 	addressPattern            = regexp.MustCompile(`^0x[0-9a-f]{40}$`)
 	identifierPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
