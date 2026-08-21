@@ -18,6 +18,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpreservation"
 	"github.com/gnanam1990/flowops/internal/policy"
 	"github.com/gnanam1990/flowops/pkg/envelope"
+	"github.com/gnanam1990/flowops/pkg/executioncommitment"
 	"github.com/gnanam1990/flowops/pkg/purchasespec"
 	"github.com/gnanam1990/flowops/pkg/sellerquote"
 	"github.com/jackc/pgx/v5"
@@ -235,6 +236,9 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	if _, err := db.ExecContext(ctx, `INSERT INTO organizations (id, name) VALUES ('org_sign_it', 'Signer Integration')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO agents (organization_id,id,customer_id,name,status) VALUES ('org_sign_it','agent_sign_it','customer_sign_it','Signer Agent','ACTIVE')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO ascp_intents
 			(operation_id, organization_id, actor_id, endpoint, idempotency_key, canonical_input_hash,
@@ -266,6 +270,31 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 			 reservation_id, created_at, evaluated_at)
 		VALUES ($1,$2,$3,'VALIDATED_AND_RESERVED',$4,$5,$6,$6)`, authorizationID, approvalID,
 		operationID, ascpIntegrationHash(2010), reservationID, now); err != nil {
+		t.Fatal(err)
+	}
+	commitment := executioncommitment.Commitment{
+		OrgDomain: ascpIntegrationHash(2020), OperationID: operationID, Rail: executioncommitment.RailEscrow,
+		SchemeVersion: executioncommitment.SchemeVersionV1, Protection: executioncommitment.ProtectionEscrow,
+		EscrowContract: "0x9999999999999999999999999999999999999999", PurchaseSpecHash: ascpIntegrationHash(2021),
+		QuoteHash: ascpIntegrationHash(2022), VerificationSpecHash: ascpIntegrationHash(2023),
+		DeclaredWorkTime: 60, VerificationBudgetSeconds: 30, DirectoryVersion: 9,
+		SellerID: ascpIntegrationHash(2024), ResourceID: ascpIntegrationHash(2025), PayTo: ascpIntegrationPayee,
+		AckAuthority: ascpIntegrationAck, Amount: "10", ChainID: "84532", Asset: ascpIntegrationUSDC,
+		QuoteExpiresAt: uint64(now.Add(time.Hour).Unix()), AcceptBy: uint64(now.Add(10 * time.Minute).Unix()),
+		DeliverBy: uint64(now.Add(15 * time.Minute).Unix()), SettleBy: uint64(now.Add(25 * time.Minute).Unix()),
+	}
+	commitmentDigest, err := commitment.Digest(commitment.EscrowContract, commitment.ChainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitmentJSON, _ := json.Marshal(commitment)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_policy_decisions
+			(decision_id,organization_id,agent_id,operation_id,outcome,reason,policy_version,policy_hash,
+			 commitment_hash,commitment_json,review_json,review_snapshot_hash,approval_id,evaluated_at)
+		VALUES ($1,'org_sign_it','agent_sign_it',$2,'REQUIRE_APPROVAL','manual_review','policy_sign_it',$3,
+			$4,$5,'{}'::jsonb,$6,$7,$8)`, ascpIntegrationHash(2026), operationID, ascpIntegrationHash(2027),
+		commitmentDigest.Hex(), commitmentJSON, ascpIntegrationHash(2009), approvalID, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,6 +361,14 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	if reservationState != "AUTHORIZATION_LIVE" || handleState != "ACTIVE" || encryptedArtifact != nil {
 		t.Fatalf("reservation=%s handle=%s artifact=%x", reservationState, handleState, encryptedArtifact)
 	}
+	var paymentState, paymentCommitment, paymentBuyer, paymentAmount string
+	if err := db.QueryRowContext(ctx, `SELECT state,commitment_hash,buyer,amount_base_units FROM ascp_payment_operations WHERE operation_id=$1`, operationID).
+		Scan(&paymentState, &paymentCommitment, &paymentBuyer, &paymentAmount); err != nil {
+		t.Fatal(err)
+	}
+	if paymentState != "AUTH_SIGNED" || paymentCommitment != commitmentDigest.Hex() || paymentBuyer != ascpIntegrationSafe || paymentAmount != "10" {
+		t.Fatalf("payment operation state=%s commitment=%s buyer=%s amount=%s", paymentState, paymentCommitment, paymentBuyer, paymentAmount)
+	}
 
 	mirrorDigest, err := ascpbearer.RegistryMirrorDigest(entry)
 	if err != nil {
@@ -354,6 +391,36 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	}
 	if outboxEvents != 4 {
 		t.Fatalf("outbox events=%d", outboxEvents)
+	}
+}
+
+func TestASCPPolicyDecisionMigrationRepairsOnlyKnownLegacyChecksum(t *testing.T) {
+	db := ascpIntegrationDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const legacy = "8f6b589d79331504cdcafa6e54476783d4d6919998020062dc47644b3a333fb9"
+	if _, err := db.ExecContext(ctx, `UPDATE flowops_schema_migrations SET checksum=$2 WHERE name=$1`, "0011_ascp_policy_decisions.sql", legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyMigrations(ctx, db); err != nil {
+		t.Fatalf("repair known 0011 checksum: %v", err)
+	}
+	manifest, err := MigrationManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected string
+	for _, migration := range manifest {
+		if migration.Name == "0011_ascp_policy_decisions.sql" {
+			expected = migration.Checksum
+		}
+	}
+	var stored string
+	if err := db.QueryRowContext(ctx, `SELECT checksum FROM flowops_schema_migrations WHERE name=$1`, "0011_ascp_policy_decisions.sql").Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if expected == "" || stored != expected || stored == legacy {
+		t.Fatalf("stored checksum=%s expected=%s", stored, expected)
 	}
 }
 

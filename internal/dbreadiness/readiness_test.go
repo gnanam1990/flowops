@@ -140,6 +140,11 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 		"ascp_directory_snapshots":           {"SELECT": true, "INSERT": true},
 		"ascp_directory_quote_evidence":      {"SELECT": true, "INSERT": true},
 		"ascp_directory_heads":               {"SELECT": true, "INSERT": true, "UPDATE": true},
+		"ascp_payment_operations":            {"SELECT": true, "INSERT": true},
+		"ascp_payment_attempts":              {"SELECT": true, "INSERT": true},
+		"ascp_chain_observations":            {"SELECT": true, "INSERT": true},
+		"ascp_ledger_transactions":           {"SELECT": true, "INSERT": true},
+		"ascp_ledger_postings":               {"SELECT": true, "INSERT": true},
 	}
 	for _, table := range runtimeTables {
 		for _, privilege := range tablePrivileges {

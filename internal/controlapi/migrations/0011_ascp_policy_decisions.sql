@@ -30,6 +30,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'ascp_execution_authorizations_auto_decision_fk'
+          AND conrelid = 'ascp_execution_authorizations'::regclass
     ) THEN
         ALTER TABLE ascp_execution_authorizations
             ADD CONSTRAINT ascp_execution_authorizations_auto_decision_fk

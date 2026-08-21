@@ -577,6 +577,59 @@ func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *
 	return httptest.NewServer(server), store, chain, lifecycle, journal, now
 }
 
+type settlementRegistrarStub struct {
+	request ASCPSettlementAttemptRequest
+	replay  bool
+}
+
+func (s *settlementRegistrarStub) Register(_ context.Context, request ASCPSettlementAttemptRequest) (ASCPSettlementAttempt, error) {
+	s.request = request
+	return ASCPSettlementAttempt{ASCPSettlementAttemptRequest: request, State: "SUBMITTED", RegisteredAt: time.Date(2026, 8, 21, 8, 0, 0, 0, time.UTC), Replayed: s.replay}, nil
+}
+
+func TestASCPSettlementAttemptUsesDedicatedKeeperCredentialAndCannotAssertOutcome(t *testing.T) {
+	now := time.Date(2026, 8, 21, 8, 0, 0, 0, time.UTC)
+	store := newMemoryStore(func() time.Time { return now })
+	chain := newHealthyChain(now)
+	lifecycle, journal := testLifecycle(t, store, chain, now)
+	defer journal.Close()
+	registrar := &settlementRegistrarStub{}
+	keeperKey := []byte(strings.Repeat("k", 32))
+	if _, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain,
+		OperatorControlKey: keeperKey, KeeperCallbackKey: keeperKey, ASCPSettlement: registrar}); err == nil {
+		t.Fatal("shared operator and keeper credential was accepted")
+	}
+	server, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain,
+		OperatorControlKey: []byte(strings.Repeat("o", 32)), KeeperCallbackKey: keeperKey, ASCPSettlement: registrar})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestBody := ASCPSettlementAttemptRequest{OperationID: "0x" + strings.Repeat("1", 64), Action: "LOCK", TransactionHash: "0x" + strings.Repeat("2", 64)}
+	body, _ := json.Marshal(requestBody)
+	request := httptest.NewRequest(http.MethodPost, "/v1/ascp/settlement-attempts", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32))))
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("operator credential reached keeper endpoint: %d", recorder.Code)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/ascp/settlement-attempts", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString(keeperKey))
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated || registrar.request != requestBody || strings.Contains(recorder.Body.String(), "success") || strings.Contains(recorder.Body.String(), "finality") {
+		t.Fatalf("keeper attempt response=%d body=%s request=%+v", recorder.Code, recorder.Body.String(), registrar.request)
+	}
+	malformed := []byte(`{"operationId":"0x` + strings.Repeat("1", 64) + `","action":"LOCK","transactionHash":"0x` + strings.Repeat("2", 64) + `","success":true}`)
+	request = httptest.NewRequest(http.MethodPost, "/v1/ascp/settlement-attempts", bytes.NewReader(malformed))
+	request.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString(keeperKey))
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("keeper asserted outcome: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestSitesExchangeIsMembershipBoundAndNeverCarriesStepUp(t *testing.T) {
 	server, store, _, _, journal, _ := setupServer(t)
 	defer server.Close()

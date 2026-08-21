@@ -15,6 +15,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	for _, name := range []string{
 		"FLOWOPS_DATABASE_URL", "FLOWOPS_ENVELOPE_KEY_ID", "FLOWOPS_ENVELOPE_PRIVATE_KEY_B64",
 		"FLOWOPS_SITE_SESSION_KEY_B64", "FLOWOPS_RECONCILIATION_JOURNAL", "FLOWOPS_OPERATOR_CONTROL_KEY_B64",
+		"FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64",
 		"FLOWOPS_BASE_RPC_PROVIDERS_JSON",
 		"FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC",
 	} {
@@ -188,6 +189,7 @@ func TestLoadConfigRejectsEveryZeroValuedPlatformPort(t *testing.T) {
 func setObserverRuntime(t *testing.T) {
 	t.Helper()
 	t.Setenv("FLOWOPS_OPERATOR_CONTROL_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32))))
+	t.Setenv("FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("h", 32))))
 	t.Setenv("FLOWOPS_BASE_RPC_PROVIDERS_JSON", `[{"name":"rpc_alpha","url":"https://alpha.rpc.example/v1"},{"name":"rpc_beta","url":"https://beta.rpc.example/v1"}]`)
 	t.Setenv("FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "1000000")
 	t.Setenv("FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC", "10000000")

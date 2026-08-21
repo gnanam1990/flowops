@@ -25,6 +25,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
+	"github.com/gnanam1990/flowops/internal/ascpsettlement"
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/directoryreader"
@@ -48,6 +49,7 @@ type startupConfig struct {
 	trustProxy             bool
 	applyMigrations        bool
 	operatorKey            []byte
+	keeperCallbackKey      []byte
 	mcpAllowedOrigins      []string
 	observerRPCs           []reconciliation.RPCProvider
 	observerConfig         reconciliation.Config
@@ -217,12 +219,37 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create Base reconciliation worker: %w", err)
 	}
+	ascpSettlementStore, err := ascpsettlement.NewPostgresStore(db)
+	if err != nil {
+		return fmt.Errorf("create ASCP settlement store: %w", err)
+	}
+	ascpSettlementReader, err := ascpsettlement.NewReader(ascpsettlement.ReaderConfig{
+		Observers: observers, Quorum: cfg.observerConfig.ObserverQuorum,
+		SafeConfirmations:      cfg.observerConfig.MinConfirmations,
+		FinalizedConfirmations: cfg.observerConfig.ReorgLookback + 1,
+	})
+	if err != nil {
+		return fmt.Errorf("create ASCP settlement reader: %w", err)
+	}
+	ascpSettlementWorker, err := ascpsettlement.NewWorker(ascpSettlementStore, ascpSettlementReader, ascpsettlement.WorkerConfig{
+		Interval: cfg.reconciliationInterval, QueryTimeout: cfg.reconciliationTimeout, BatchSize: 100,
+		OnCycle: func(cycle ascpsettlement.WorkerCycle) {
+			slog.Info("ASCP settlement cycle completed", "pending", cycle.Pending, "applied", cycle.Applied,
+				"finalityChecks", cycle.FinalityChecks, "canonicalConfirmed", cycle.CanonicalConfirmed,
+				"reorgsRecovered", cycle.ReorgsRecovered, "deferred", cycle.Deferred)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create ASCP settlement worker: %w", err)
+	}
 	api, err := controlapi.NewServer(controlapi.ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
-		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
+		OperatorControlKey: cfg.operatorKey, KeeperCallbackKey: cfg.keeperCallbackKey,
+		SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
 		Reconciliation: reconciliationEngine,
 		ASCPAgent:      ascpAgentService,
 		ASCPFlow:       ascpOrchestrationService,
+		ASCPSettlement: ascpSettlementRegistrar{store: ascpSettlementStore},
 	})
 	if err != nil {
 		return err
@@ -260,6 +287,10 @@ func run(ctx context.Context) error {
 	go func() {
 		reconciliationErrors <- reconciliationWorker.Run(shutdownSignal)
 	}()
+	ascpSettlementErrors := make(chan error, 1)
+	go func() {
+		ascpSettlementErrors <- ascpSettlementWorker.Run(shutdownSignal)
+	}()
 	select {
 	case <-shutdownSignal.Done():
 	case err := <-serverErrors:
@@ -277,6 +308,10 @@ func run(ctx context.Context) error {
 	case err := <-reconciliationErrors:
 		if err != nil {
 			return err
+		}
+	case err := <-ascpSettlementErrors:
+		if err != nil {
+			return fmt.Errorf("run ASCP settlement worker: %w", err)
 		}
 	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -332,6 +367,14 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, err
 	}
 	cfg.operatorKey = operatorKey
+	keeperCallbackKey, err := decodeSymmetricKey("FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64", os.Getenv("FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64"))
+	if err != nil {
+		return startupConfig{}, err
+	}
+	if subtle.ConstantTimeCompare(operatorKey, keeperCallbackKey) == 1 || subtle.ConstantTimeCompare(siteSessionKey, keeperCallbackKey) == 1 {
+		return startupConfig{}, errors.New("ASCP keeper callback key must be distinct from operator and site-session keys")
+	}
+	cfg.keeperCallbackKey = keeperCallbackKey
 	signerReceiptKeys, err := parseSignerKeys(os.Getenv("FLOWOPS_SIGNER_RECEIPT_KEYS_JSON"))
 	if err != nil {
 		return startupConfig{}, err
