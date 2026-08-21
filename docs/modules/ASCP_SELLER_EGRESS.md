@@ -39,8 +39,11 @@ later send.
    Wall-clock time only controls queue scheduling and lease expiry.
 4. `escrowcall.PrepareRequest` reconstructs and revalidates the exact stored
    request and sole generated `PAYMENT-SIGNATURE` immediately before send.
-5. `SENDING` and its attempt/evidence are committed before network I/O. The
-   restricted transport permits canonical HTTPS port 443 only, disables
+5. `SENDING` and its attempt/evidence are committed before network I/O. That
+   transaction locks and rechecks the payment operation, so a reconciliation
+   state change is serialized either before the fence (and blocks egress) or
+   after an already-authorized send begins. The restricted transport permits
+   canonical HTTPS port 443 only, disables
    proxies/compression/cookies/redirects, rejects Host overrides and private,
    loopback, link-local, documentation, reserved or mixed DNS answers, and
    re-resolves immediately before the numeric-IP connection.
@@ -92,7 +95,9 @@ updates. Neither role receives wallet or signer authority.
 The compatible seller must verify finalized escrow state and store one
 idempotent `{callId -> result}` through at least `settleBy + 400 days`. Buyer
 exact replay depends on that protocol contract; general HTTP POST retry is not
-claimed safe.
+claimed safe. A chain reorg observed after the durable `SENDING` fence cannot
+recall in-flight network bytes, so seller-side escrow validation remains a
+required second authorization boundary.
 
 ## Observability and operations
 

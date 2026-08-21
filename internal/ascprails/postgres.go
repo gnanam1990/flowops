@@ -45,7 +45,8 @@ func (g *PostgresOperationGate) Check(ctx context.Context, job Job) error {
 	}
 	if state != "LOCKED_FINALIZED" || organizationID != job.OrganizationID || callID != job.JobID || chainID != job.ChainID ||
 		commitmentHash != job.Binding.CommitmentHash || escrowContract != job.Binding.EscrowContract || asset != job.Offer.Accepted.Asset ||
-		payTo != job.Offer.Accepted.PayTo || amount != job.Offer.Accepted.Amount || lockHash != job.LockedTransactionHash || payer != job.Payer || settleBy.Unix() <= int64(job.DeliverBy) {
+		job.Offer.Accepted.Network != fmt.Sprintf("eip155:%d", job.ChainID) || payTo != job.Offer.Accepted.PayTo || amount != job.Offer.Accepted.Amount ||
+		lockHash != job.LockedTransactionHash || payer != job.Payer || settleBy.Unix() <= int64(job.DeliverBy) {
 		return ErrOperationNotExecutable
 	}
 	return nil
@@ -195,13 +196,12 @@ func (s *PostgresStore) MarkSending(ctx context.Context, lease Lease, observatio
 	if err := validateObservation(observation); err != nil {
 		return Job{}, err
 	}
-	now := s.clock().UTC()
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return Job{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	job, err := loadLeasedSellerJob(ctx, tx, lease, now)
+	job, now, err := loadLeasedSellerJob(ctx, tx, lease, s.clock)
 	if err != nil {
 		return Job{}, err
 	}
@@ -243,13 +243,12 @@ func (s *PostgresStore) RecordResponse(ctx context.Context, lease Lease, respons
 		(state != StateRetryWait && state != StateResponseStored && state != StateMissing && state != StateDeadLetter) {
 		return Job{}, ErrInvalidJob
 	}
-	now := s.clock().UTC()
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return Job{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	job, err := loadLeasedSellerJob(ctx, tx, lease, now)
+	job, now, err := loadLeasedSellerJob(ctx, tx, lease, s.clock)
 	if err != nil {
 		return Job{}, err
 	}
@@ -263,15 +262,15 @@ func (s *PostgresStore) RecordResponse(ctx context.Context, lease Lease, respons
 	if err != nil {
 		return Job{}, classifyPostgres(err)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE ascp_seller_attempts SET state='HTTP_RESPONSE',completed_at=$3,result_code=$4
+	result, err := tx.ExecContext(ctx, `UPDATE ascp_seller_attempts SET state='HTTP_RESPONSE',completed_at=$3,result_code=$4
 		WHERE job_id=$1 AND attempt_number=$2 AND state='STARTED'`, job.JobID, response.Attempt, now, code)
-	if err != nil {
-		return Job{}, err
+	if err != nil || rowsAffected(result) != 1 {
+		return Job{}, errors.Join(err, ErrStateConflict)
 	}
 	if state != StateRetryWait {
 		eligible = time.Time{}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE ascp_seller_jobs SET state=$2,eligible_after=COALESCE($3,eligible_after),last_error=$4,updated_at=$5 WHERE job_id=$1`,
+	result, err = tx.ExecContext(ctx, `UPDATE ascp_seller_jobs SET state=$2,eligible_after=COALESCE($3,eligible_after),last_error=$4,updated_at=$5 WHERE job_id=$1`,
 		job.JobID, state, nullTimestamp(eligible), code, now)
 	if err != nil || rowsAffected(result) != 1 {
 		return Job{}, errors.Join(err, ErrStateConflict)
@@ -290,13 +289,12 @@ func (s *PostgresStore) RecordTransportFailure(ctx context.Context, lease Lease,
 	if len(code) == 0 || len(code) > 256 || state != StateRetryWait && state != StateDeadLetter {
 		return Job{}, ErrInvalidJob
 	}
-	now := s.clock().UTC()
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return Job{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	job, err := loadLeasedSellerJob(ctx, tx, lease, now)
+	job, now, err := loadLeasedSellerJob(ctx, tx, lease, s.clock)
 	if err != nil {
 		return Job{}, err
 	}
@@ -332,13 +330,12 @@ func (s *PostgresStore) MarkDeadlineMissing(ctx context.Context, lease Lease, ob
 	if validateObservation(observation) != nil || observation.Timestamp < lease.Job.DeliverBy || len(code) == 0 {
 		return Job{}, ErrInvalidJob
 	}
-	now := s.clock().UTC()
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return Job{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	job, err := loadLeasedSellerJob(ctx, tx, lease, now)
+	job, now, err := loadLeasedSellerJob(ctx, tx, lease, s.clock)
 	if err != nil {
 		return Job{}, err
 	}
@@ -453,18 +450,26 @@ func loadSellerJob(ctx context.Context, queryer sellerQueryer, jobID string) (Jo
 	return job, nil
 }
 
-func loadLeasedSellerJob(ctx context.Context, tx *sql.Tx, lease Lease, now time.Time) (Job, error) {
+func loadLeasedSellerJob(ctx context.Context, tx *sql.Tx, lease Lease, clock func() time.Time) (Job, time.Time, error) {
+	var lockedJobID string
+	if err := tx.QueryRowContext(ctx, `SELECT job_id FROM ascp_seller_jobs WHERE job_id=$1 FOR UPDATE`, lease.Job.JobID).Scan(&lockedJobID); err != nil {
+		return Job{}, time.Time{}, err
+	}
 	job, err := loadSellerJob(ctx, tx, lease.Job.JobID)
 	if err != nil {
-		return Job{}, err
+		return Job{}, time.Time{}, err
 	}
+	now := clock().UTC()
 	if job.LeaseOwner != lease.Job.LeaseOwner || job.LeaseToken != lease.Token || !job.LeaseExpiresAt.After(now) {
-		return Job{}, ErrLeaseLost
+		return Job{}, time.Time{}, ErrLeaseLost
 	}
-	return job, nil
+	return job, now, nil
 }
 
 func encodeInput(input EnqueueInput) (string, []byte, []byte, []byte, []byte, error) {
+	if input.Headers == nil {
+		input.Headers = make(map[string][]string)
+	}
 	headers, err := json.Marshal(input.Headers)
 	if err != nil {
 		return "", nil, nil, nil, nil, ErrInvalidJob

@@ -70,7 +70,8 @@ func TestDialRevalidatesDNSAndNeverConnectsAfterRebind(t *testing.T) {
 }
 
 func TestValidatingTransportRejectsHostOverrideBeforeNetwork(t *testing.T) {
-	transport, err := newRestrictedTransport(restrictedTransportConfig{Resolver: staticResolver{"public.example": {netip.MustParseAddr("8.8.8.8")}}, Connector: &countingConnector{}})
+	connector := &countingConnector{}
+	transport, err := newRestrictedTransport(restrictedTransportConfig{Resolver: staticResolver{"public.example": {netip.MustParseAddr("8.8.8.8")}}, Connector: connector})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +82,9 @@ func TestValidatingTransportRejectsHostOverrideBeforeNetwork(t *testing.T) {
 	request.Host = "attacker.example"
 	if _, err := transport.RoundTrip(request); !errors.Is(err, ErrUnsafeDestination) {
 		t.Fatalf("error=%v", err)
+	}
+	if connector.calls != 0 {
+		t.Fatalf("connector calls=%d", connector.calls)
 	}
 }
 
@@ -121,7 +125,7 @@ func TestPublicAddressClassification(t *testing.T) {
 	}
 }
 
-func TestProductionRestrictedTransportCannotInjectConnector(t *testing.T) {
+func TestProductionRestrictedTransportHasUnforgeableMarker(t *testing.T) {
 	transport, err := NewRestrictedTransport()
 	if err != nil {
 		t.Fatal(err)

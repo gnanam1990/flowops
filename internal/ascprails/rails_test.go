@@ -158,6 +158,41 @@ func TestCurrentOperationGateFailureBlocksNetwork(t *testing.T) {
 	}
 }
 
+func TestOperationChangeDuringPreparationBlocksNetworkBeforeSendingFence(t *testing.T) {
+	fixture := railsFixture(t)
+	store := newMemoryStore(fixture.now)
+	transport := &fakeRestrictedTransport{}
+	gate := &sequenceOperationGate{errors: []error{nil, ErrOperationNotExecutable}}
+	service, err := NewService(store, staticLeadership(7), &fakeChain{observations: []ChainObservation{fixture.observation}},
+		gate, staticIntegrityGate{}, transport, testConfig(fixture.now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = service.Enqueue(t.Context(), fixture.input)
+	job, err := service.DispatchOne(t.Context())
+	if err != nil || job.State != StateDeadLetter || job.AttemptCount != 0 || job.LastError != "OPERATION_NOT_EXECUTABLE" || transport.calls != 0 || gate.calls != 2 {
+		t.Fatalf("state=%s attempts=%d code=%s calls=%d gate=%d err=%v", job.State, job.AttemptCount, job.LastError, transport.calls, gate.calls, err)
+	}
+}
+
+func TestDeadlineTransitionRecordsOperationalEvent(t *testing.T) {
+	fixture := railsFixture(t)
+	store := newMemoryStore(fixture.now)
+	recorder := &eventRecorder{}
+	config := testConfig(fixture.now)
+	config.Recorder = recorder
+	service, err := NewService(store, staticLeadership(7), &fakeChain{observations: []ChainObservation{{Timestamp: fixture.input.DeliverBy, EvidenceDigest: testHash("33"), ObservedAt: fixture.now}}},
+		staticOperationGate{}, staticIntegrityGate{}, &fakeRestrictedTransport{}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = service.Enqueue(t.Context(), fixture.input)
+	job, err := service.DispatchOne(t.Context())
+	if err != nil || job.State != StateMissing || len(recorder.events) != 1 || recorder.events[0].Code != "DELIVER_BY_REACHED_BEFORE_EGRESS" {
+		t.Fatalf("state=%s events=%+v err=%v", job.State, recorder.events, err)
+	}
+}
+
 func TestStaleChainObservationNeverAuthorizesEgress(t *testing.T) {
 	fixture := railsFixture(t)
 	stale := fixture.observation
@@ -235,6 +270,16 @@ func TestNewServiceRejectsUnrestrictedTransport(t *testing.T) {
 	}
 }
 
+func TestNewServiceRejectsLeaseShorterThanNetworkAndPersistenceWindow(t *testing.T) {
+	fixture := railsFixture(t)
+	config := testConfig(fixture.now)
+	config.LeaseDuration = config.HTTPTimeout + leaseWriteMargin - time.Nanosecond
+	_, err := NewService(newMemoryStore(fixture.now), staticLeadership(7), &fakeChain{}, staticOperationGate{}, staticIntegrityGate{}, &fakeRestrictedTransport{}, config)
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestEnqueueRejectsZeroLockIdentity(t *testing.T) {
 	fixture := railsFixture(t)
 	service := newTestService(t, newMemoryStore(fixture.now), &fakeChain{}, &fakeRestrictedTransport{}, fixture.now)
@@ -253,6 +298,24 @@ func TestEnqueueRejectsDestinationOutsideTransportContract(t *testing.T) {
 		if _, _, err := service.Enqueue(t.Context(), candidate); !errors.Is(err, ErrInvalidJob) {
 			t.Fatalf("destination %q error=%v", raw, err)
 		}
+	}
+}
+
+func TestEnqueueRejectsOfferNetworkThatDiffersFromJobChain(t *testing.T) {
+	fixture := railsFixture(t)
+	fixture.input.Offer.Accepted.Network = escrowcall.BaseMainnetNetwork
+	service := newTestService(t, newMemoryStore(fixture.now), &fakeChain{}, &fakeRestrictedTransport{}, fixture.now)
+	if _, _, err := service.Enqueue(t.Context(), fixture.input); !errors.Is(err, ErrInvalidJob) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestEncodeInputNormalizesNilHeadersToJSONObject(t *testing.T) {
+	fixture := railsFixture(t)
+	fixture.input.Headers = nil
+	_, headers, _, _, _, err := encodeInput(fixture.input)
+	if err != nil || string(headers) != "{}" {
+		t.Fatalf("headers=%s err=%v", headers, err)
 	}
 }
 
@@ -330,9 +393,27 @@ type staticOperationGate struct{ err error }
 
 func (g staticOperationGate) Check(context.Context, Job) error { return g.err }
 
+type sequenceOperationGate struct {
+	errors []error
+	calls  int
+}
+
+func (g *sequenceOperationGate) Check(context.Context, Job) error {
+	index := g.calls
+	g.calls++
+	if index >= len(g.errors) {
+		return nil
+	}
+	return g.errors[index]
+}
+
 type staticIntegrityGate struct{ err error }
 
 func (g staticIntegrityGate) Check(context.Context) error { return g.err }
+
+type eventRecorder struct{ events []Event }
+
+func (r *eventRecorder) Record(_ context.Context, event Event) { r.events = append(r.events, event) }
 
 func (f *fakeChain) Confirmed(context.Context, uint64) (ChainObservation, error) {
 	f.mu.Lock()

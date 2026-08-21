@@ -64,6 +64,7 @@ var runtimeTables = []tableContract{
 	{name: "ascp_ledger_transactions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_ledger_postings", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_seller_jobs", allowed: set("SELECT")},
+	{name: "ascp_seller_responses", allowed: set("SELECT")},
 	{name: "ascp_events", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_event_checkpoints", allowed: set("SELECT")},
 }

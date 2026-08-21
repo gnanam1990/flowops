@@ -28,6 +28,7 @@ import (
 const (
 	MaxResponseBytes = 16 << 20
 	maxAttempts      = 3
+	leaseWriteMargin = 5 * time.Second
 )
 
 type State string
@@ -188,7 +189,7 @@ type Service struct {
 func NewService(store Store, leadership LeadershipGate, chain ChainClock, operations OperationGate, integrity IntegrityGate, transport http.RoundTripper, config Config) (*Service, error) {
 	_, restricted := transport.(interface{ ascpRestrictedTransport() })
 	if store == nil || leadership == nil || chain == nil || operations == nil || integrity == nil || transport == nil || !restricted || !identifierPattern.MatchString(config.WorkerID) ||
-		config.LeaseDuration < time.Second || config.LeaseDuration > time.Minute || config.RetryDelay < time.Second ||
+		config.LeaseDuration < time.Second || config.LeaseDuration > time.Minute || config.HTTPTimeout <= 0 || config.HTTPTimeout+leaseWriteMargin > config.LeaseDuration || config.RetryDelay < time.Second ||
 		config.RetryDelay > time.Hour || config.MaxAttempts != maxAttempts || config.MaxObservationAge < time.Second || config.MaxObservationAge > time.Minute {
 		return nil, ErrInvalidConfig
 	}
@@ -251,7 +252,11 @@ func (s *Service) DispatchOne(ctx context.Context) (Job, error) {
 		return s.failWithoutResponse(ctx, lease, "CHAIN_TIME_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
 	}
 	if observation.Timestamp >= job.DeliverBy {
-		return s.store.MarkDeadlineMissing(ctx, lease, observation, "DELIVER_BY_REACHED_BEFORE_EGRESS")
+		updated, missingErr := s.store.MarkDeadlineMissing(ctx, lease, observation, "DELIVER_BY_REACHED_BEFORE_EGRESS")
+		if missingErr == nil {
+			s.record(ctx, updated, "DELIVER_BY_REACHED_BEFORE_EGRESS")
+		}
+		return updated, missingErr
 	}
 	request, err := newBoundRequest(ctx, job.EnqueueInput)
 	if err != nil {
@@ -260,6 +265,25 @@ func (s *Service) DispatchOne(ctx context.Context) (Job, error) {
 	prepared, err := escrowcall.PrepareRequest(time.Unix(int64(observation.Timestamp), 0).UTC(), request, job.Body, job.Payment, job.Offer, job.Binding, job.CanonicalSpecJSON)
 	if err != nil {
 		return s.failWithoutResponse(ctx, lease, "PRE_EGRESS_BINDING_FAILED", StateDeadLetter, time.Time{})
+	}
+	// Revalidate immediately before the durable SENDING fence. The PostgreSQL
+	// store also locks and rechecks the payment operation while committing that
+	// fence, so an operation-state update cannot interleave with it.
+	if err := s.integrity.Check(ctx); err != nil {
+		return s.failWithoutResponse(ctx, lease, "EVENT_INTEGRITY_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
+	}
+	currentEpoch, err = s.leadership.Current(ctx, job.OrganizationID)
+	if err != nil {
+		return s.failWithoutResponse(ctx, lease, "LEADERSHIP_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
+	}
+	if currentEpoch != job.LeadershipEpoch {
+		return s.failWithoutResponse(ctx, lease, "LEADERSHIP_EPOCH_CHANGED", StateDeadLetter, time.Time{})
+	}
+	if err := s.operations.Check(ctx, job); err != nil {
+		if errors.Is(err, ErrOperationNotExecutable) {
+			return s.failWithoutResponse(ctx, lease, "OPERATION_NOT_EXECUTABLE", StateDeadLetter, time.Time{})
+		}
+		return s.failWithoutResponse(ctx, lease, "OPERATION_STATE_UNAVAILABLE", StateRetryWait, s.config.Clock().UTC().Add(s.config.RetryDelay))
 	}
 	job, err = s.store.MarkSending(ctx, lease, observation)
 	if err != nil {
@@ -352,7 +376,7 @@ func validateInput(input EnqueueInput) error {
 	}
 	spec, err := purchasespec.ValidatePersisted(input.CanonicalSpecJSON, input.Body)
 	if err != nil || spec.OrgID != input.OrganizationID || spec.Method != input.Method || spec.CanonicalURL != input.URL || input.Binding.CallID != input.JobID ||
-		!nonZeroHash(input.LockedTransactionHash) || !nonZeroAddress(input.Payer) {
+		input.Offer.Accepted.Network != fmt.Sprintf("eip155:%d", input.ChainID) || !nonZeroHash(input.LockedTransactionHash) || !nonZeroAddress(input.Payer) {
 		return ErrInvalidJob
 	}
 	return nil
@@ -456,6 +480,9 @@ func (s *Service) classifyResponse(job Job, response StoredResponse) (State, str
 
 func cloneInput(input EnqueueInput) EnqueueInput {
 	input.Headers = input.Headers.Clone()
+	if input.Headers == nil {
+		input.Headers = make(http.Header)
+	}
 	input.Body = append([]byte(nil), input.Body...)
 	input.CanonicalSpecJSON = append([]byte(nil), input.CanonicalSpecJSON...)
 	return input

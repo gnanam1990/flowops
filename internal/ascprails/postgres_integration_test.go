@@ -90,6 +90,23 @@ func TestPostgresSellerEgressConcurrentClaimRecoveryAndImmutability(t *testing.T
 		t.Fatal("database accepted missing offer asset binding")
 	}
 	_ = mutation.Rollback()
+	networkMutation, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := networkMutation.ExecContext(t.Context(), `CREATE TEMP TABLE seller_job_network_mutation ON COMMIT DROP AS SELECT * FROM ascp_seller_jobs WHERE job_id=$1`, fixture.input.JobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := networkMutation.ExecContext(t.Context(), `DELETE FROM ascp_seller_jobs WHERE job_id=$1`, fixture.input.JobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := networkMutation.ExecContext(t.Context(), `UPDATE seller_job_network_mutation SET offer_json=jsonb_set(offer_json,'{accepted,network}','"eip155:8453"')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := networkMutation.ExecContext(t.Context(), `INSERT INTO ascp_seller_jobs SELECT * FROM seller_job_network_mutation`); err == nil {
+		t.Fatal("database accepted offer network from another chain")
+	}
+	_ = networkMutation.Rollback()
 	if _, replay, err := store.Enqueue(context.Background(), fixture.input); err != nil || !replay {
 		t.Fatalf("exact replay=%t err=%v", replay, err)
 	}
@@ -121,16 +138,23 @@ func TestPostgresSellerEgressConcurrentClaimRecoveryAndImmutability(t *testing.T
 		t.Fatalf("concurrent winners=%d", winners.Load())
 	}
 	lease := <-claimed
+	if _, err := store.ClaimDispatch(t.Context(), "competing-worker", 20*time.Second); !errors.Is(err, ErrNoWork) {
+		t.Fatalf("active lease competing claim=%v", err)
+	}
 	job, err := store.MarkSending(context.Background(), lease, fixture.observation)
 	if err != nil || job.State != StateSending || job.AttemptCount != 1 {
 		t.Fatalf("sending=%+v err=%v", job, err)
 	}
 	// Simulate a process crash after SENDING. Only lease expiry permits a new
 	// exact attempt, and the abandoned attempt becomes explicitly ambiguous.
+	staleLease := lease
 	now = now.Add(21 * time.Second)
-	lease, err = store.ClaimDispatch(context.Background(), "rails-worker", 20*time.Second)
+	lease, err = store.ClaimDispatch(context.Background(), "recovery-worker", 20*time.Second)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := store.MarkSending(t.Context(), staleLease, fixture.observation); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("expired worker sending=%v", err)
 	}
 	job, err = store.MarkSending(context.Background(), lease, fixture.observation)
 	if err != nil || job.AttemptCount != 2 {
@@ -143,6 +167,11 @@ func TestPostgresSellerEgressConcurrentClaimRecoveryAndImmutability(t *testing.T
 	lease.Job = job
 	response := StoredResponse{Attempt: 2, Status: 200, ContentType: "application/json", PaymentResponse: "payment-response-placeholder",
 		Body: []byte("durable result"), Digest: testHash("45"), ReceivedAt: now}
+	staleResponse := response
+	staleResponse.Attempt = 1
+	if _, err := store.RecordResponse(t.Context(), staleLease, staleResponse, StateResponseStored, "RESPONSE_STORED", time.Time{}); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("expired worker response=%v", err)
+	}
 	job, err = store.RecordResponse(context.Background(), lease, response, StateResponseStored, "RESPONSE_STORED", time.Time{})
 	if err != nil || job.State != StateResponseStored {
 		t.Fatalf("stored=%+v err=%v", job, err)

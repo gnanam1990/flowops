@@ -13,6 +13,7 @@ ALTER ROLE :"rails_role"
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE CREATE ON SCHEMA public FROM :"rails_role";
 GRANT USAGE ON SCHEMA public TO :"rails_role";
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM :"rails_role";
 
 GRANT SELECT ON ascp_seller_jobs, ascp_seller_attempts, ascp_seller_responses TO :"rails_role";

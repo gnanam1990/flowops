@@ -17,7 +17,7 @@ the payment worker into an SSRF or payment-header redirect primitive.
 ## Decision
 
 Persist exact immutable egress inputs and fenced attempts in PostgreSQL. Reuse
-the escrow call ID and payment proof for a maximum of three ambiguous retries,
+the escrow call ID and payment proof for a maximum of three ambiguous attempts,
 relying only on the protocol-required seller `{callId -> result}` store. Commit
 the exact HTTP response in an append-only row before obtaining final chain time.
 Recovery from `RESPONSE_STORED` is finalization-only and cannot invoke HTTP.
@@ -25,7 +25,10 @@ Recovery from `RESPONSE_STORED` is finalization-only and cannot invoke HTTP.
 Require current leadership, current reconciliation-owned
 `LOCKED_FINALIZED` operation state and confirmed Base time immediately before
 each send. The database independently binds the job to organization, chain,
-call, commitment, escrow, asset, payee and amount. Use an internally marked
+call, commitment, escrow, asset, payee and amount, and serializes operation
+state changes against the durable `SENDING` fence. Once that fence commits,
+seller-side finalized-escrow validation remains responsible for a later reorg
+because an in-flight HTTP request cannot be recalled. Use an internally marked
 HTTPS-only transport with connect-time DNS revalidation and no proxy,
 compression, cookies or redirects. Use a separate least-privilege rails role.
 
