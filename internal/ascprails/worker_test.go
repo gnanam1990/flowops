@@ -59,6 +59,13 @@ func TestNewWorkerRejectsUnboundedConfiguration(t *testing.T) {
 	}
 }
 
+func TestNewWorkerRejectsTypedNilService(t *testing.T) {
+	var service *sequenceWorkerService
+	if _, err := NewWorker(service, WorkerConfig{Interval: 2 * time.Second, CycleTimeout: time.Second, BatchSize: 1}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("typed nil service error=%v", err)
+	}
+}
+
 type workerResult struct {
 	job Job
 	err error

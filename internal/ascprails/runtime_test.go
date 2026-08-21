@@ -54,6 +54,14 @@ func TestQuorumChainClockRequiresExactIndependentAnchor(t *testing.T) {
 	if _, err := clock.Confirmed(t.Context(), 84532); err == nil {
 		t.Fatal("stale exact quorum produced chain time")
 	}
+	futureHead := base("rpc-a")
+	futureHead.HeadTime = now.Add(6 * time.Second)
+	otherFutureHead := futureHead
+	otherFutureHead.Provider = "rpc-b"
+	clock.source = staticSnapshotSource{result: reconciliation.SnapshotResult{Observations: []reconciliation.Observation{futureHead, otherFutureHead}}}
+	if _, err := clock.Confirmed(t.Context(), 84532); err == nil {
+		t.Fatal("future head exact quorum produced chain time")
+	}
 }
 
 func TestAttestedIntegrityGateBindsSignatureExpiryAndLiveHead(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 )
 
@@ -35,11 +36,24 @@ type Worker struct {
 }
 
 func NewWorker(service WorkerService, config WorkerConfig) (*Worker, error) {
-	if service == nil || config.Interval < time.Second || config.Interval > time.Minute ||
+	if isNilWorkerService(service) || config.Interval < time.Second || config.Interval > time.Minute ||
 		config.CycleTimeout < time.Second || config.CycleTimeout >= config.Interval || config.BatchSize < 1 || config.BatchSize > 100 {
 		return nil, ErrInvalidConfig
 	}
 	return &Worker{service: service, config: config}, nil
+}
+
+func isNilWorkerService(service WorkerService) bool {
+	if service == nil {
+		return true
+	}
+	value := reflect.ValueOf(service)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 func (w *Worker) Run(ctx context.Context) error {

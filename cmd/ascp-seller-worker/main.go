@@ -76,6 +76,10 @@ func run(ctx context.Context) error {
 		cancel()
 		return fmt.Errorf("connect to rails PostgreSQL: %w", err)
 	}
+	if err := requirePublicSchema(startupCtx, db); err != nil {
+		cancel()
+		return err
+	}
 	cancel()
 	store, err := ascprails.NewPostgresStore(db)
 	if err != nil {
@@ -151,6 +155,20 @@ func checkStartupIntegrity(ctx context.Context, gate ascprails.IntegrityGate, ti
 	defer cancel()
 	if err := gate.Check(integrityCtx); err != nil {
 		return fmt.Errorf("event-integrity startup gate: %w", err)
+	}
+	return nil
+}
+
+func requirePublicSchema(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return errors.New("rails PostgreSQL connection is required")
+	}
+	var schema string
+	if err := db.QueryRowContext(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		return fmt.Errorf("read rails PostgreSQL current schema: %w", err)
+	}
+	if schema != "public" {
+		return errors.New("rails PostgreSQL current schema must be public")
 	}
 	return nil
 }
@@ -245,7 +263,7 @@ func validateDatabaseURL(raw string) error {
 	if len(modes) != 1 || modes[0] != "verify-full" {
 		return errors.New("FLOWOPS_RAILS_DATABASE_URL must set sslmode=verify-full exactly once")
 	}
-	for _, override := range []string{"host", "hostaddr", "port", "dbname", "database", "user", "password"} {
+	for _, override := range []string{"host", "hostaddr", "port", "dbname", "database", "user", "password", "search_path", "options"} {
 		if parsed.Query().Has(override) {
 			return fmt.Errorf("FLOWOPS_RAILS_DATABASE_URL must not override %s in query parameters", override)
 		}

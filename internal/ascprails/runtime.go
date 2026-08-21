@@ -72,11 +72,13 @@ func (c *QuorumChainClock) Confirmed(ctx context.Context, chainID uint64) (Chain
 	}
 	groups := make(map[string]*anchorGroup)
 	seenProviders := make(map[string]struct{})
+	now := c.clock().UTC()
 	for _, observation := range result.Observations {
 		if observation.ChainID != chainID || !identifierPattern.MatchString(observation.Provider) ||
 			observation.AnchorNumber == 0 || observation.HeadNumber < observation.AnchorNumber ||
 			!nonZeroHash(observation.AnchorHash) || !nonZeroHash(observation.HeadHash) ||
-			observation.AnchorTime.Unix() <= 0 || observation.HeadTime.Before(observation.AnchorTime) || observation.ObservedAt.IsZero() {
+			observation.AnchorTime.Unix() <= 0 || observation.HeadTime.Before(observation.AnchorTime) ||
+			observation.HeadTime.After(now.Add(5*time.Second)) || observation.ObservedAt.IsZero() {
 			continue
 		}
 		if _, duplicate := seenProviders[observation.Provider]; duplicate {
@@ -108,7 +110,6 @@ func (c *QuorumChainClock) Confirmed(ctx context.Context, chainID uint64) (Chain
 	if agreed == nil {
 		return ChainObservation{}, errors.New("base chain observer quorum is unavailable")
 	}
-	now := c.clock().UTC()
 	if agreed.timestamp.After(now.Add(5*time.Second)) || now.Sub(agreed.timestamp) > c.maxChainLag {
 		return ChainObservation{}, errors.New("base chain observer quorum anchor is stale or in the future")
 	}
@@ -274,7 +275,8 @@ func nonZeroRawHash(value string) bool {
 }
 
 // HTTPSIntegritySource reads a bounded strict JSON attestation without proxy or
-// redirects. The signed payload, not TLS alone, is the authorization proof.
+// redirects. Wire whitespace and member order are not security material: the
+// signature binds the validated fields through integrityAttestationPayload.
 type HTTPSIntegritySource struct {
 	url    string
 	client *http.Client

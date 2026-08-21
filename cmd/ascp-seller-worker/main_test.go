@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"database/sql"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestLoadConfigAcceptsCompleteFailClosedWorker(t *testing.T) {
@@ -42,6 +46,43 @@ func TestStartupIntegrityReceivesConfiguredTimeoutAboveDatabaseBudget(t *testing
 	}
 }
 
+func TestRequirePublicSchemaFailsClosed(t *testing.T) {
+	tests := []struct {
+		name     string
+		schema   string
+		queryErr error
+		wantErr  bool
+	}{
+		{name: "public", schema: "public"},
+		{name: "alternate schema", schema: "tenant_1", wantErr: true},
+		{name: "lookup failure", queryErr: errors.New("connection lost"), wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			expectation := mock.ExpectQuery(`SELECT current_schema()`)
+			if test.queryErr != nil {
+				expectation.WillReturnError(test.queryErr)
+			} else {
+				expectation.WillReturnRows(sqlmock.NewRows([]string{"current_schema"}).AddRow(test.schema))
+			}
+			if err := requirePublicSchema(t.Context(), db); (err != nil) != test.wantErr {
+				t.Fatalf("error=%v wantErr=%v", err, test.wantErr)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if err := requirePublicSchema(t.Context(), (*sql.DB)(nil)); err == nil {
+		t.Fatal("nil database accepted")
+	}
+}
+
 func TestLoadConfigRejectsUnsafeDatabaseProviderAndTiming(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -51,6 +92,8 @@ func TestLoadConfigRejectsUnsafeDatabaseProviderAndTiming(t *testing.T) {
 		{name: "database without TLS verification", env: "FLOWOPS_RAILS_DATABASE_URL", value: "postgresql" + "://rails@db.example/flowops?sslmode=require"},
 		{name: "database without path", env: "FLOWOPS_RAILS_DATABASE_URL", value: "postgresql" + "://rails@db.example?sslmode=verify-full"},
 		{name: "database query host override", env: "FLOWOPS_RAILS_DATABASE_URL", value: "postgresql" + "://rails@db.example/flowops?sslmode=verify-full&host=127.0.0.1"},
+		{name: "database search path override", env: "FLOWOPS_RAILS_DATABASE_URL", value: "postgresql" + "://rails@db.example/flowops?sslmode=verify-full&search_path=tenant_1"},
+		{name: "database options override", env: "FLOWOPS_RAILS_DATABASE_URL", value: "postgresql" + "://rails@db.example/flowops?sslmode=verify-full&options=-csearch_path%3Dtenant_1"},
 		{name: "one RPC", env: "FLOWOPS_SELLER_RPC_PROVIDERS_JSON", value: `[{"name":"rpc-a","url":"https://rpc-a.example/v1"}]`},
 		{name: "private RPC", env: "FLOWOPS_SELLER_RPC_PROVIDERS_JSON", value: `[{"name":"rpc-a","url":"https://127.0.0.1/v1"},{"name":"rpc-b","url":"https://rpc-b.example/v1"}]`},
 		{name: "alternate RPC port", env: "FLOWOPS_SELLER_RPC_PROVIDERS_JSON", value: `[{"name":"rpc-a","url":"https://rpc-a.example:8443/v1"},{"name":"rpc-b","url":"https://rpc-b.example/v1"}]`},
