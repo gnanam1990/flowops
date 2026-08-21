@@ -157,8 +157,9 @@ Do not share the leadership credential with the API, seller worker, signer,
 keeper, or reconciliation services. Run the following only as transient trusted
 operator jobs with `FLOWOPS_LEADERSHIP_DATABASE_URL` set through the secret
 manager; it must use `sslmode=verify-full`. Bootstrap once with
-`/flowops/ascp-leadership bootstrap` and strict JSON on stdin. A cutover uses
-the shipped command twice:
+`/flowops/ascp-leadership bootstrap` and strict JSON on stdin. Use `status` as a
+read-only verification query. A cutover runs the shipped `drain` command and,
+only after its documented checks succeed, the `advance` command:
 
 ```sh
 printf '%s\n' '{"organizationId":"org-id","actor":"operator-id","evidenceDigest":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}' \

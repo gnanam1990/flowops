@@ -167,7 +167,7 @@ func validCommand(command string) bool {
 
 func validateLeadershipURL(raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Hostname() == "" || parsed.Fragment != "" || parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
+	if err != nil || parsed.Hostname() == "" || strings.Trim(parsed.Path, "/") == "" || parsed.Fragment != "" || parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
 		return errors.New("FLOWOPS_LEADERSHIP_DATABASE_URL must be a PostgreSQL URL")
 	}
 	modes := parsed.Query()["sslmode"]

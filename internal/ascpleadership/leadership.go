@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 	"unicode"
 )
@@ -61,7 +62,7 @@ type Postgres struct {
 
 // NewPostgres binds the adapter to a validated, explicitly qualified schema.
 func NewPostgres(db *sql.DB, schema string, clocks ...func() time.Time) (*Postgres, error) {
-	if db == nil || !schemaPattern.MatchString(schema) || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
+	if db == nil || !schemaPattern.MatchString(schema) || isTemporarySchema(schema) || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
 		return nil, ErrInvalid
 	}
 	clock := time.Now
@@ -76,6 +77,10 @@ func NewPostgres(db *sql.DB, schema string, clocks ...func() time.Time) (*Postgr
 		effectsTable: `"` + schema + `".ascp_leadership_effects`,
 		newEffectID:  randomEffectID,
 	}, nil
+}
+
+func isTemporarySchema(schema string) bool {
+	return schema == "pg_temp" || strings.HasPrefix(schema, "pg_temp_") || strings.HasPrefix(schema, "pg_toast_temp_")
 }
 
 // Current returns the active epoch and fails with ErrEpochChanged while draining.

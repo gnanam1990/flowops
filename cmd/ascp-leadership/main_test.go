@@ -16,6 +16,8 @@ func TestValidateLeadershipURLRequiresExactVerifiedTLS(t *testing.T) {
 	}
 	for _, raw := range []string{
 		"", "https://db.example/flowops?sslmode=verify-full",
+		"postgresql" + "://leader@db.example?sslmode=verify-full",
+		"postgresql" + "://leader@db.example/?sslmode=verify-full",
 		postgresURL("sslmode=require"),
 		postgresURL("sslmode=verify-full&sslmode=disable"),
 	} {

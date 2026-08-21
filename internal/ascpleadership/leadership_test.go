@@ -408,6 +408,11 @@ func TestLeadershipRejectsMalformedInputs(t *testing.T) {
 	if _, err := NewPostgres(&sql.DB{}, "public;drop schema"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("invalid schema=%v", err)
 	}
+	for _, schema := range []string{"pg_temp", "pg_temp_3", "pg_toast_temp_3"} {
+		if _, err := NewPostgres(&sql.DB{}, schema); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("temporary schema %q accepted: %v", schema, err)
+		}
+	}
 	if validOrganization("org test") || validOrganization("org\u00a0test") || validOrganization("org\u0085test") ||
 		validMutation("org-test", "owner-safe", "0x01") {
 		t.Fatal("malformed leadership input accepted")
