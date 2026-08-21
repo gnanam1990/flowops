@@ -46,6 +46,7 @@ var runtimeTables = []tableContract{
 	{name: "sites_memberships", allowed: set("SELECT")},
 	{name: "flowops_schema_migrations", allowed: set("SELECT")},
 	{name: "ascp_intents", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_policy_decisions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_approvals", allowed: set("SELECT", "INSERT", "UPDATE")},
 	{name: "ascp_budget_reservations", allowed: set("SELECT", "INSERT", "UPDATE")},
 	{name: "ascp_budget_reservation_dimensions", allowed: set("SELECT", "INSERT")},

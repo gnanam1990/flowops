@@ -32,6 +32,10 @@ same idempotency key where a write occurs:
 |---|---|---|
 | `ascp.operation.create` | `POST /agent/v1/intents` | Required |
 | `ascp.operation.get` | `GET /agent/v1/intents/{operationId}` | Read-only |
+| `ascp.operation.evaluate` | `POST /agent/v1/intents/{operationId}/evaluate` | One immutable decision per operation |
+| `ascp.operation.decision.get` | `GET /agent/v1/intents/{operationId}/decision` | Read-only |
+| `ascp.operation.authorize` | `POST /agent/v1/intents/{operationId}/authorization` | One immutable authorization per operation |
+| `ascp.operation.authorization.get` | `GET /agent/v1/intents/{operationId}/authorization` | Read-only |
 | `ascp.intent.create` | `POST /v1/intents` | Required |
 | `ascp.intent.get` | `GET /v1/intents/{requestId}` | Read-only |
 | `ascp.approval.list` | `GET /v1/approvals` | Read-only |
@@ -40,8 +44,10 @@ same idempotency key where a write occurs:
 
 The `ascp.operation.*` tools are the durable ASCP path. Their REST adapter
 derives tenant/agent identity, configured deployment terms, and current
-finalized directory evidence; those two tools only forward untrusted request
-data and cannot invoke signer, keeper, approval-decision, or database
+finalized directory evidence. Evaluation and authorization accept only the
+owned operation ID; policy, commitment, approval and reservation inputs are
+derived by the REST application boundary. These tools cannot invoke signer,
+keeper, human approval-decision, or database
 internals. The separately advertised human approval tools remain protected by
 their REST role and step-up gates; agent credentials receive a denial. The
 `ascp.intent.*` names remain explicitly documented legacy compatibility tools

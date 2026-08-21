@@ -96,7 +96,7 @@ func TestServerListsToolsAndPreservesIntentBoundary(t *testing.T) {
 	server.ServeHTTP(listRecorder, list)
 	listResponse := decodeRPC(t, listRecorder)
 	tools := listResponse["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 7 {
+	if len(tools) != 11 {
 		t.Fatalf("tool count = %d", len(tools))
 	}
 
@@ -165,6 +165,22 @@ func TestDurableOperationToolsDelegateOnlyToAgentBoundary(t *testing.T) {
 	server.ServeHTTP(recorder, call)
 	if len(calls) != 4 || calls[3].path != "/agent/v1/intents/"+operationID || calls[3].method != http.MethodGet {
 		t.Fatalf("read calls=%+v body=%s", calls, recorder.Body.String())
+	}
+	for index, test := range []struct {
+		name, method, suffix string
+	}{
+		{"ascp.operation.evaluate", http.MethodPost, "/evaluate"},
+		{"ascp.operation.decision.get", http.MethodGet, "/decision"},
+		{"ascp.operation.authorize", http.MethodPost, "/authorization"},
+		{"ascp.operation.authorization.get", http.MethodGet, "/authorization"},
+	} {
+		call = mcpRequest(t, 3+index, "tools/call", map[string]any{"name": test.name, "arguments": map[string]any{"operationId": operationID}}, testAuthorization())
+		recorder = httptest.NewRecorder()
+		server.ServeHTTP(recorder, call)
+		last := calls[len(calls)-1]
+		if last.path != "/agent/v1/intents/"+operationID+test.suffix || last.method != test.method {
+			t.Fatalf("%s delegated to %+v body=%s", test.name, last, recorder.Body.String())
+		}
 	}
 }
 

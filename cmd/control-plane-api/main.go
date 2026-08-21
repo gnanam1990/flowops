@@ -22,7 +22,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gnanam1990/flowops/internal/ascpagent"
+	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
+	"github.com/gnanam1990/flowops/internal/ascporchestration"
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/directoryreader"
@@ -98,6 +100,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	var ascpAgentService *ascpagent.Service
+	var ascpOrchestrationService *ascporchestration.Service
 	if cfg.ascpDirectoryContract != "" {
 		intakeStore, err := ascpintake.NewPostgresStore(db)
 		if err != nil {
@@ -118,6 +121,26 @@ func run(ctx context.Context) error {
 		})
 		if err != nil {
 			return fmt.Errorf("create ASCP agent service: %w", err)
+		}
+		localRevalidator, err := ascpexecauth.NewLocalRevalidator(cfg.ascpDirectoryMaxAge)
+		if err != nil {
+			return fmt.Errorf("create ASCP execution revalidator: %w", err)
+		}
+		executionStore, err := ascpexecauth.NewPostgresStore(db, localRevalidator)
+		if err != nil {
+			return fmt.Errorf("create ASCP execution authorization store: %w", err)
+		}
+		orchestrationStore, err := ascporchestration.NewPostgresStore(db)
+		if err != nil {
+			return fmt.Errorf("create ASCP orchestration store: %w", err)
+		}
+		ascpOrchestrationService, err = ascporchestration.New(ascporchestration.Config{
+			DatabaseStore: orchestrationStore, Authorization: executionStore,
+			EscrowContract: cfg.observerConfig.EscrowContract,
+			SettleWindow:   time.Duration(cfg.observerConfig.EscrowReleaseWindow) * time.Second,
+		})
+		if err != nil {
+			return fmt.Errorf("create ASCP orchestration service: %w", err)
 		}
 	} else {
 		slog.Warn("durable ASCP agent intake is disabled", "reason", "FLOWOPS_ASCP_DIRECTORY_CONTRACT is unset")
@@ -199,6 +222,7 @@ func run(ctx context.Context) error {
 		OperatorControlKey: cfg.operatorKey, SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
 		Reconciliation: reconciliationEngine,
 		ASCPAgent:      ascpAgentService,
+		ASCPFlow:       ascpOrchestrationService,
 	})
 	if err != nil {
 		return err

@@ -257,7 +257,7 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO ascp_budget_reservations
 			(reservation_id, operation_id, amount_base_units, state, dimensions, created_at, expires_at)
-		VALUES ($1,$2,'10','RESERVED','[]'::jsonb,$3,$4)`, reservationID, operationID, now, now.Add(15*time.Minute)); err != nil {
+		VALUES ($1,$2,'10','RESERVED','[]'::jsonb,$3,$4)`, reservationID, operationID, now.Add(-time.Minute), now.Add(15*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `
@@ -285,6 +285,15 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 		KeyEpoch: 1, ModuleAddress: ascpIntegrationModule, SafeAddress: ascpIntegrationSafe,
 		KeeperID: "keeper-primary", ValidAfter: now, ValidUntil: now.Add(9 * time.Minute),
 	}
+	if _, err := db.ExecContext(ctx, `UPDATE ascp_budget_reservations SET expires_at=$2 WHERE reservation_id=$1`, reservationID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Request(ctx, input); !errors.Is(err, ascpbearer.ErrActivationState) {
+		t.Fatalf("expired reservation request error=%v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE ascp_budget_reservations SET expires_at=$2 WHERE reservation_id=$1`, reservationID, now.Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 	request, replayed, err := store.Request(ctx, input)
 	if err != nil || replayed || request.State != ascpbearer.SignRequested {
 		t.Fatalf("request=%+v replayed=%t err=%v", request, replayed, err)
@@ -298,6 +307,15 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	handle := "opaque-prepared-handle-0123456789abcdef"
 	if request, err = store.RecordPrepared(ctx, input.RequestID, handle); err != nil || request.State != ascpbearer.HandlePrepared {
 		t.Fatalf("prepared request=%+v err=%v", request, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE ascp_budget_reservations SET expires_at=$2 WHERE reservation_id=$1`, reservationID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Activate(ctx, input.RequestID); !errors.Is(err, ascpbearer.ErrActivationState) {
+		t.Fatalf("expired reservation activation error=%v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE ascp_budget_reservations SET expires_at=$2 WHERE reservation_id=$1`, reservationID, now.Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
 	}
 	entry, err := store.Activate(ctx, input.RequestID)
 	if err != nil || entry.SignatureRef != handle || entry.Outcome != "LIVE" {
