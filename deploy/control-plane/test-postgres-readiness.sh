@@ -21,6 +21,7 @@ for required in \
 	'GRANT UPDATE (primary_mirror_digest, outcome)' \
 	'GRANT UPDATE (state, attempts, delivered_at)' \
 	'GRANT SELECT, INSERT ON ascp_payment_operations, ascp_payment_attempts' \
+	'GRANT SELECT, INSERT ON ascp_keeper_jobs' \
 	'GRANT UPDATE (state, locked_transaction_hash, locked_block_number, locked_block_hash' \
 	'GRANT UPDATE (state, resolved_at, block_number, block_hash, evidence_digest, canonical_checked_at)'
 do
@@ -29,6 +30,22 @@ done
 
 if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$grant_file"; then
     echo "runtime grant script contains a forbidden broad privilege" >&2
+    exit 1
+fi
+
+keeper_grant_file=deploy/control-plane/configure-keeper-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
+    'GRANT SELECT, INSERT ON ascp_keeper_jobs, ascp_keeper_nonce_sequences' \
+    'GRANT UPDATE (lease_owner, lease_token, lease_expires_at, nonce, state' \
+    'GRANT UPDATE (next_nonce, updated_at)' \
+    'GRANT UPDATE (state, broadcast_at, last_error, evidence_digest, observed_at)'
+do
+    grep -F "$required" "$keeper_grant_file" >/dev/null
+done
+
+if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)' "$keeper_grant_file"; then
+    echo "keeper grant script contains a forbidden broad privilege" >&2
     exit 1
 fi
 
