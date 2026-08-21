@@ -32,6 +32,8 @@ type WorkerCycle struct {
 	Submitted      int `json:"submitted"`
 	Confirmed      int `json:"confirmed"`
 	Finalized      int `json:"finalized"`
+	Reverted       int `json:"reverted"`
+	Reorged        int `json:"reorged"`
 	Ambiguous      int `json:"ambiguous"`
 	TimedOut       int `json:"timedOut"`
 	DeadLetter     int `json:"deadLetter"`
@@ -124,7 +126,7 @@ func phaseEnded(parent, phase context.Context, err error) bool {
 	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	return phase.Err() != nil || parent.Err() != nil
+	return phase.Err() != nil && parent.Err() == nil
 }
 
 func containedRelayOutcome(job Job) bool {
@@ -142,9 +144,14 @@ func containedRelayOutcome(job Job) bool {
 func (w *Worker) runCycle(ctx context.Context) error {
 	cycleCtx, cancel := context.WithTimeout(ctx, w.config.CycleTimeout)
 	cycle, err := w.RunOnce(cycleCtx)
+	cycleErr := cycleCtx.Err()
 	cancel()
 	if err != nil {
 		if ctx.Err() != nil {
+			return nil
+		}
+		if errors.Is(cycleErr, context.DeadlineExceeded) &&
+			(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return nil
 		}
 		return err
@@ -163,6 +170,10 @@ func (c *WorkerCycle) count(state State) {
 		c.Confirmed++
 	case StateFinalized:
 		c.Finalized++
+	case StateReverted:
+		c.Reverted++
+	case StateReorged:
+		c.Reorged++
 	case StateAmbiguous:
 		c.Ambiguous++
 	case StateTimedOut:

@@ -135,7 +135,8 @@ func run(ctx context.Context) error {
 		OnCycle: func(cycle ascpkeeper.WorkerCycle) {
 			slog.Info("ASCP keeper cycle completed", "expiryEnqueued", cycle.ExpiryEnqueued, "observed", cycle.Observed,
 				"relayed", cycle.Relayed, "submitted", cycle.Submitted, "confirmed", cycle.Confirmed,
-				"finalized", cycle.Finalized, "ambiguous", cycle.Ambiguous, "timedOut", cycle.TimedOut, "deadLetter", cycle.DeadLetter)
+				"finalized", cycle.Finalized, "reverted", cycle.Reverted, "reorged", cycle.Reorged,
+				"ambiguous", cycle.Ambiguous, "timedOut", cycle.TimedOut, "deadLetter", cycle.DeadLetter)
 		},
 	})
 	if err != nil {

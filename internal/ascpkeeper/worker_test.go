@@ -22,13 +22,12 @@ type slowObservationFixture struct {
 }
 
 func (f *slowObservationFixture) ObserveOnce(ctx context.Context) (Job, error) {
-	select {
-	case <-time.After(75 * time.Millisecond):
+	if f.observed == 0 {
 		f.observed++
 		return Job{State: StateConfirmed}, nil
-	case <-ctx.Done():
-		return Job{}, ctx.Err()
 	}
+	<-ctx.Done()
+	return Job{}, ctx.Err()
 }
 
 func (f *slowObservationFixture) RunOnce(context.Context) (Job, error) {
@@ -37,6 +36,21 @@ func (f *slowObservationFixture) RunOnce(context.Context) (Job, error) {
 	}
 	f.relayed++
 	return Job{State: StateSubmitted}, nil
+}
+
+type cancelObservationFixture struct{ started chan struct{} }
+
+func (f *cancelObservationFixture) ObserveOnce(ctx context.Context) (Job, error) {
+	select {
+	case f.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return Job{}, ctx.Err()
+}
+
+func (f *cancelObservationFixture) RunOnce(context.Context) (Job, error) {
+	return Job{}, ErrNoWork
 }
 
 func (f *containedRuntimeFixture) ObserveOnce(context.Context) (Job, error) { return Job{}, ErrNoWork }
@@ -88,7 +102,7 @@ func (f *scannerFixture) Scan(_ context.Context, limit int) (int, error) {
 
 func TestWorkerRunsExpiryObservationBeforeRelayAndCountsStates(t *testing.T) {
 	service := &runtimeFixture{
-		observed: []Job{{State: StateConfirmed}, {State: StateFinalized}},
+		observed: []Job{{State: StateConfirmed}, {State: StateFinalized}, {State: StateReverted}, {State: StateReorged}},
 		relay:    []Job{{State: StateSubmitted}, {State: StateAmbiguous}, {State: StateDeadLetter}},
 	}
 	scanner := &scannerFixture{created: 2}
@@ -100,7 +114,7 @@ func TestWorkerRunsExpiryObservationBeforeRelayAndCountsStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cycle.ExpiryEnqueued != 2 || cycle.Observed != 2 || cycle.Relayed != 3 || cycle.Confirmed != 1 || cycle.Finalized != 1 || cycle.Submitted != 1 || cycle.Ambiguous != 1 || cycle.DeadLetter != 1 {
+	if cycle.ExpiryEnqueued != 2 || cycle.Observed != 4 || cycle.Relayed != 3 || cycle.Confirmed != 1 || cycle.Finalized != 1 || cycle.Reverted != 1 || cycle.Reorged != 1 || cycle.Submitted != 1 || cycle.Ambiguous != 1 || cycle.DeadLetter != 1 {
 		t.Fatalf("unexpected cycle: %+v", cycle)
 	}
 	if len(scanner.limits) != 1 || scanner.limits[0] != 50 {
@@ -160,6 +174,29 @@ func TestWorkerSlowSuccessfulObservationsCannotStarveExpiryAndRelay(t *testing.T
 	}
 	if service.observed != 1 || service.relayed != 1 || cycle.Observed != 1 || cycle.ExpiryEnqueued != 1 || cycle.Relayed != 1 || cycle.Submitted != 1 {
 		t.Fatalf("phase starvation: service=%+v cycle=%+v", service, cycle)
+	}
+}
+
+func TestWorkerCancellationDoesNotReportPartialCycleCompleted(t *testing.T) {
+	service := &cancelObservationFixture{started: make(chan struct{}, 1)}
+	completed := 0
+	worker, err := NewWorker(service, &scannerFixture{}, WorkerConfig{
+		Interval: 2 * time.Second, CycleTimeout: time.Second, BatchSize: 1, ExpiryLimit: 1,
+		OnCycle: func(WorkerCycle) { completed++ },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.runCycle(ctx) }()
+	<-service.started
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if completed != 0 {
+		t.Fatalf("partial shutdown cycle reported completed %d times", completed)
 	}
 }
 

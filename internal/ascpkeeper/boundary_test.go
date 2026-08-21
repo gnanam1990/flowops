@@ -94,6 +94,72 @@ func TestUnixBoundaryRejectsUnknownResponseFields(t *testing.T) {
 	}
 }
 
+func TestUnixBoundaryErrorNeverReturnsDecodedSecretBuffers(t *testing.T) {
+	t.Run("artifact", func(t *testing.T) {
+		handler := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"handle":{},"artifact":"c2VjcmV0","unknown":true}`))
+		})
+		path := unixBoundaryServer(t, healthHandler("artifact", handler))
+		boundary, _ := NewUnixBoundary("artifact", path, time.Second)
+		client, _ := NewUnixArtifactClient(boundary)
+		handle, artifact, err := client.Release(context.Background(), "handle", "keeper")
+		if err == nil || handle.ID != "" || artifact != nil {
+			t.Fatalf("secret-bearing error output was returned: handle=%+v artifact=%q err=%v", handle, artifact, err)
+		}
+	})
+
+	t.Run("wallet", func(t *testing.T) {
+		handler := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"hash":"0x01","raw":"c2VjcmV0","unknown":true}`))
+		})
+		path := unixBoundaryServer(t, healthHandler("wallet", handler))
+		boundary, _ := NewUnixBoundary("wallet", path, time.Second)
+		wallet, _ := NewUnixWallet(boundary)
+		signed, err := wallet.Sign(context.Background(), UnsignedTransaction{})
+		if err == nil || signed.Hash != "" || signed.Raw != nil {
+			t.Fatalf("wallet error returned signed bytes: signed=%+v err=%v", signed, err)
+		}
+	})
+
+	t.Run("assembler", func(t *testing.T) {
+		handler := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"transaction":{"data":"c2VjcmV0"},"unknown":true}`))
+		})
+		path := unixBoundaryServer(t, healthHandler("assembler", handler))
+		boundary, _ := NewUnixBoundary("assembler", path, time.Second)
+		assembler, _ := NewUnixAssembler(boundary)
+		transaction, err := assembler.Assemble(context.Background(), Job{}, nil, 0, Fee{})
+		if err == nil || transaction.Data != nil {
+			t.Fatalf("assembler error returned transaction bytes: transaction=%+v err=%v", transaction, err)
+		}
+	})
+
+	t.Run("sealer", func(t *testing.T) {
+		handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			if request.URL.Path == "/v1/seal" {
+				_, _ = writer.Write([]byte(`{"ciphertext":"c2VjcmV0","keyId":"key","unknown":true}`))
+				return
+			}
+			_, _ = writer.Write([]byte(`{"raw":"c2VjcmV0","unknown":true}`))
+		})
+		path := unixBoundaryServer(t, healthHandler("sealer", handler))
+		boundary, _ := NewUnixBoundary("sealer", path, time.Second)
+		sealer, _ := NewUnixSealer(boundary)
+		ciphertext, keyID, err := sealer.Seal(context.Background(), []byte("raw"), []byte("aad"))
+		if err == nil || ciphertext != nil || keyID != "" {
+			t.Fatalf("sealer error returned ciphertext: ciphertext=%q keyID=%q err=%v", ciphertext, keyID, err)
+		}
+		raw, err := sealer.Open(context.Background(), []byte("ciphertext"), "key", []byte("aad"))
+		if err == nil || raw != nil {
+			t.Fatalf("sealer error returned raw bytes: raw=%q err=%v", raw, err)
+		}
+	})
+}
+
 func TestUnixBoundaryRejectsMissingNonceInsteadOfDefaultingToZero(t *testing.T) {
 	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

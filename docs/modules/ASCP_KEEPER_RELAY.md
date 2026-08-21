@@ -113,7 +113,7 @@ The chain sidecar is the independently operated read-only quorum/evidence
 adapter and cannot broadcast. Its
 `outcome`, `replacement`, and `expiries` responses are still revalidated by the
 keeper kernel before durable state changes. A non-success broadcast response
-is deterministic only when the trusted chain adapter emits `REJECTED` or
+is deterministic only when the broadcaster sidecar emits `REJECTED` or
 `UNDERPRICED`; every other code and every transport error is ambiguous. The
 runtime reserves 10% of each cycle for already-broadcast outcomes, 10% for
 expiry proofs, and 80% for relay work, so a slow successful phase cannot starve

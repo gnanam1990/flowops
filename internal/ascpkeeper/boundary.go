@@ -238,6 +238,10 @@ func (c *UnixArtifactClient) Release(ctx context.Context, handleID, keeperID str
 		Artifact []byte            `json:"artifact"`
 	}
 	err := c.boundary.call(ctx, http.MethodPost, "/v1/release", request, &response)
+	if err != nil {
+		clear(response.Artifact)
+		return ascpbearer.Handle{}, nil, err
+	}
 	return response.Handle, response.Artifact, err
 }
 
@@ -262,6 +266,10 @@ func (c *UnixAssembler) Assemble(ctx context.Context, job Job, artifact []byte, 
 		Transaction UnsignedTransaction `json:"transaction"`
 	}
 	err := c.boundary.call(ctx, http.MethodPost, "/v1/assemble", request, &response)
+	if err != nil {
+		clear(response.Transaction.Data)
+		return UnsignedTransaction{}, err
+	}
 	return response.Transaction, err
 }
 
@@ -312,6 +320,10 @@ func (c *UnixWallet) Sign(ctx context.Context, transaction UnsignedTransaction) 
 		Raw  []byte `json:"raw"`
 	}
 	err := c.boundary.call(ctx, http.MethodPost, "/v1/sign", request, &response)
+	if err != nil {
+		clear(response.Raw)
+		return SignedTransaction{}, err
+	}
 	return SignedTransaction{Hash: response.Hash, Raw: response.Raw}, err
 }
 
@@ -335,6 +347,10 @@ func (c *UnixSealer) Seal(ctx context.Context, raw, aad []byte) ([]byte, string,
 		KeyID      string `json:"keyId"`
 	}
 	err := c.boundary.call(ctx, http.MethodPost, "/v1/seal", request, &response)
+	if err != nil {
+		clear(response.Ciphertext)
+		return nil, "", err
+	}
 	return response.Ciphertext, response.KeyID, err
 }
 
@@ -349,6 +365,10 @@ func (c *UnixSealer) Open(ctx context.Context, ciphertext []byte, keyID string, 
 		Raw []byte `json:"raw"`
 	}
 	err := c.boundary.call(ctx, http.MethodPost, "/v1/open", request, &response)
+	if err != nil {
+		clear(response.Raw)
+		return nil, err
+	}
 	return response.Raw, err
 }
 
