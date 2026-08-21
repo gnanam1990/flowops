@@ -50,13 +50,28 @@ var runtimeTables = []tableContract{
 	{name: "ascp_budget_reservations", allowed: set("SELECT", "INSERT", "UPDATE")},
 	{name: "ascp_budget_reservation_dimensions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_execution_authorizations", allowed: set("SELECT", "INSERT")},
-	{name: "ascp_bearer_handles", allowed: set("SELECT", "INSERT", "UPDATE")},
+	{name: "ascp_bearer_handles", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_sign_requests", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_bearer_registry", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_signer_outbox", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_directory_snapshots", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_directory_quote_evidence", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_directory_heads", allowed: set("SELECT", "INSERT", "UPDATE")},
 }
 
 var tablePrivileges = []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
+
+type columnUpdateContract struct {
+	table   string
+	columns map[string]bool
+}
+
+var runtimeColumnUpdates = []columnUpdateContract{
+	{table: "ascp_bearer_handles", columns: set("state")},
+	{table: "ascp_sign_requests", columns: set("prepared_handle", "state", "prepared_at", "activated_at", "primary_mirror_digest", "mirrored_at", "acknowledged_at")},
+	{table: "ascp_bearer_registry", columns: set("primary_mirror_digest", "outcome")},
+	{table: "ascp_signer_outbox", columns: set("state", "attempts", "delivered_at")},
+}
 
 func set(values ...string) map[string]bool {
 	result := make(map[string]bool, len(values))
@@ -160,11 +175,55 @@ func VerifyRuntimeSQL(ctx context.Context, db *sql.DB) (SQLReport, error) {
 				fmt.Sprintf("%s must be %v for runtime role", privilege, want))
 		}
 	}
+	for _, contract := range runtimeColumnUpdates {
+		rows, err := db.QueryContext(ctx, `
+			SELECT column_name
+			FROM information_schema.columns
+			WHERE table_schema=current_schema() AND table_name=$1
+			  AND has_column_privilege(
+			      current_user,
+			      quote_ident(table_schema) || '.' || quote_ident(table_name),
+			      column_name,
+			      'UPDATE')
+			ORDER BY ordinal_position`, contract.table)
+		if err != nil {
+			return report, fmt.Errorf("inspect %s column UPDATE privileges: %w", contract.table, err)
+		}
+		actual := map[string]bool{}
+		for rows.Next() {
+			var column string
+			if err := rows.Scan(&column); err != nil {
+				rows.Close()
+				return report, fmt.Errorf("scan %s column UPDATE privilege: %w", contract.table, err)
+			}
+			actual[column] = true
+		}
+		if err := rows.Close(); err != nil {
+			return report, fmt.Errorf("close %s column UPDATE privileges: %w", contract.table, err)
+		}
+		if err := rows.Err(); err != nil {
+			return report, fmt.Errorf("iterate %s column UPDATE privileges: %w", contract.table, err)
+		}
+		report.add("columns_"+contract.table+"_update", sameSet(actual, contract.columns),
+			fmt.Sprintf("column UPDATE privileges must match the reviewed mutable fields for %s", contract.table))
+	}
 	report.Ready = true
 	for _, check := range report.Checks {
 		report.Ready = report.Ready && check.Passed
 	}
 	return report, nil
+}
+
+func sameSet(left, right map[string]bool) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for value := range left {
+		if !right[value] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *SQLReport) add(name string, passed bool, detail string) {
