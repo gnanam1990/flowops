@@ -46,24 +46,39 @@ type checkpointDocument struct {
 }
 
 type CheckpointStore interface {
+	RecoveryStore
 	Head(context.Context) (Head, error)
+	SaveCheckpoint(context.Context, Checkpoint) (Checkpoint, bool, error)
+}
+
+// RecoveryStore is the recovery verifier's read-only database boundary.
+type RecoveryStore interface {
 	EventAt(context.Context, uint64) (Event, error)
 	Verify(context.Context, map[string][]byte) (Head, error)
-	SaveCheckpoint(context.Context, Checkpoint) (Checkpoint, bool, error)
 	LatestCheckpoint(context.Context) (Checkpoint, error)
 }
 
 // WORMStore must make Put idempotent for the same ref and exact bytes and
 // reject any attempt to replace existing bytes.
 type WORMStore interface {
+	WORMReader
 	Put(context.Context, string, []byte) error
+}
+
+// WORMReader is the recovery verifier's read-only immutable-object boundary.
+type WORMReader interface {
 	Get(context.Context, string) ([]byte, error)
 }
 
 // RemoteHead is a monotonic external truncation sentinel. Advance accepts an
 // identical replay and rejects lower or conflicting heads.
 type RemoteHead interface {
+	RemoteHeadReader
 	Advance(context.Context, Head) error
+}
+
+// RemoteHeadReader is the recovery verifier's read-only monotonic-head boundary.
+type RemoteHeadReader interface {
 	Current(context.Context) (Head, error)
 }
 
@@ -167,7 +182,7 @@ func signCheckpoint(head Head, trialBalanceHash, keyID string, privateKey ed2551
 		CanonicalDocument: document, Signature: signature, WORMRef: "ascp/checkpoints/" + id + ".json"}, nil
 }
 
-func VerifyRecovery(ctx context.Context, store CheckpointStore, worm WORMStore, remote RemoteHead, writerKeys map[string][]byte, checkpointKeys map[string]ed25519.PublicKey) (RecoveryStatus, error) {
+func VerifyRecovery(ctx context.Context, store RecoveryStore, worm WORMReader, remote RemoteHeadReader, writerKeys map[string][]byte, checkpointKeys map[string]ed25519.PublicKey) (RecoveryStatus, error) {
 	if store == nil || worm == nil || remote == nil {
 		return RecoveryStatus{}, ErrIntegrity
 	}

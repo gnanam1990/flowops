@@ -223,6 +223,28 @@ if grep -Eq 'GRANT (ALL|DELETE|UPDATE|TRUNCATE|TRIGGER|REFERENCES)' "$checkpoint
     exit 1
 fi
 
+recovery_grant_file=deploy/control-plane/configure-recovery-role.sql
+for required in \
+    'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT' \
+    'recovery_role must exist and have LOGIN' \
+    'recovery_role must not participate in role memberships' \
+    'recovery_role must not own database objects' \
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public' \
+    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
+    'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public' \
+    'GRANT SELECT ON ascp_events, ascp_event_checkpoints'
+do
+    grep -F "$required" "$recovery_grant_file" >/dev/null
+done
+
+if grep -Eq 'GRANT (ALL|INSERT|DELETE|UPDATE|TRUNCATE|TRIGGER|REFERENCES|EXECUTE|USAGE[[:space:]]*,)' "$recovery_grant_file"; then
+    echo "recovery grant script contains a forbidden write or execution privilege" >&2
+    exit 1
+fi
+
 if [ -n "${FLOWOPS_DATABASE_URL:-}" ]; then
     go run ./cmd/postgres-readiness sql
 else
