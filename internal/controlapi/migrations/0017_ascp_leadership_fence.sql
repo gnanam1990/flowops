@@ -31,7 +31,7 @@ CREATE TABLE ascp_leadership_events (
 );
 
 CREATE OR REPLACE FUNCTION flowops_validate_leadership_update()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
     IF OLD.organization_id IS DISTINCT FROM NEW.organization_id OR
        OLD.updated_at >= NEW.updated_at OR
@@ -52,7 +52,7 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION flowops_lock_leadership_organization()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended(NEW.organization_id, 912034761));
     RETURN NEW;
@@ -72,34 +72,43 @@ BEFORE DELETE ON ascp_leadership_epochs
 FOR EACH ROW EXECUTE FUNCTION flowops_reject_immutable_mutation();
 
 CREATE OR REPLACE FUNCTION flowops_require_leadership_event()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 DECLARE
     matching_event boolean;
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        SELECT EXISTS (
-            SELECT 1 FROM ascp_leadership_events event
-            WHERE event.organization_id = NEW.organization_id
-              AND event.new_epoch = NEW.epoch
-              AND event.new_state = NEW.state
-              AND event.evidence_digest = NEW.evidence_digest
-              AND event.actor = NEW.actor
-              AND event.created_at = NEW.updated_at
-              AND event.previous_epoch IS NULL
-              AND event.previous_state IS NULL
-        ) INTO matching_event;
+        EXECUTE format($query$
+            SELECT EXISTS (
+                SELECT 1 FROM %I.ascp_leadership_events event
+                WHERE event.organization_id = $1
+                  AND event.new_epoch = $2
+                  AND event.new_state = $3
+                  AND event.evidence_digest = $4
+                  AND event.actor = $5
+                  AND event.created_at = $6
+                  AND event.previous_epoch IS NULL
+                  AND event.previous_state IS NULL
+            )
+        $query$, TG_TABLE_SCHEMA)
+        INTO matching_event
+        USING NEW.organization_id, NEW.epoch, NEW.state, NEW.evidence_digest, NEW.actor, NEW.updated_at;
     ELSE
-        SELECT EXISTS (
-            SELECT 1 FROM ascp_leadership_events event
-            WHERE event.organization_id = NEW.organization_id
-              AND event.new_epoch = NEW.epoch
-              AND event.new_state = NEW.state
-              AND event.evidence_digest = NEW.evidence_digest
-              AND event.actor = NEW.actor
-              AND event.created_at = NEW.updated_at
-              AND event.previous_epoch = OLD.epoch
-              AND event.previous_state = OLD.state
-        ) INTO matching_event;
+        EXECUTE format($query$
+            SELECT EXISTS (
+                SELECT 1 FROM %I.ascp_leadership_events event
+                WHERE event.organization_id = $1
+                  AND event.new_epoch = $2
+                  AND event.new_state = $3
+                  AND event.evidence_digest = $4
+                  AND event.actor = $5
+                  AND event.created_at = $6
+                  AND event.previous_epoch = $7
+                  AND event.previous_state = $8
+            )
+        $query$, TG_TABLE_SCHEMA)
+        INTO matching_event
+        USING NEW.organization_id, NEW.epoch, NEW.state, NEW.evidence_digest, NEW.actor, NEW.updated_at,
+              OLD.epoch, OLD.state;
     END IF;
 
     IF NOT matching_event THEN
@@ -115,16 +124,20 @@ DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION flowops_require_leadership_event();
 
 CREATE OR REPLACE FUNCTION flowops_validate_leadership_event()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 DECLARE
     current_epoch bigint;
     current_state text;
 BEGIN
-    SELECT epoch, state INTO current_epoch, current_state
-    FROM ascp_leadership_epochs
-    WHERE organization_id = NEW.organization_id;
+    EXECUTE format($query$
+        SELECT epoch, state
+        FROM %I.ascp_leadership_epochs
+        WHERE organization_id = $1
+    $query$, TG_TABLE_SCHEMA)
+    INTO current_epoch, current_state
+    USING NEW.organization_id;
 
-    IF NOT FOUND OR current_epoch IS DISTINCT FROM NEW.new_epoch OR
+    IF current_epoch IS NULL OR current_epoch IS DISTINCT FROM NEW.new_epoch OR
        current_state IS DISTINCT FROM NEW.new_state THEN
         RAISE EXCEPTION 'leadership event does not match current state' USING ERRCODE = '23514';
     END IF;

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,9 +17,9 @@ import (
 )
 
 func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *testing.T) {
-	db := leadershipDatabase(t)
+	db, schema := leadershipDatabase(t)
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	store, err := NewPostgres(db, func() time.Time { return now })
+	store, err := NewPostgres(db, schema, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,20 +52,32 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 		})
 	}()
 	<-effectStarted
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseEffect) }) }
+	defer release()
+	drainStore, err := NewPostgres(db, schema, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
 	drainDone := make(chan error, 1)
-	drainStarted := make(chan struct{})
+	drainLockAttempt := make(chan int, 1)
+	drainStore.observeLockAttempt = func(pid int) { drainLockAttempt <- pid }
 	go func() {
-		close(drainStarted)
-		_, drainErr := store.BeginDrain(context.Background(), "org-test", 1, "owner-safe", leadershipHash("2"))
+		_, drainErr := drainStore.BeginDrain(context.Background(), "org-test", 1, "owner-safe", leadershipHash("2"))
 		drainDone <- drainErr
 	}()
-	<-drainStarted
+	var drainPID int
 	select {
+	case drainPID = <-drainLockAttempt:
 	case err := <-drainDone:
-		t.Fatalf("drain crossed active effect: %v", err)
-	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("drain failed before attempting the advisory lock: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("drain never attempted the advisory lock")
 	}
-	close(releaseEffect)
+	if err := waitForAdvisoryWait(t.Context(), db, drainPID); err != nil {
+		t.Fatal(err)
+	}
+	release()
 	if err := <-fenceDone; err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +87,7 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 	if effects.Load() != 1 {
 		t.Fatalf("effects=%d", effects.Load())
 	}
-	if _, err := store.Current(t.Context(), "org-test"); !errors.Is(err, ErrNotActive) {
+	if _, err := store.Current(t.Context(), "org-test"); !errors.Is(err, ErrEpochChanged) {
 		t.Fatalf("draining current=%v", err)
 	}
 	called := false
@@ -97,8 +110,8 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 }
 
 func TestPostgresLeadershipDatabaseRejectsSkippedEpochDeleteAndEventMutation(t *testing.T) {
-	db := leadershipDatabase(t)
-	store, _ := NewPostgres(db)
+	db, schema := leadershipDatabase(t)
+	store, _ := NewPostgres(db, schema)
 	_, _ = store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1"))
 	if _, err := db.ExecContext(t.Context(), `UPDATE ascp_leadership_epochs SET epoch=3,state='ACTIVE',updated_at=updated_at+interval '1 second' WHERE organization_id='org-test'`); err == nil {
 		t.Fatal("database accepted skipped epoch")
@@ -143,11 +156,69 @@ func TestPostgresLeadershipDatabaseRejectsSkippedEpochDeleteAndEventMutation(t *
 		t.Fatal("database accepted drain and advance in one transaction")
 	}
 	_ = tx.Rollback()
+
+	conn, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(t.Context(), fmt.Sprintf(`CREATE TEMP TABLE ascp_leadership_events
+		(LIKE "%s".ascp_leadership_events INCLUDING ALL)`, schema)); err != nil {
+		t.Fatal(err)
+	}
+	shadowTx, err := conn.BeginTx(t.Context(), &sql.TxOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shadowedAt time.Time
+	if err := shadowTx.QueryRowContext(t.Context(), fmt.Sprintf(`UPDATE "%s".ascp_leadership_epochs
+		SET state='DRAINING',evidence_digest=$1,updated_at=updated_at+interval '1 second'
+		WHERE organization_id='org-test' RETURNING updated_at`, schema), leadershipHash("6")).Scan(&shadowedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shadowTx.ExecContext(t.Context(), `INSERT INTO ascp_leadership_events
+		(organization_id,previous_epoch,new_epoch,previous_state,new_state,evidence_digest,actor,created_at)
+		VALUES ('org-test',1,1,'ACTIVE','DRAINING',$1,'owner-safe',$2)`, leadershipHash("6"), shadowedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := shadowTx.Commit(); err == nil {
+		t.Fatal("temporary audit table bypassed durable leadership evidence")
+	}
+}
+
+func TestPostgresLeadershipAdapterIgnoresTemporaryTableShadow(t *testing.T) {
+	db, schema := leadershipDatabase(t)
+	db.SetMaxOpenConns(1)
+	store, err := NewPostgres(db, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TEMP TABLE ascp_leadership_epochs
+		(LIKE "%s".ascp_leadership_epochs INCLUDING ALL)`, schema)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO ascp_leadership_epochs
+		(organization_id,epoch,state,evidence_digest,actor,updated_at)
+		VALUES ('org-test',999,'ACTIVE',$1,'attacker',now())`, leadershipHash("9")); err != nil {
+		t.Fatal(err)
+	}
+	var shadowEpoch uint64
+	if err := db.QueryRowContext(t.Context(), `SELECT epoch FROM ascp_leadership_epochs
+		WHERE organization_id='org-test'`).Scan(&shadowEpoch); err != nil || shadowEpoch != 999 {
+		t.Fatalf("temporary shadow setup failed: epoch=%d err=%v", shadowEpoch, err)
+	}
+	record, err := store.Get(t.Context(), "org-test")
+	if err != nil || record.Epoch != 1 || record.Actor != "owner-safe" {
+		t.Fatalf("qualified adapter read shadowed state: record=%+v err=%v", record, err)
+	}
 }
 
 func TestPostgresLeadershipDatabaseTriggerFencesDirectControllerUpdate(t *testing.T) {
-	db := leadershipDatabase(t)
-	store, _ := NewPostgres(db)
+	db, schema := leadershipDatabase(t)
+	store, _ := NewPostgres(db, schema)
 	if _, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil {
 		t.Fatal(err)
 	}
@@ -162,26 +233,29 @@ func TestPostgresLeadershipDatabaseTriggerFencesDirectControllerUpdate(t *testin
 		})
 	}()
 	<-effectStarted
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseEffect) }) }
+	defer release()
 	directTx, err := db.BeginTx(t.Context(), &sql.TxOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = directTx.Rollback() }()
+	var directPID int
+	if err := directTx.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&directPID); err != nil {
+		t.Fatal(err)
+	}
 	directDone := make(chan error, 1)
-	directStarted := make(chan struct{})
 	go func() {
-		close(directStarted)
 		_, updateErr := directTx.ExecContext(context.Background(), `UPDATE ascp_leadership_epochs
 			SET state='DRAINING',evidence_digest=$2,actor='owner-safe',updated_at=updated_at+interval '1 second'
 			WHERE organization_id=$1`, "org-test", leadershipHash("2"))
 		directDone <- updateErr
 	}()
-	<-directStarted
-	select {
-	case err := <-directDone:
-		t.Fatalf("direct controller update bypassed fence: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	if err := waitForAdvisoryWait(t.Context(), db, directPID); err != nil {
+		t.Fatal(err)
 	}
-	close(releaseEffect)
+	release()
 	if err := <-fenceDone; err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +271,8 @@ func TestPostgresLeadershipDatabaseTriggerFencesDirectControllerUpdate(t *testin
 }
 
 func TestPostgresLeadershipConcurrentDrainHasOneCASWinner(t *testing.T) {
-	db := leadershipDatabase(t)
-	store, _ := NewPostgres(db)
+	db, schema := leadershipDatabase(t)
+	store, _ := NewPostgres(db, schema)
 	if _, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil {
 		t.Fatal(err)
 	}
@@ -234,13 +308,16 @@ func TestPostgresLeadershipConcurrentDrainHasOneCASWinner(t *testing.T) {
 }
 
 func TestLeadershipRejectsMalformedInputs(t *testing.T) {
-	if _, err := NewPostgres(nil); !errors.Is(err, ErrInvalid) {
+	if _, err := NewPostgres(nil, "public"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("nil database=%v", err)
+	}
+	if _, err := NewPostgres(&sql.DB{}, "public;drop schema"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid schema=%v", err)
 	}
 	if validOrganization("org test") || validMutation("org-test", "owner-safe", "0x01") {
 		t.Fatal("malformed leadership input accepted")
 	}
-	store, _ := NewPostgres(&sql.DB{})
+	store, _ := NewPostgres(&sql.DB{}, "public")
 	if err := store.Fence(t.Context(), "org-test", maxEpoch+1, func(context.Context) error { return nil }); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("out-of-range fence epoch=%v", err)
 	}
@@ -249,7 +326,7 @@ func TestLeadershipRejectsMalformedInputs(t *testing.T) {
 	}
 }
 
-func leadershipDatabase(t *testing.T) *sql.DB {
+func leadershipDatabase(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	databaseURL := os.Getenv("FLOWOPS_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -278,7 +355,26 @@ func leadershipDatabase(t *testing.T) *sql.DB {
 		_, _ = admin.ExecContext(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
 		_ = admin.Close()
 	})
-	return db
+	return db, schema
+}
+
+func waitForAdvisoryWait(ctx context.Context, db *sql.DB, backendPID int) error {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting bool
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted
+		)`, backendPID).Scan(&waiting); err != nil {
+			return err
+		}
+		if waiting {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("backend %d never waited on the advisory fence", backendPID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func leadershipHash(s string) string {

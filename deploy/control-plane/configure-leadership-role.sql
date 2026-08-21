@@ -25,18 +25,10 @@ SELECT 1/0;
 \endif
 
 SELECT EXISTS (
-    SELECT 1 FROM pg_class
-    WHERE relowner = (SELECT oid FROM pg_roles WHERE rolname = :'leadership_role')
-    UNION ALL
-    SELECT 1 FROM pg_proc
-    WHERE proowner = (SELECT oid FROM pg_roles WHERE rolname = :'leadership_role')
-    UNION ALL
-    SELECT 1 FROM pg_namespace
-    WHERE nspowner = (SELECT oid FROM pg_roles WHERE rolname = :'leadership_role')
-    UNION ALL
-    SELECT 1 FROM pg_database
-    WHERE datname = current_database()
-      AND datdba = (SELECT oid FROM pg_roles WHERE rolname = :'leadership_role')
+    SELECT 1 FROM pg_shdepend
+    WHERE refclassid = 'pg_authid'::regclass
+      AND refobjid = (SELECT oid FROM pg_roles WHERE rolname = :'leadership_role')
+      AND deptype = 'o'
 ) AS leadership_role_owns_database_object \gset
 \if :leadership_role_owns_database_object
 \echo 'leadership_role must not own database objects'

@@ -9,11 +9,12 @@ an irreversible external effect was in flight.
 
 ## Entry and operator flow
 
-An isolated leadership controller bootstraps organization epoch 1 once. For a
-cutover, an authorized operator calls `BeginDrain` with the exact current
-epoch, waits for the call to return, drains old-host work, and calls `Advance`
-with that same expected epoch. Controlled-effect services call `Current` for
-early rejection and `Fence` immediately around their bounded effect.
+An isolated leadership controller bootstraps organization epoch 1 once through
+the shipped `/flowops/ascp-leadership` command. For a cutover, an authorized
+operator calls `BeginDrain` with the exact current epoch, waits for the call to
+return, drains old-host work, and calls `Advance` with that same expected epoch.
+Controlled-effect services call `Current` for early rejection and `Fence`
+immediately around their bounded effect.
 
 ## Inputs
 
@@ -45,7 +46,9 @@ and one database connection remain held until it returns.
 `Fence`. It directly implements `ascprails.LeadershipGate` and returns shared
 `ErrEpochChanged` identity for stale or draining egress. Records expose the
 durable epoch, state, actor, evidence digest, and update time. There is no UI
-mutation surface; dashboards may display read-only state and event evidence.
+mutation surface; `ascp-leadership status` is the operator read path and
+dashboards may display read-only state and event evidence. The adapter requires
+an explicit validated schema, so temporary objects cannot shadow its tables.
 
 ## Authorization and security boundaries
 

@@ -73,6 +73,7 @@ rails_grants_are_safe() {
 	{
 		statement=toupper($0)
 		if (statement !~ /GRANT/) next
+		if (statement ~ /\/\*|--/) exit 1
 		gsub(/[[:space:]]+/, " ", statement)
 		sub(/^.*GRANT /, "", statement)
 		split(statement, parts, " ON ")
@@ -107,6 +108,10 @@ if printf '%s\n' 'GRANT SELECT,UPDATE ON ascp_seller_jobs TO role;' | rails_gran
 	echo "rails grant checker failed to reject no-space mixed table-wide UPDATE" >&2
 	exit 1
 fi
+if printf '%s\n' 'GRANT UPDATE/*hidden*/ ON ascp_seller_jobs TO role;' | rails_grants_are_safe; then
+	echo "rails grant checker failed to reject a commented broad grant" >&2
+	exit 1
+fi
 printf '%s\n' 'GRANT UPDATE (state) ON ascp_seller_jobs TO role;' | rails_grants_are_safe
 
 leadership_grant_file=deploy/control-plane/configure-leadership-role.sql
@@ -115,6 +120,7 @@ for required in \
     'leadership_role must exist and have LOGIN' \
     'leadership_role must not participate in role memberships' \
     'leadership_role must not own database objects' \
+    'SELECT 1 FROM pg_shdepend' \
     'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
     'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public' \
     'GRANT SELECT ON ascp_leadership_epochs, ascp_leadership_events' \
@@ -131,6 +137,7 @@ leadership_grants_are_safe() {
     {
         statement=toupper($0)
         if (statement !~ /GRANT/ || statement ~ /GRANT USAGE, SELECT ON SEQUENCE/) next
+        if (statement ~ /\/\*|--/) exit 1
         gsub(/[[:space:]]+/, " ", statement)
         sub(/^.*GRANT /, "", statement)
         split(statement, parts, " ON ")
@@ -156,6 +163,10 @@ if printf '%s\n' 'GRANT UPDATE ON ascp_leadership_epochs TO role;' | leadership_
 fi
 if printf '%s\n' 'GRANT INSERT ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe; then
     echo "leadership grant checker failed to reject table-wide INSERT" >&2
+    exit 1
+fi
+if printf '%s\n' 'GRANT UPDATE/*hidden*/ ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe; then
+    echo "leadership grant checker failed to reject a commented broad grant" >&2
     exit 1
 fi
 printf '%s\n' 'GRANT INSERT (organization_id) ON ascp_leadership_epochs TO role;' | leadership_grants_are_safe

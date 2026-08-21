@@ -154,9 +154,29 @@ psql "$FLOWOPS_DATABASE_ADMIN_URL" \
 ```
 
 Do not share the leadership credential with the API, seller worker, signer,
-keeper, or reconciliation services. A cutover is an operator workflow:
-`BeginDrain(expectedEpoch)`, wait for it to return (which proves prior fenced
-effects have exited), stop old-epoch work, then `Advance(expectedEpoch)`.
+keeper, or reconciliation services. Run the following only as transient trusted
+operator jobs with `FLOWOPS_LEADERSHIP_DATABASE_URL` set through the secret
+manager; it must use `sslmode=verify-full`. Bootstrap once with
+`/flowops/ascp-leadership bootstrap` and strict JSON on stdin. A cutover uses
+the shipped command twice:
+
+```sh
+printf '%s\n' '{"organizationId":"org-id","actor":"operator-id","evidenceDigest":"0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}' \
+  | /flowops/ascp-leadership bootstrap
+printf '%s\n' '{"organizationId":"org-id"}' \
+  | /flowops/ascp-leadership status
+printf '%s\n' '{"organizationId":"org-id","expectedEpoch":1,"actor":"operator-id","evidenceDigest":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
+  | /flowops/ascp-leadership drain
+# Wait for success, then stop and verify all old-epoch hosts.
+printf '%s\n' '{"organizationId":"org-id","expectedEpoch":1,"actor":"operator-id","evidenceDigest":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' \
+  | /flowops/ascp-leadership advance
+```
+
+The drain command does not return until prior fenced effects have exited. Never
+advance merely because a client timeout occurred; first query
+`/flowops/ascp-leadership status`, reconcile the durable state/event evidence,
+and verify old-host shutdown. Database URLs and credentials belong only in the
+environment/secret mount, never JSON, arguments, logs, or tickets.
 
 SQL cannot prove provider backup retention, PITR, encryption at rest, or
 monitoring. A signed operator record is tamper evidence and an accountable
