@@ -308,10 +308,11 @@ execution from `PUBLIC`.
 | `FLOWOPS_KEEPER_BATCH_SIZE` | Optional observation and relay limit per cycle, default `20`, maximum `100` |
 | `FLOWOPS_KEEPER_EXPIRY_LIMIT` | Optional independently proved expiry scan limit, default `100`, maximum `1000` |
 
-All seven socket paths must be distinct. Mount them from separately reviewed
-sidecars into a directory that is not world-writable; each socket must be
-owned by UID 10001 or root and must not be world-writable. Sidecars must expose
-the exact `ASCP_KEEPER_BOUNDARY_V1` health identity documented in
+All seven socket paths and device/inode identities must be distinct. Mount them
+from separately reviewed sidecars into immediate directories owned by UID 10001
+or root and not writable by group or other users; each socket must be owned by
+UID 10001 or root and must not be world-writable. Sidecars must expose the exact
+`ASCP_KEEPER_BOUNDARY_V1` health identity documented in
 `ASCP_KEEPER_RELAY.md`. Process startup and passing fixture tests do not prove
 HSM custody, KMS durability, provider independence, funded gas availability or
 live transaction correctness. Keep the keeper EOA capped and alert on ambiguity,

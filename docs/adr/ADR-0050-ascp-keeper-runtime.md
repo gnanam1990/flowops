@@ -26,8 +26,10 @@ Seven distinct Unix-domain sockets isolate activated-artifact release,
 transaction assembly, independent binding verification, wallet/HSM signing,
 KMS sealing, write-only broadcast, and read-only chain evidence. Startup and
 every request recheck that each socket is a non-symlink Unix socket owned by
-the runtime user or root in a non-world-writable immediate directory. Exact
-health identities prevent cross-wiring. Requests use
+the runtime user or root in an immediate directory that is owned by that user
+or root and is not writable by group or other users. Startup additionally
+rejects device/inode aliases across configured paths. Exact health identities
+prevent cross-wiring. Requests use
 `ASCP_KEEPER_BOUNDARY_V1`; responses are size bounded, reject unknown and
 duplicate JSON fields, and require one JSON value. Jobs sent to sidecars omit
 signer handles, lease ownership and tokens, lease expiry, and internal errors.

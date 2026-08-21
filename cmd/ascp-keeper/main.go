@@ -51,6 +51,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := ascpkeeper.ValidateDistinctSockets(config.sockets); err != nil {
+		return fmt.Errorf("validate keeper boundary sockets: %w", err)
+	}
 	db, err := sql.Open("pgx", config.databaseURL)
 	if err != nil {
 		return fmt.Errorf("open keeper PostgreSQL: %w", err)

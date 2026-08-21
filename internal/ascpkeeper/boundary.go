@@ -202,18 +202,49 @@ func rejectDuplicateBoundaryKeys(raw []byte) error {
 }
 
 func validateSocket(path string) error {
+	_, err := inspectSocket(path)
+	return err
+}
+
+type socketIdentity struct {
+	device uint64
+	inode  uint64
+}
+
+func inspectSocket(path string) (socketIdentity, error) {
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm()&0o002 != 0 {
-		return errors.New("path must be a non-symlink Unix socket that is not world-writable")
+		return socketIdentity{}, errors.New("path must be a non-symlink Unix socket that is not world-writable")
 	}
 	parent := filepath.Dir(path)
 	parentInfo, err := os.Lstat(parent)
-	if err != nil || parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() || parentInfo.Mode().Perm()&0o002 != 0 {
-		return errors.New("socket parent must be a non-symlink directory that is not world-writable")
+	if err != nil || parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() || parentInfo.Mode().Perm()&0o022 != 0 {
+		return socketIdentity{}, errors.New("socket parent must be a non-symlink directory that is not group- or world-writable")
+	}
+	parentStat, ok := parentInfo.Sys().(*syscall.Stat_t)
+	if !ok || parentStat.Uid != uint32(os.Geteuid()) && parentStat.Uid != 0 {
+		return socketIdentity{}, errors.New("socket parent must be owned by the runtime user or root")
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {
-		return errors.New("socket must be owned by the runtime user or root")
+		return socketIdentity{}, errors.New("socket must be owned by the runtime user or root")
+	}
+	return socketIdentity{device: uint64(stat.Dev), inode: uint64(stat.Ino)}, nil
+}
+
+// ValidateDistinctSockets rejects filesystem aliases that would collapse two
+// independently configured keeper trust boundaries onto one Unix socket.
+func ValidateDistinctSockets(paths map[string]string) error {
+	seen := make(map[socketIdentity]string, len(paths))
+	for name, path := range paths {
+		identity, err := inspectSocket(path)
+		if err != nil {
+			return fmt.Errorf("inspect %s boundary socket: %w", name, err)
+		}
+		if previous, exists := seen[identity]; exists {
+			return fmt.Errorf("keeper boundaries %s and %s resolve to the same Unix socket", previous, name)
+		}
+		seen[identity] = name
 	}
 	return nil
 }

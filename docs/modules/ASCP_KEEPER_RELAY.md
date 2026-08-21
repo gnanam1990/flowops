@@ -89,12 +89,13 @@ and wires the PostgreSQL
 store and read-only leadership gate to seven distinct Unix-domain boundary
 sockets: activated artifact, assembler, independent verifier, wallet/HSM,
 ciphertext sealer/KMS, write-only broadcaster, and independently verified
-read-only chain gateway. Startup
-rejects a shared socket between any two boundaries, a symlink or world-writable
-socket, a world-writable socket directory, a socket not owned by the runtime
-user or root, or a health response whose exact boundary identity does not
-match. No TCP listener, private key, raw-transaction environment variable, or
-credential-bearing RPC URL exists in this process.
+read-only chain gateway. Startup rejects path duplicates and filesystem aliases
+whose device/inode identity would collapse two boundaries onto one socket. It
+also rejects a symlink or world-writable socket, a group- or world-writable or
+unowned socket directory, a socket not owned by the runtime user or root, or a
+health response whose exact boundary identity does not match. No TCP listener,
+private key, raw-transaction environment variable, or credential-bearing RPC
+URL exists in this process.
 
 Every sidecar implements `ASCP_KEEPER_BOUNDARY_V1`, returns strict JSON with no
 unknown fields, and bounds each body to 2 MiB. `GET /healthz` returns exactly

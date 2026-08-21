@@ -77,6 +77,31 @@ func TestUnixBoundaryChecksSocketAndExactIdentity(t *testing.T) {
 	}
 }
 
+func TestUnixBoundaryRejectsGroupWritableParent(t *testing.T) {
+	path := unixBoundaryServer(t, healthHandler("artifact", nil))
+	if err := os.Chmod(filepath.Dir(path), 0o770); err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := NewUnixBoundary("artifact", path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := boundary.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "group- or world-writable") {
+		t.Fatalf("expected group-writable parent rejection, got %v", err)
+	}
+}
+
+func TestValidateDistinctSocketsRejectsFilesystemAliases(t *testing.T) {
+	path := unixBoundaryServer(t, healthHandler("artifact", nil))
+	alias := filepath.Join(filepath.Dir(path), "boundary-alias.sock")
+	if err := os.Link(path, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateDistinctSockets(map[string]string{"artifact": path, "wallet": alias}); err == nil || !strings.Contains(err.Error(), "same Unix socket") {
+		t.Fatalf("expected socket identity alias rejection, got %v", err)
+	}
+}
+
 func TestUnixBoundaryRejectsUnknownResponseFields(t *testing.T) {
 	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/v1/nonce" {
