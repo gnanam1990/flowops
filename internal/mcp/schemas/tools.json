@@ -129,6 +129,52 @@
       }
     },
     {
+      "name": "ascp.operation.activation.create",
+      "title": "Request ASCP signer activation",
+      "description": "Create the only two-phase signer activation request for an authenticated agent operation after a live execution authorization and budget reservation exist. Authorization, operation, reservation, and request identifiers are server-derived; the response never exposes canonical bytes, evidence bytes, signatures, or the prepared signer handle.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operationId", "request"],
+        "properties": {
+          "operationId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+          "request": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["actionId", "canonicalPayload", "canonicalPayloadHash", "evidenceBundle", "evidenceBundleHash", "digest", "nonce", "instrumentType", "signerKeyId", "keyEpoch", "moduleAddress", "safeAddress", "keeperId", "validAfter", "validUntil"],
+            "properties": {
+              "actionId": {"type": "string", "minLength": 1, "maxLength": 128},
+              "canonicalPayload": {"type": "string", "description": "Base64-encoded exact module payload bytes."},
+              "canonicalPayloadHash": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+              "evidenceBundle": {"type": "string", "description": "Base64-encoded immutable signer evidence bytes."},
+              "evidenceBundleHash": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+              "digest": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+              "nonce": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},
+              "instrumentType": {"type": "string", "enum": ["LOCK_AUTHORIZATION"]},
+              "signerKeyId": {"type": "string", "minLength": 1, "maxLength": 128},
+              "keyEpoch": {"type": "integer", "minimum": 1},
+              "moduleAddress": {"type": "string", "pattern": "^0x[0-9a-f]{40}$"},
+              "safeAddress": {"type": "string", "pattern": "^0x[0-9a-f]{40}$"},
+              "keeperId": {"type": "string", "minLength": 1, "maxLength": 128},
+              "validAfter": {"type": "string", "format": "date-time"},
+              "validUntil": {"type": "string", "format": "date-time"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "ascp.operation.activation.get",
+      "title": "Get ASCP signer activation",
+      "description": "Read the redacted two-phase signer activation state for an operation owned by the authenticated agent. Canonical bytes, evidence bytes, signatures, and the prepared signer handle are never returned.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operationId"],
+        "properties": {"operationId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"}}
+      }
+    },
+    {
       "name": "ascp.intent.create",
       "title": "Create spend intent",
       "description": "Legacy pre-ASCP compatibility tool. Submit one bounded PaymentIntent through the legacy policy and approval path. This does not create a durable ASCP operation and never signs or broadcasts a payment.",

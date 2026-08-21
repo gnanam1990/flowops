@@ -57,10 +57,12 @@ freshness window is capped at five minutes.
 - a retryable infrastructure/serialization-exhaustion error with no committed
   authorization or reservation.
 
-This module does not issue or release a signature. The next two-phase signer
-step must atomically move the reservation to `AUTHORIZATION_LIVE`, persist the
-bearer-registry row and activation outbox, and only then acknowledge release of
-the opaque prepared signer handle.
+This module does not issue or release a signature. The authenticated activation
+intake reconstructs these authorization and reservation identifiers and creates
+one durable `SIGN_REQUESTED` row. The separately supervised bearer worker then
+atomically moves the reservation to `AUTHORIZATION_LIVE`, persists the
+bearer-registry row and activation outbox, and only then acknowledges activation
+of the opaque prepared signer handle.
 
 ## Verification
 

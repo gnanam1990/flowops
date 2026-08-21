@@ -30,6 +30,12 @@ func TestLoadToolsRejectsSchemaManifestDrift(t *testing.T) {
 	if _, err := NewServer(Config{Delegate: http.NotFoundHandler()}); err != nil {
 		t.Fatalf("embedded schemas rejected: %v", err)
 	}
+	if _, err := NewServer(Config{Delegate: http.NotFoundHandler(), MaxRequestBytes: 2 * 1024 * 1024}); err != nil {
+		t.Fatalf("production activation MCP limit rejected: %v", err)
+	}
+	if _, err := NewServer(Config{Delegate: http.NotFoundHandler(), MaxRequestBytes: 2*1024*1024 + 1}); err == nil {
+		t.Fatal("unbounded MCP request limit succeeded")
+	}
 }
 
 func TestServerEnforcesTransportOriginAndAuthentication(t *testing.T) {
@@ -96,7 +102,7 @@ func TestServerListsToolsAndPreservesIntentBoundary(t *testing.T) {
 	server.ServeHTTP(listRecorder, list)
 	listResponse := decodeRPC(t, listRecorder)
 	tools := listResponse["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 11 {
+	if len(tools) != 13 {
 		t.Fatalf("tool count = %d", len(tools))
 	}
 
@@ -173,6 +179,7 @@ func TestDurableOperationToolsDelegateOnlyToAgentBoundary(t *testing.T) {
 		{"ascp.operation.decision.get", http.MethodGet, "/decision"},
 		{"ascp.operation.authorize", http.MethodPost, "/authorization"},
 		{"ascp.operation.authorization.get", http.MethodGet, "/authorization"},
+		{"ascp.operation.activation.get", http.MethodGet, "/activation"},
 	} {
 		call = mcpRequest(t, 3+index, "tools/call", map[string]any{"name": test.name, "arguments": map[string]any{"operationId": operationID}}, testAuthorization())
 		recorder = httptest.NewRecorder()
@@ -181,6 +188,28 @@ func TestDurableOperationToolsDelegateOnlyToAgentBoundary(t *testing.T) {
 		if last.path != "/agent/v1/intents/"+operationID+test.suffix || last.method != test.method {
 			t.Fatalf("%s delegated to %+v body=%s", test.name, last, recorder.Body.String())
 		}
+	}
+	activationRequest := map[string]any{
+		"actionId": "lock-action-1", "canonicalPayload": "Y2Fub25pY2Fs", "canonicalPayloadHash": "0x" + strings.Repeat("1", 64),
+		"evidenceBundle": "ZXZpZGVuY2U=", "evidenceBundleHash": "0x" + strings.Repeat("2", 64),
+		"digest": "0x" + strings.Repeat("3", 64), "nonce": "0x" + strings.Repeat("4", 64),
+		"instrumentType": "LOCK_AUTHORIZATION", "signerKeyId": "signer-key-1", "keyEpoch": 1,
+		"moduleAddress": "0x1111111111111111111111111111111111111111", "safeAddress": "0x2222222222222222222222222222222222222222",
+		"keeperId": "keeper-primary", "validAfter": "2033-01-01T00:00:00Z", "validUntil": "2033-01-01T00:09:00Z",
+	}
+	call = mcpRequest(t, 20, "tools/call", map[string]any{"name": "ascp.operation.activation.create", "arguments": map[string]any{"operationId": operationID, "request": activationRequest}}, testAuthorization())
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, call)
+	last := calls[len(calls)-1]
+	if last.path != "/agent/v1/intents/"+operationID+"/activation" || last.method != http.MethodPost || !bytes.Contains(last.body, []byte("lock-action-1")) {
+		t.Fatalf("activation create delegated to %+v body=%s", last, recorder.Body.String())
+	}
+	before := len(calls)
+	call = mcpRequest(t, 21, "tools/call", map[string]any{"name": "ascp.operation.activation.create", "arguments": map[string]any{"operationId": operationID, "request": activationRequest, "unexpected": true}}, testAuthorization())
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, call)
+	if rpcErrorCode(t, recorder) != -32602 || len(calls) != before+1 {
+		t.Fatalf("unknown activation arguments reached backend calls=%d before=%d body=%s", len(calls), before, recorder.Body.String())
 	}
 }
 

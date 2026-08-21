@@ -323,14 +323,86 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	if _, err := db.ExecContext(ctx, `UPDATE ascp_budget_reservations SET expires_at=$2 WHERE reservation_id=$1`, reservationID, now.Add(15*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	request, replayed, err := store.Request(ctx, input)
-	if err != nil || replayed || request.State != ascpbearer.SignRequested {
-		t.Fatalf("request=%+v replayed=%t err=%v", request, replayed, err)
+	type activationResult struct {
+		request  ascpbearer.ActivationRequest
+		replayed bool
+		err      error
 	}
-	retry := input
-	retry.RequestID = ascpIntegrationHash(2015)
-	if replay, wasReplay, err := store.Request(ctx, retry); err != nil || !wasReplay || replay.RequestID != input.RequestID {
-		t.Fatalf("replay=%+v wasReplay=%t err=%v", replay, wasReplay, err)
+	start := make(chan struct{})
+	results := make(chan activationResult, 8)
+	var group sync.WaitGroup
+	for index := range 8 {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			attempt := input
+			attempt.RequestID = ascpIntegrationHash(2011 + uint64(index))
+			<-start
+			request, replayed, err := store.Request(ctx, attempt)
+			results <- activationResult{request: request, replayed: replayed, err: err}
+		}(index)
+	}
+	close(start)
+	group.Wait()
+	close(results)
+	created := 0
+	var request ascpbearer.ActivationRequest
+	for result := range results {
+		if result.err != nil || result.request.State != ascpbearer.SignRequested {
+			t.Fatalf("concurrent request=%+v replayed=%t err=%v", result.request, result.replayed, result.err)
+		}
+		if request.RequestID == "" {
+			request = result.request
+		} else if result.request.RequestID != request.RequestID || result.request.InputHash != request.InputHash {
+			t.Fatalf("concurrent requests disagree: %+v != %+v", result.request, request)
+		}
+		if !result.replayed {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("concurrent activation creators=%d", created)
+	}
+	input.RequestID = request.RequestID
+	byAuthorization, err := store.ForAuthorization(ctx, authorizationID)
+	if err != nil || byAuthorization.RequestID != request.RequestID || byAuthorization.InputHash != request.InputHash {
+		t.Fatalf("authorization lookup=%+v err=%v", byAuthorization, err)
+	}
+	conflictOperationID := ascpIntegrationHash(2080)
+	conflictReservationID := ascpIntegrationHash(2081)
+	conflictAuthorizationID := ascpIntegrationHash(2082)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_intents
+			(operation_id,organization_id,actor_id,endpoint,idempotency_key,canonical_input_hash,
+			 quote_hash,purchase_spec_hash,quote_nonce,directory_version,directory_contract,
+			 seller_signer,quote_json,purchase_spec_json,request_body,created_at)
+		SELECT $1,organization_id,actor_id,endpoint,'signer-conflict-it',canonical_input_hash,
+		       quote_hash,purchase_spec_hash,$2,directory_version,directory_contract,
+		       seller_signer,quote_json,purchase_spec_json,request_body,created_at
+		FROM ascp_intents WHERE operation_id=$3`, conflictOperationID, ascpIntegrationHash(2083), operationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_budget_reservations
+			(reservation_id,operation_id,amount_base_units,state,dimensions,created_at,expires_at)
+		VALUES ($1,$2,'10','RESERVED','[]'::jsonb,$3,$4)`, conflictReservationID,
+		conflictOperationID, now, now.Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_execution_authorizations
+			(authorization_id,approval_id,intent_id,state,execution_snapshot_hash,reservation_id,created_at,evaluated_at)
+		VALUES ($1,$2,$3,'VALIDATED_AND_RESERVED',$4,$5,$6,$6)`, conflictAuthorizationID,
+		approvalID, conflictOperationID, ascpIntegrationHash(2084), conflictReservationID, now); err != nil {
+		t.Fatal(err)
+	}
+	conflictInput := input
+	conflictInput.RequestID = ascpIntegrationHash(2085)
+	conflictInput.AuthorizationID = conflictAuthorizationID
+	conflictInput.OperationID = conflictOperationID
+	conflictInput.ReservationID = conflictReservationID
+	if _, _, err := store.Request(ctx, conflictInput); !errors.Is(err, ascpbearer.ErrActivationBinding) {
+		t.Fatalf("cross-authorization signer binding reuse error=%v", err)
 	}
 
 	handle := "opaque-prepared-handle-0123456789abcdef"
@@ -391,6 +463,12 @@ func TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveA
 	}
 	if outboxEvents != 4 {
 		t.Fatalf("outbox events=%d", outboxEvents)
+	}
+	now = input.ValidUntil.Add(time.Minute)
+	lateReplay := input
+	lateReplay.RequestID = ascpIntegrationHash(2098)
+	if replay, replayed, err := store.Request(ctx, lateReplay); err != nil || !replayed || replay.RequestID != request.RequestID || replay.State != ascpbearer.ActivationAcknowledged {
+		t.Fatalf("late idempotent replay=%+v replayed=%t err=%v", replay, replayed, err)
 	}
 }
 

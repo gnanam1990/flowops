@@ -85,9 +85,12 @@ The same directory switch enables durable ASCP policy/approval/authorization
 orchestration. `FLOWOPS_ESCROW_CONTRACT` supplies the immutable commitment
 domain and `FLOWOPS_ESCROW_RELEASE_WINDOW_SECONDS` supplies the settlement
 window; startup rejects an incomplete escrow tuple. This creates only a
-pre-signature reservation and execution authorization. Signer activation,
-broadcast, settlement, reconciliation, and ledger readiness remain separate
-gates and must not be inferred from a successful authorization response.
+pre-signature reservation and execution authorization. It also enables the
+authenticated REST/MCP activation-intake service, which can create one
+`SIGN_REQUESTED` record but cannot sign or broadcast. Bearer-worker progress,
+signer and WORM sidecar readiness, broadcast, settlement, reconciliation, and
+ledger readiness remain separate gates and must not be inferred from a
+successful authorization or activation-intake response.
 
 Do not set `FLOWOPS_CONTROL_ADDR` on the selected runtime; `PORT` produces the
 required `0.0.0.0:PORT` listener and still requires explicit trusted-proxy
