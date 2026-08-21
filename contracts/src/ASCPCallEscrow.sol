@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.26;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ServiceDirectory} from "./ServiceDirectory.sol";
+
+interface IServiceDirectory {
+    function currentVersion() external view returns (uint64);
+    function verifySeller(uint64 version, ServiceDirectory.SellerLeaf calldata leaf, bytes32[] calldata proof)
+        external
+        view
+        returns (bool);
+    function verifyResource(uint64 version, ServiceDirectory.ResourceLeaf calldata leaf, bytes32[] calldata proof)
+        external
+        view
+        returns (bool);
+    function pausedSeller(bytes32 sellerId) external view returns (bool);
+    function quoteKeyRevoked(address key) external view returns (bool);
+}
+
+/// @title ASCPCallEscrow
+/// @notice ASCP v4 immutable lock boundary. It intentionally implements only
+///         lock storage; acknowledgement and verdict settlement are separate
+///         lifecycle modules and cannot alter a stored commitment.
+contract ASCPCallEscrow is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    bytes32 public constant EXECUTION_COMMITMENT_TYPEHASH = keccak256(
+        "ExecutionCommitment(bytes32 orgDomain,bytes32 operationId,uint8 rail,uint16 schemeVersion,uint8 protection,address escrowContract,bytes32 purchaseSpecHash,bytes32 quoteHash,bytes32 verificationSpecHash,uint64 declaredWorkTime,uint64 verificationBudgetSeconds,uint64 directoryVersion,bytes32 sellerId,bytes32 resourceId,address payTo,address ackAuthority,uint256 amount,uint256 chainId,address asset,uint64 quoteExpiresAt,uint64 acceptBy,uint64 deliverBy,uint64 settleBy)"
+    );
+    bytes32 public constant EIP712_DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 private constant NAME_HASH = keccak256("ASCP");
+    bytes32 private constant VERSION_HASH = keccak256("4");
+
+    uint8 public constant RAIL_ESCROW = 1;
+    uint16 public constant SCHEME_VERSION_V1 = 1;
+    uint8 public constant PROTECTION_ESCROW = 1;
+    uint64 public constant MIN_SETTLEMENT_MARGIN = 30 minutes;
+    uint64 public constant MIN_ONCHAIN_VERIFICATION_BUFFER = 120 seconds;
+
+    enum State {
+        None,
+        Locked,
+        Refunded
+    }
+
+    struct ExecutionCommitment {
+        bytes32 orgDomain;
+        bytes32 operationId;
+        uint8 rail;
+        uint16 schemeVersion;
+        uint8 protection;
+        address escrowContract;
+        bytes32 purchaseSpecHash;
+        bytes32 quoteHash;
+        bytes32 verificationSpecHash;
+        uint64 declaredWorkTime;
+        uint64 verificationBudgetSeconds;
+        uint64 directoryVersion;
+        bytes32 sellerId;
+        bytes32 resourceId;
+        address payTo;
+        address ackAuthority;
+        uint256 amount;
+        uint256 chainId;
+        address asset;
+        uint64 quoteExpiresAt;
+        uint64 acceptBy;
+        uint64 deliverBy;
+        uint64 settleBy;
+    }
+
+    struct Call {
+        address buyer;
+        address payTo;
+        address ackAuthority;
+        uint256 amount;
+        uint64 acceptBy;
+        uint64 deliverBy;
+        uint64 settleBy;
+        bytes32 operationId;
+        bytes32 commitmentHash;
+        bytes32 verificationSpecHash;
+        State state;
+    }
+
+    IERC20 public immutable usdc;
+    IServiceDirectory public immutable serviceDirectory;
+    address public immutable safe;
+    uint256 public totalLocked;
+    mapping(bytes32 callId => Call call_) private _calls;
+
+    event CallLocked(
+        bytes32 indexed callId,
+        bytes32 indexed operationId,
+        bytes32 indexed commitmentHash,
+        address buyer,
+        address payTo,
+        uint256 amount,
+        uint64 settleBy
+    );
+    event CallRefunded(bytes32 indexed callId, bytes32 indexed operationId, address indexed buyer, uint256 amount);
+
+    error AssetNotContract(address asset);
+    error DirectoryNotContract(address directory);
+    error SafeNotContract(address safe);
+    error NotSafe(address caller);
+    error InvalidCommitment();
+    error ChainMismatch(uint256 expected, uint256 actual);
+    error EscrowMismatch(address expected, address actual);
+    error AlreadyLocked(bytes32 callId);
+    error DirectoryProofInvalid();
+    error DirectoryTermsMismatch();
+    error SellerUnavailable();
+    error InvalidDeadlines();
+    error InsufficientDeliveryWindow();
+    error InsufficientSettlementMargin();
+    error InexactFunding(uint256 expected, uint256 received);
+    error RefundNotAvailable(bytes32 callId, State state, uint64 settleBy, uint256 nowTs);
+
+    constructor(IERC20 usdc_, IServiceDirectory serviceDirectory_, address safe_) {
+        if (address(usdc_).code.length == 0) revert AssetNotContract(address(usdc_));
+        if (address(serviceDirectory_).code.length == 0) revert DirectoryNotContract(address(serviceDirectory_));
+        if (safe_.code.length == 0) revert SafeNotContract(safe_);
+        usdc = usdc_;
+        serviceDirectory = serviceDirectory_;
+        safe = safe_;
+    }
+
+    /// @notice Locks the exact EIP-712 commitment. The caller is stored as the
+    /// buyer, so later settlement code has no recipient-selection authority.
+    function lockCall(
+        ExecutionCommitment calldata c,
+        ServiceDirectory.SellerLeaf calldata seller,
+        ServiceDirectory.ResourceLeaf calldata resource,
+        bytes32[] calldata sellerProof,
+        bytes32[] calldata resourceProof
+    ) external nonReentrant returns (bytes32 callId) {
+        if (msg.sender != safe) revert NotSafe(msg.sender);
+        if (c.chainId != block.chainid) revert ChainMismatch(block.chainid, c.chainId);
+        if (c.escrowContract != address(this)) revert EscrowMismatch(address(this), c.escrowContract);
+        if (
+            c.rail != RAIL_ESCROW || c.schemeVersion != SCHEME_VERSION_V1 || c.protection != PROTECTION_ESCROW
+                || c.orgDomain == bytes32(0) || c.operationId == bytes32(0) || c.purchaseSpecHash == bytes32(0)
+                || c.quoteHash == bytes32(0) || c.verificationSpecHash == bytes32(0) || c.sellerId == bytes32(0)
+                || c.resourceId == bytes32(0) || c.payTo == address(0) || c.ackAuthority == address(0) || c.amount == 0
+                || c.asset != address(usdc) || c.directoryVersion == 0 || c.declaredWorkTime == 0
+                || c.verificationBudgetSeconds == 0
+        ) revert InvalidCommitment();
+        // forge-lint: disable-next-line(block-timestamp)
+        if (
+            block.timestamp >= c.acceptBy || block.timestamp >= c.quoteExpiresAt || c.acceptBy >= c.deliverBy
+                || c.deliverBy >= c.settleBy
+        ) {
+            revert InvalidDeadlines();
+        }
+        // forge-lint: disable-next-line(block-timestamp)
+        if (
+            c.deliverBy - block.timestamp
+                < c.declaredWorkTime + _max(c.verificationBudgetSeconds, MIN_ONCHAIN_VERIFICATION_BUFFER)
+        ) {
+            revert InsufficientDeliveryWindow();
+        }
+        // forge-lint: disable-next-line(block-timestamp)
+        if (c.settleBy - block.timestamp < MIN_SETTLEMENT_MARGIN) revert InsufficientSettlementMargin();
+        if (c.directoryVersion != serviceDirectory.currentVersion()) revert DirectoryProofInvalid();
+        if (!serviceDirectory.verifySeller(c.directoryVersion, seller, sellerProof)) revert DirectoryProofInvalid();
+        if (!serviceDirectory.verifyResource(c.directoryVersion, resource, resourceProof)) {
+            revert DirectoryProofInvalid();
+        }
+        if (
+            seller.status != 1 || serviceDirectory.pausedSeller(c.sellerId)
+                || serviceDirectory.quoteKeyRevoked(seller.quoteSigningKey)
+        ) {
+            revert SellerUnavailable();
+        }
+        if (
+            seller.sellerId != c.sellerId || resource.sellerId != seller.sellerId || resource.resourceId != c.resourceId
+                || seller.payoutAddress != c.payTo || seller.ackAuthority != c.ackAuthority
+                || resource.price != c.amount || !resource.escrowSupported
+                || resource.declaredWorkTime != c.declaredWorkTime
+                || resource.verificationBudgetSeconds != c.verificationBudgetSeconds
+                || resource.verificationSpecHash != c.verificationSpecHash
+        ) revert DirectoryTermsMismatch();
+
+        bytes32 commitmentHash = executionCommitmentDigest(c, address(this), block.chainid);
+        return _storeAndFund(c, commitmentHash);
+    }
+
+    function executionCommitmentDigest(ExecutionCommitment calldata c, address escrow, uint256 domainChainId)
+        public
+        pure
+        returns (bytes32)
+    {
+        if (c.chainId != domainChainId || c.escrowContract != escrow) revert InvalidCommitment();
+        bytes32 structHash = keccak256(abi.encode(EXECUTION_COMMITMENT_TYPEHASH, c));
+        bytes32 domainSeparator =
+            keccak256(abi.encode(EIP712_DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, domainChainId, escrow));
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+    }
+
+    function getCall(bytes32 callId) external view returns (Call memory) {
+        return _calls[callId];
+    }
+
+    /// @notice The non-bypassable recovery path for a lock that has not yet
+    /// received a verdict settlement. It pays only the snapshotted buyer.
+    function claimExpired(bytes32 callId) external nonReentrant {
+        Call storage call_ = _calls[callId];
+        // forge-lint: disable-next-line(block-timestamp)
+        if (call_.state != State.Locked || block.timestamp <= call_.settleBy) {
+            revert RefundNotAvailable(callId, call_.state, call_.settleBy, block.timestamp);
+        }
+        call_.state = State.Refunded;
+        totalLocked -= call_.amount;
+        usdc.safeTransfer(call_.buyer, call_.amount);
+        emit CallRefunded(callId, call_.operationId, call_.buyer, call_.amount);
+    }
+
+    function _storeAndFund(ExecutionCommitment calldata c, bytes32 commitmentHash) private returns (bytes32 callId) {
+        callId = keccak256(abi.encodePacked(commitmentHash));
+        if (_calls[callId].state != State.None) revert AlreadyLocked(callId);
+        _calls[callId] = Call({
+            buyer: msg.sender,
+            payTo: c.payTo,
+            ackAuthority: c.ackAuthority,
+            amount: c.amount,
+            acceptBy: c.acceptBy,
+            deliverBy: c.deliverBy,
+            settleBy: c.settleBy,
+            operationId: c.operationId,
+            commitmentHash: commitmentHash,
+            verificationSpecHash: c.verificationSpecHash,
+            state: State.Locked
+        });
+        totalLocked += c.amount;
+        uint256 beforeBalance = usdc.balanceOf(address(this));
+        usdc.safeTransferFrom(msg.sender, address(this), c.amount);
+        uint256 received = usdc.balanceOf(address(this)) - beforeBalance;
+        if (received != c.amount) revert InexactFunding(c.amount, received);
+        emit CallLocked(callId, c.operationId, commitmentHash, msg.sender, c.payTo, c.amount, c.settleBy);
+    }
+
+    function _max(uint64 left, uint64 right) private pure returns (uint64) {
+        return left > right ? left : right;
+    }
+}
