@@ -38,6 +38,9 @@ func (g *PostgresOperationGate) Check(ctx context.Context, job Job) error {
 		amount_base_units,state,chain_id,settle_by,locked_transaction_hash,buyer FROM ascp_payment_operations WHERE operation_id=$1`, job.OperationID).
 		Scan(&organizationID, &callID, &commitmentHash, &escrowContract, &asset, &payTo, &amount, &state, &chainID, &settleBy, &lockHash, &payer)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrOperationNotExecutable
+		}
 		return err
 	}
 	if state != "LOCKED_FINALIZED" || organizationID != job.OrganizationID || callID != job.JobID || chainID != job.ChainID ||
@@ -64,7 +67,7 @@ func (s *PostgresStore) Enqueue(ctx context.Context, input EnqueueInput) (Job, b
 	if err != nil {
 		return Job{}, false, err
 	}
-	for retry := 0; retry < 3; retry++ {
+	for retry := 0; retry < maxAttempts; retry++ {
 		job, replay, enqueueErr := s.enqueueOnce(ctx, input)
 		if enqueueErr == nil {
 			return job, replay, nil
@@ -97,7 +100,7 @@ func (s *PostgresStore) enqueueOnce(ctx context.Context, input EnqueueInput) (Jo
 	if err != nil {
 		return Job{}, false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var existingHash string
 	err = tx.QueryRowContext(ctx, `SELECT input_hash FROM ascp_seller_jobs WHERE job_id=$1`, input.JobID).Scan(&existingHash)
 	if err == nil {
@@ -158,7 +161,7 @@ func (s *PostgresStore) claim(ctx context.Context, worker string, duration time.
 	if err != nil {
 		return Lease{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	states := "state='RESPONSE_STORED'"
 	if !finalization {
 		states = "state IN ('QUEUED','RETRY_WAIT','SENDING') AND eligible_after <= $1"
@@ -197,12 +200,12 @@ func (s *PostgresStore) MarkSending(ctx context.Context, lease Lease, observatio
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	job, err := loadLeasedSellerJob(ctx, tx, lease, now)
 	if err != nil {
 		return Job{}, err
 	}
-	if job.State != StateQueued && job.State != StateRetryWait && job.State != StateSending || job.AttemptCount >= 3 {
+	if job.State != StateQueued && job.State != StateRetryWait && job.State != StateSending || job.AttemptCount >= maxAttempts {
 		return Job{}, ErrStateConflict
 	}
 	if job.State == StateSending {
@@ -245,7 +248,7 @@ func (s *PostgresStore) RecordResponse(ctx context.Context, lease Lease, respons
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	job, err := loadLeasedSellerJob(ctx, tx, lease, now)
 	if err != nil {
 		return Job{}, err
@@ -292,7 +295,7 @@ func (s *PostgresStore) RecordTransportFailure(ctx context.Context, lease Lease,
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	job, err := loadLeasedSellerJob(ctx, tx, lease, now)
 	if err != nil {
 		return Job{}, err
@@ -334,7 +337,7 @@ func (s *PostgresStore) MarkDeadlineMissing(ctx context.Context, lease Lease, ob
 	if err != nil {
 		return Job{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	job, err := loadLeasedSellerJob(ctx, tx, lease, now)
 	if err != nil {
 		return Job{}, err

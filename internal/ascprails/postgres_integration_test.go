@@ -15,7 +15,6 @@ import (
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestPostgresSellerEgressConcurrentClaimRecoveryAndImmutability(t *testing.T) {
@@ -64,25 +63,30 @@ func TestPostgresSellerEgressConcurrentClaimRecoveryAndImmutability(t *testing.T
 	if err != nil || gate.Check(context.Background(), enqueued) != nil {
 		t.Fatalf("operation gate: %v", err)
 	}
+	missingOperation := enqueued
+	missingOperation.OperationID = testHash("98")
+	if err := gate.Check(t.Context(), missingOperation); !errors.Is(err, ErrOperationNotExecutable) {
+		t.Fatalf("missing operation gate=%v", err)
+	}
 	changedGate := enqueued
 	changedGate.Binding.CommitmentHash = testHash("99")
 	if err := gate.Check(context.Background(), changedGate); !errors.Is(err, ErrOperationNotExecutable) {
 		t.Fatalf("substituted operation gate=%v", err)
 	}
-	mutation, err := db.Begin()
+	mutation, err := db.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutation.Exec(`CREATE TEMP TABLE seller_job_mutation ON COMMIT DROP AS SELECT * FROM ascp_seller_jobs WHERE job_id=$1`, fixture.input.JobID); err != nil {
+	if _, err := mutation.ExecContext(t.Context(), `CREATE TEMP TABLE seller_job_mutation ON COMMIT DROP AS SELECT * FROM ascp_seller_jobs WHERE job_id=$1`, fixture.input.JobID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutation.Exec(`DELETE FROM ascp_seller_jobs WHERE job_id=$1`, fixture.input.JobID); err != nil {
+	if _, err := mutation.ExecContext(t.Context(), `DELETE FROM ascp_seller_jobs WHERE job_id=$1`, fixture.input.JobID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutation.Exec(`UPDATE seller_job_mutation SET offer_json=offer_json #- '{accepted,asset}'`); err != nil {
+	if _, err := mutation.ExecContext(t.Context(), `UPDATE seller_job_mutation SET offer_json=offer_json #- '{accepted,asset}'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutation.Exec(`INSERT INTO ascp_seller_jobs SELECT * FROM seller_job_mutation`); err == nil {
+	if _, err := mutation.ExecContext(t.Context(), `INSERT INTO ascp_seller_jobs SELECT * FROM seller_job_mutation`); err == nil {
 		t.Fatal("database accepted missing offer asset binding")
 	}
 	_ = mutation.Rollback()
@@ -133,7 +137,7 @@ func TestPostgresSellerEgressConcurrentClaimRecoveryAndImmutability(t *testing.T
 		t.Fatalf("recovered sending=%+v err=%v", job, err)
 	}
 	var abandonedState string
-	if err := db.QueryRow(`SELECT state FROM ascp_seller_attempts WHERE job_id=$1 AND attempt_number=1`, fixture.input.JobID).Scan(&abandonedState); err != nil || abandonedState != "AMBIGUOUS" {
+	if err := db.QueryRowContext(t.Context(), `SELECT state FROM ascp_seller_attempts WHERE job_id=$1 AND attempt_number=1`, fixture.input.JobID).Scan(&abandonedState); err != nil || abandonedState != "AMBIGUOUS" {
 		t.Fatalf("abandoned state=%s err=%v", abandonedState, err)
 	}
 	lease.Job = job
@@ -159,13 +163,16 @@ func TestPostgresSellerEgressConcurrentClaimRecoveryAndImmutability(t *testing.T
 	if err := store.ReleaseLease(context.Background(), finalLease); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE ascp_seller_jobs SET request_url='https://evil.example/' WHERE job_id=$1`, fixture.input.JobID); err == nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE ascp_seller_jobs SET request_url='https://evil.example/' WHERE job_id=$1`, fixture.input.JobID); err == nil {
 		t.Fatal("database accepted immutable request substitution")
 	}
-	if _, err := db.Exec(`UPDATE ascp_seller_responses SET response_body='changed' WHERE job_id=$1`, fixture.input.JobID); err == nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE ascp_seller_responses SET response_body='changed' WHERE job_id=$1`, fixture.input.JobID); err == nil {
 		t.Fatal("database accepted response mutation")
 	}
-	if _, err := db.Exec(`UPDATE ascp_seller_jobs SET state='QUEUED' WHERE job_id=$1`, fixture.input.JobID); err == nil {
+	if _, err := db.ExecContext(t.Context(), `DELETE FROM ascp_seller_attempts WHERE job_id=$1`, fixture.input.JobID); err == nil {
+		t.Fatal("database accepted attempt evidence deletion")
+	}
+	if _, err := db.ExecContext(t.Context(), `UPDATE ascp_seller_jobs SET state='QUEUED' WHERE job_id=$1`, fixture.input.JobID); err == nil {
 		t.Fatal("database reopened captured job")
 	}
 }
@@ -184,7 +191,7 @@ func seedSellerPaymentOperation(t *testing.T, db *sql.DB, fixture railsTestFixtu
 			quote_hash,purchase_spec_hash,quote_nonce,directory_version,directory_contract,seller_signer,quote_json,
 			purchase_spec_json,purchase_spec_bytes,request_body,created_at)
 			VALUES ($1,'org-test',$2,'ascp.intent.create',$1,$3,$4,$5,$6,7,$7,$8,'{}',$9::jsonb,$10,$11,$12)`,
-			[]any{input.OperationID, agentID, strings.Repeat("55", 32), input.Offer.Intake.QuoteHash, input.Offer.Accepted.Extra["escrowCall"].(map[string]interface{})["sellerQuote"].(map[string]interface{})["purchaseSpecHash"],
+			[]any{input.OperationID, agentID, strings.Repeat("55", 32), input.Offer.Intake.QuoteHash, fixture.purchaseSpecHash,
 				testHash("56"), input.Offer.Intake.ServiceDirectory, input.Offer.Intake.QuoteSigner, string(input.CanonicalSpecJSON), input.CanonicalSpecJSON, input.Body, fixture.now}},
 		{`INSERT INTO ascp_approvals (approval_id,organization_id,intent_id,state,review_snapshot_hash,requested_at,expires_at,decided_at,decided_by)
 			VALUES ($1,'org-test',$2,'APPROVED',$3,$4,$5,$4,'owner')`, []any{approvalID, input.OperationID, testHash("57"), fixture.now, fixture.now.Add(time.Hour)}},
@@ -206,7 +213,7 @@ func seedSellerPaymentOperation(t *testing.T, db *sql.DB, fixture railsTestFixtu
 				input.Offer.Accepted.Amount, time.Unix(int64(input.DeliverBy+300), 0).UTC(), input.LockedTransactionHash, testHash("61"), fixture.now}},
 	}
 	for _, statement := range statements {
-		if _, err := db.Exec(statement.query, statement.args...); err != nil {
+		if _, err := db.ExecContext(t.Context(), statement.query, statement.args...); err != nil {
 			t.Fatalf("seed seller operation: %v\n%s", err, statement.query)
 		}
 	}
@@ -223,7 +230,7 @@ func sellerDatabase(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	schema := fmt.Sprintf("flowops_seller_it_%d", time.Now().UnixNano())
-	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+	if _, err := admin.ExecContext(t.Context(), `CREATE SCHEMA `+schema); err != nil {
 		t.Fatal(err)
 	}
 	config, err := pgx.ParseConfig(databaseURL)
@@ -235,12 +242,12 @@ func sellerDatabase(t *testing.T) *sql.DB {
 	if err := controlapi.ApplyMigrations(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO organizations (id,name,created_at) VALUES ('org-test','Seller rails test',$1)`, time.Now().UTC()); err != nil {
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO organizations (id,name,created_at) VALUES ('org-test','Seller rails test',$1)`, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		_ = db.Close()
-		_, _ = admin.Exec(`DROP SCHEMA IF EXISTS ` + schema + ` CASCADE`)
+		_, _ = admin.ExecContext(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
 		_ = admin.Close()
 	})
 	return db

@@ -11,10 +11,11 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
+
+const maxDestinationURLBytes = 2048
 
 var (
 	ErrUnsafeDestination = errors.New("unsafe seller destination")
@@ -105,7 +106,18 @@ func (g networkGuard) DialContext(ctx context.Context, network, address string) 
 }
 
 func validateDestination(ctx context.Context, raw string, resolver Resolver) (*url.URL, error) {
-	if len(raw) == 0 || len(raw) > 2048 {
+	parsed, err := validateDestinationShape(raw)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := resolvePublic(ctx, resolver, parsed.Hostname()); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+func validateDestinationShape(raw string) (*url.URL, error) {
+	if len(raw) == 0 || len(raw) > maxDestinationURLBytes {
 		return nil, ErrUnsafeDestination
 	}
 	parsed, err := url.Parse(raw)
@@ -119,12 +131,6 @@ func validateDestination(ctx context.Context, raw string, resolver Resolver) (*u
 	}
 	if port != "443" {
 		return nil, ErrUnsafeDestination
-	}
-	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return nil, ErrUnsafeDestination
-	}
-	if _, err := resolvePublic(ctx, resolver, parsed.Hostname()); err != nil {
-		return nil, err
 	}
 	return parsed, nil
 }
@@ -156,7 +162,7 @@ var blockedRanges = mustPrefixes(
 	"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "198.18.0.0/15",
 	"198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4",
 	"64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:2::/48", "2001:10::/28",
-	"2001:20::/28", "2001:db8::/32", "2002::/16", "3fff::/20", "5f00::/16",
+	"2001:20::/28", "2001:db8::/32", "2002::/16", "3fff::/20", "5f00::/16", "fec0::/10",
 )
 
 func mustPrefixes(values ...string) []netip.Prefix {

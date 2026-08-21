@@ -158,3 +158,7 @@ $$;
 DROP TRIGGER IF EXISTS ascp_seller_attempts_validate_update ON ascp_seller_attempts;
 CREATE TRIGGER ascp_seller_attempts_validate_update BEFORE UPDATE ON ascp_seller_attempts
 FOR EACH ROW EXECUTE FUNCTION flowops_validate_seller_attempt_update();
+
+DROP TRIGGER IF EXISTS ascp_seller_attempts_reject_delete ON ascp_seller_attempts;
+CREATE TRIGGER ascp_seller_attempts_reject_delete BEFORE DELETE ON ascp_seller_attempts
+FOR EACH ROW EXECUTE FUNCTION flowops_reject_immutable_mutation();

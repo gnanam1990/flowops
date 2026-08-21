@@ -242,16 +242,16 @@ func VerifyRuntimeSQL(ctx context.Context, db *sql.DB) (SQLReport, error) {
 		for rows.Next() {
 			var column string
 			if err := rows.Scan(&column); err != nil {
-				rows.Close()
-				return report, err
+				_ = rows.Close()
+				return report, fmt.Errorf("scan %s column INSERT privilege: %w", contract.table, err)
 			}
 			actual[column] = true
 		}
 		if err := rows.Close(); err != nil {
-			return report, err
+			return report, fmt.Errorf("close %s column INSERT privileges: %w", contract.table, err)
 		}
 		if err := rows.Err(); err != nil {
-			return report, err
+			return report, fmt.Errorf("iterate %s column INSERT privileges: %w", contract.table, err)
 		}
 		report.add("columns_"+contract.table+"_insert", sameSet(actual, contract.columns),
 			fmt.Sprintf("column INSERT privileges must match the reviewed enqueue fields for %s", contract.table))

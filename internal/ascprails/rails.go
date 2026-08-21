@@ -25,7 +25,10 @@ import (
 	"github.com/gnanam1990/flowops/pkg/purchasespec"
 )
 
-const MaxResponseBytes = 16 << 20
+const (
+	MaxResponseBytes = 16 << 20
+	maxAttempts      = 3
+)
 
 type State string
 
@@ -186,7 +189,7 @@ func NewService(store Store, leadership LeadershipGate, chain ChainClock, operat
 	_, restricted := transport.(interface{ ascpRestrictedTransport() })
 	if store == nil || leadership == nil || chain == nil || operations == nil || integrity == nil || transport == nil || !restricted || !identifierPattern.MatchString(config.WorkerID) ||
 		config.LeaseDuration < time.Second || config.LeaseDuration > time.Minute || config.RetryDelay < time.Second ||
-		config.RetryDelay > time.Hour || config.MaxAttempts != 3 || config.MaxObservationAge < time.Second || config.MaxObservationAge > time.Minute {
+		config.RetryDelay > time.Hour || config.MaxAttempts != maxAttempts || config.MaxObservationAge < time.Second || config.MaxObservationAge > time.Minute {
 		return nil, ErrInvalidConfig
 	}
 	client, err := escrowcall.NewHTTPClient(transport, config.HTTPTimeout)
@@ -222,7 +225,7 @@ func (s *Service) DispatchOne(ctx context.Context) (Job, error) {
 	if err != nil {
 		return Job{}, err
 	}
-	defer s.store.ReleaseLease(context.WithoutCancel(ctx), lease)
+	defer func() { _ = s.store.ReleaseLease(context.WithoutCancel(ctx), lease) }()
 	job := lease.Job
 	if job.AttemptCount >= s.config.MaxAttempts && (job.State == StateSending || job.State == StateRetryWait) {
 		return s.failWithoutResponse(ctx, lease, "RESPONSE_UNKNOWN_RETRIES_EXHAUSTED", StateDeadLetter, time.Time{})
@@ -269,7 +272,7 @@ func (s *Service) DispatchOne(ctx context.Context) (Job, error) {
 		state, next := s.retryState(job.AttemptCount)
 		return s.failWithoutResponse(ctx, lease, "TRANSPORT_AMBIGUOUS", state, next)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	stored, readErr := captureResponse(response, job.AttemptCount, s.config.Clock().UTC())
 	if readErr != nil {
 		state, next := StateDeadLetter, time.Time{}
@@ -293,7 +296,7 @@ func (s *Service) FinalizeOne(ctx context.Context) (Job, error) {
 	if err != nil {
 		return Job{}, err
 	}
-	defer s.store.ReleaseLease(context.WithoutCancel(ctx), lease)
+	defer func() { _ = s.store.ReleaseLease(context.WithoutCancel(ctx), lease) }()
 	observation, err := s.chain.Confirmed(ctx, lease.Job.ChainID)
 	if err != nil {
 		return Job{}, fmt.Errorf("confirmed chain time: %w", err)
@@ -341,7 +344,10 @@ func validateInput(input EnqueueInput) error {
 		(input.ChainID != 8453 && input.ChainID != 84532) || input.LeadershipEpoch == 0 || input.DeliverBy == 0 ||
 		input.ValidatedChainTime == 0 || input.ValidatedChainTime >= input.DeliverBy || input.ValidatedChainTime > uint64(^uint64(0)>>1) ||
 		len(input.Body) > purchasespec.MaxRequestBodyBytes || len(input.CanonicalSpecJSON) == 0 || len(input.CanonicalSpecJSON) > 32<<20 ||
-		input.Method == "" || input.URL == "" || len(input.Headers) > 256 {
+		input.Method == "" || len(input.Headers) > 256 {
+		return ErrInvalidJob
+	}
+	if _, err := validateDestinationShape(input.URL); err != nil {
 		return ErrInvalidJob
 	}
 	spec, err := purchasespec.ValidatePersisted(input.CanonicalSpecJSON, input.Body)

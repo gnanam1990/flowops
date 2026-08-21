@@ -244,10 +244,23 @@ func TestEnqueueRejectsZeroLockIdentity(t *testing.T) {
 	}
 }
 
+func TestEnqueueRejectsDestinationOutsideTransportContract(t *testing.T) {
+	fixture := railsFixture(t)
+	service := newTestService(t, newMemoryStore(fixture.now), &fakeChain{}, &fakeRestrictedTransport{}, fixture.now)
+	for _, raw := range []string{"http://seller.example/v1/jobs", "https://seller.example/" + strings.Repeat("a", maxDestinationURLBytes)} {
+		candidate := fixture.input
+		candidate.URL = raw
+		if _, _, err := service.Enqueue(t.Context(), candidate); !errors.Is(err, ErrInvalidJob) {
+			t.Fatalf("destination %q error=%v", raw, err)
+		}
+	}
+}
+
 type railsTestFixture struct {
-	now         time.Time
-	input       EnqueueInput
-	observation ChainObservation
+	now              time.Time
+	input            EnqueueInput
+	observation      ChainObservation
+	purchaseSpecHash string
 }
 
 func railsFixture(t *testing.T) railsTestFixture {
@@ -288,7 +301,7 @@ func railsFixture(t *testing.T) railsTestFixture {
 		DeliverBy: uint64(now.Unix() + 600), Method: "POST", URL: spec.Spec.CanonicalURL, Headers: http.Header{"Content-Type": {"application/json"}, "X-Request-Id": {"request-1"}},
 		Body: body, CanonicalSpecJSON: spec.CanonicalJSON, Offer: offer, Payment: payment, Binding: binding,
 		LockedTransactionHash: testHash("41"), Payer: "0x5555555555555555555555555555555555555555", ValidatedChainTime: uint64(now.Unix())}
-	return railsTestFixture{now: now, input: input, observation: ChainObservation{Timestamp: uint64(now.Unix()), EvidenceDigest: testHash("31"), ObservedAt: now}}
+	return railsTestFixture{now: now, input: input, observation: ChainObservation{Timestamp: uint64(now.Unix()), EvidenceDigest: testHash("31"), ObservedAt: now}, purchaseSpecHash: spec.PurchaseSpecHash}
 }
 
 func successResponse(t *testing.T, fixture railsTestFixture, body []byte) *http.Response {
@@ -444,6 +457,9 @@ func (s *memoryStore) MarkSending(_ context.Context, l Lease, _ ChainObservation
 	if err := s.leased(l); err != nil {
 		return Job{}, err
 	}
+	if s.job.AttemptCount >= maxAttempts {
+		return Job{}, ErrStateConflict
+	}
 	s.job.State = StateSending
 	s.job.AttemptCount++
 	s.job.UpdatedAt = s.now
@@ -454,6 +470,9 @@ func (s *memoryStore) RecordResponse(_ context.Context, l Lease, r StoredRespons
 	defer s.mu.Unlock()
 	if err := s.leased(l); err != nil {
 		return Job{}, err
+	}
+	if s.job.State != StateSending || s.job.AttemptCount != r.Attempt {
+		return Job{}, ErrStateConflict
 	}
 	s.job.State = state
 	s.job.LastError = code
@@ -519,7 +538,7 @@ func (s *memoryStore) Get(_ context.Context, _ string) (Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.job == nil {
-		return Job{}, sqlErrNoRows
+		return Job{}, errNoRows
 	}
 	return cloneJob(*s.job), nil
 }
@@ -529,6 +548,6 @@ func cloneJob(job Job) Job {
 	return job
 }
 
-var sqlErrNoRows = errors.New("not found")
+var errNoRows = errors.New("not found")
 
 var _ Store = (*memoryStore)(nil)

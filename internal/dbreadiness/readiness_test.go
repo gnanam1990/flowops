@@ -68,6 +68,20 @@ func TestVerifyRuntimeSQLRejectsSurplusSignerColumnUpdatePrivilege(t *testing.T)
 	}
 }
 
+func TestVerifyRuntimeSQLRejectsSurplusSellerJobInsertColumnPrivilege(t *testing.T) {
+	db, mock := readinessDB(t, true, nil, map[string][]string{"ascp_seller_jobs": {"state"}})
+	report, err := VerifyRuntimeSQL(t.Context(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Ready {
+		t.Fatal("surplus seller state INSERT privilege was marked ready")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateRuntimeURLRequiresVerifiedTLS(t *testing.T) {
 	postgresURL := func(mode string) string {
 		return strings.Join([]string{"postgresql", "://runtime@", "db.example/flowops?sslmode=", mode}, "")
@@ -183,6 +197,7 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 			columns = append(columns, column)
 		}
 		sort.Strings(columns)
+		columns = append(columns, columnExtras[contract.table]...)
 		for _, column := range columns {
 			rows.AddRow(column)
 		}
