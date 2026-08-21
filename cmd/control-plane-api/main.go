@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/gnanam1990/flowops/internal/ascpactivation"
 	"github.com/gnanam1990/flowops/internal/ascpagent"
+	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
@@ -103,6 +105,7 @@ func run(ctx context.Context) error {
 	}
 	var ascpAgentService *ascpagent.Service
 	var ascpOrchestrationService *ascporchestration.Service
+	var ascpActivationService *ascpactivation.Service
 	if cfg.ascpDirectoryContract != "" {
 		intakeStore, err := ascpintake.NewPostgresStore(db)
 		if err != nil {
@@ -143,6 +146,17 @@ func run(ctx context.Context) error {
 		})
 		if err != nil {
 			return fmt.Errorf("create ASCP orchestration service: %w", err)
+		}
+		activationStore, err := ascpbearer.NewActivationStore(db)
+		if err != nil {
+			return fmt.Errorf("create ASCP activation store: %w", err)
+		}
+		ascpActivationService, err = ascpactivation.New(ascpactivation.Config{
+			Authorizations: ascpOrchestrationService,
+			Store:          activationStore,
+		})
+		if err != nil {
+			return fmt.Errorf("create ASCP activation service: %w", err)
 		}
 	} else {
 		slog.Warn("durable ASCP agent intake is disabled", "reason", "FLOWOPS_ASCP_DIRECTORY_CONTRACT is unset")
@@ -249,12 +263,13 @@ func run(ctx context.Context) error {
 		Reconciliation: reconciliationEngine,
 		ASCPAgent:      ascpAgentService,
 		ASCPFlow:       ascpOrchestrationService,
+		ASCPActivation: ascpActivationService,
 		ASCPSettlement: ascpSettlementRegistrar{store: ascpSettlementStore},
 	})
 	if err != nil {
 		return err
 	}
-	mcpServer, err := mcp.NewServer(mcp.Config{Delegate: api, AllowedOrigins: cfg.mcpAllowedOrigins})
+	mcpServer, err := mcp.NewServer(mcp.Config{Delegate: api, AllowedOrigins: cfg.mcpAllowedOrigins, MaxRequestBytes: 2 * 1024 * 1024})
 	if err != nil {
 		return fmt.Errorf("create MCP server: %w", err)
 	}

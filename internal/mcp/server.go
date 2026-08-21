@@ -84,8 +84,8 @@ func NewServer(cfg Config) (*Server, error) {
 	if maxBytes == 0 {
 		maxBytes = defaultMaxBytes
 	}
-	if maxBytes < 1024 || maxBytes > 1024*1024 {
-		return nil, errors.New("MCP request size must be between 1 KiB and 1 MiB")
+	if maxBytes < 1024 || maxBytes > 2*1024*1024 {
+		return nil, errors.New("MCP request size must be between 1 KiB and 2 MiB")
 	}
 	name := strings.TrimSpace(cfg.ServerName)
 	if name == "" {
@@ -368,6 +368,26 @@ func (s *Server) callTool(ctx context.Context, authorization string, params json
 			return nil, invalidParams()
 		}
 		response = s.callBackend(ctx, authorization, http.MethodGet, "/agent/v1/intents/"+url.PathEscape(operationID)+"/authorization", nil, nil)
+	case "ascp.operation.activation.create":
+		var arguments struct {
+			OperationID string          `json:"operationId"`
+			Request     json.RawMessage `json:"request"`
+		}
+		if err := requireNoUnknown(call.Arguments, &arguments); err != nil ||
+			!identifierPattern.MatchString(arguments.OperationID) {
+			return nil, invalidParams()
+		}
+		request := bytes.TrimSpace(arguments.Request)
+		if len(request) == 0 || request[0] != '{' || !json.Valid(request) {
+			return nil, invalidParams()
+		}
+		response = s.callBackend(ctx, authorization, http.MethodPost, "/agent/v1/intents/"+url.PathEscape(arguments.OperationID)+"/activation", nil, request)
+	case "ascp.operation.activation.get":
+		operationID, ok := oneIdentifierArgument(call.Arguments, "operationId")
+		if !ok {
+			return nil, invalidParams()
+		}
+		response = s.callBackend(ctx, authorization, http.MethodGet, "/agent/v1/intents/"+url.PathEscape(operationID)+"/activation", nil, nil)
 	case "ascp.intent.create":
 		var arguments struct {
 			Intent         json.RawMessage `json:"intent"`

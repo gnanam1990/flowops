@@ -15,8 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpactivation"
 	"github.com/gnanam1990/flowops/internal/ascpagent"
 	"github.com/gnanam1990/flowops/internal/ascpapproval"
+	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
 	"github.com/gnanam1990/flowops/internal/controlplane"
@@ -28,6 +30,7 @@ import (
 
 const (
 	maxRequestBytes                 = 64 * 1024
+	maxActivationRequestBytes       = 2 * 1024 * 1024
 	defaultCommandCompletionTimeout = 5 * time.Second
 )
 
@@ -58,6 +61,11 @@ type ASCPFlowService interface {
 	DecideApproval(context.Context, string, string, string, bool, string) (ascpapproval.Approval, error)
 	Authorize(context.Context, ascporchestration.Identity, string) (ascporchestration.Authorization, error)
 	Authorization(context.Context, ascporchestration.Identity, string) (ascporchestration.Authorization, error)
+}
+
+type ASCPActivationService interface {
+	Create(context.Context, ascporchestration.Identity, string, ascpactivation.Request) (ascpactivation.Status, error)
+	Get(context.Context, ascporchestration.Identity, string) (ascpactivation.Status, error)
 }
 
 type ASCPSettlementAttemptRequest struct {
@@ -101,6 +109,7 @@ type ServerConfig struct {
 	Reconciliation           ReconciliationReader
 	ASCPAgent                ASCPAgentService
 	ASCPFlow                 ASCPFlowService
+	ASCPActivation           ASCPActivationService
 	ASCPSettlement           ASCPSettlementRegistrar
 	KeeperCallbackKey        []byte
 }
@@ -120,6 +129,7 @@ type Server struct {
 	reconciliation           ReconciliationReader
 	ascpAgent                ASCPAgentService
 	ascpFlow                 ASCPFlowService
+	ascpActivation           ASCPActivationService
 	ascpSettlement           ASCPSettlementRegistrar
 	keeperCallbackKey        []byte
 	handler                  http.Handler
@@ -153,6 +163,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		reconciliation:         cfg.Reconciliation,
 		ascpAgent:              cfg.ASCPAgent,
 		ascpFlow:               cfg.ASCPFlow,
+		ascpActivation:         cfg.ASCPActivation,
 		ascpSettlement:         cfg.ASCPSettlement,
 		keeperCallbackKey:      append([]byte(nil), cfg.KeeperCallbackKey...),
 	}
@@ -178,6 +189,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET /agent/v1/intents/{operationID}/decision", s.authenticate(http.HandlerFunc(s.handleASCPDecision)))
 	mux.Handle("POST /agent/v1/intents/{operationID}/authorization", s.authenticate(http.HandlerFunc(s.handleAuthorizeASCPIntent)))
 	mux.Handle("GET /agent/v1/intents/{operationID}/authorization", s.authenticate(http.HandlerFunc(s.handleASCPAuthorization)))
+	mux.Handle("POST /agent/v1/intents/{operationID}/activation", s.authenticate(http.HandlerFunc(s.handleCreateASCPActivation)))
+	mux.Handle("GET /agent/v1/intents/{operationID}/activation", s.authenticate(http.HandlerFunc(s.handleASCPActivation)))
 	mux.Handle("GET /v1/ascp/approvals/{approvalID}", s.authenticate(http.HandlerFunc(s.handleASCPApproval)))
 	mux.Handle("POST /v1/ascp/approvals/{approvalID}/decision", s.authenticate(http.HandlerFunc(s.handleASCPApprovalDecision)))
 	mux.Handle("GET /v1/approvals", s.authenticate(http.HandlerFunc(s.handleApprovals)))
@@ -760,6 +773,50 @@ func (s *Server) handleASCPAuthorization(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "authorization": authorization})
 }
 
+func (s *Server) handleCreateASCPActivation(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	_, identity, ok := s.ascpAgentIdentity(w, r, correlationID, PermissionIssue, "activations:create")
+	if !ok {
+		return
+	}
+	if s.ascpActivation == nil {
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ACTIVATION_UNAVAILABLE", ascpactivation.ErrUnavailable, true, correlationID)
+		return
+	}
+	var request ascpactivation.Request
+	if err := decodeJSONLimit(w, r, &request, maxActivationRequestBytes); err != nil {
+		return
+	}
+	status, err := s.ascpActivation.Create(r.Context(), identity, r.PathValue("operationID"), request)
+	if err != nil {
+		s.writeASCPActivationError(w, err, correlationID)
+		return
+	}
+	httpStatus := http.StatusCreated
+	if status.Replayed {
+		httpStatus = http.StatusOK
+	}
+	writeJSON(w, httpStatus, map[string]any{"correlationId": correlationID, "activation": status})
+}
+
+func (s *Server) handleASCPActivation(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	_, identity, ok := s.ascpAgentIdentity(w, r, correlationID, PermissionRead, "intents:read")
+	if !ok {
+		return
+	}
+	if s.ascpActivation == nil {
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ACTIVATION_UNAVAILABLE", ascpactivation.ErrUnavailable, true, correlationID)
+		return
+	}
+	status, err := s.ascpActivation.Get(r.Context(), identity, r.PathValue("operationID"))
+	if err != nil {
+		s.writeASCPActivationError(w, err, correlationID)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "activation": status})
+}
+
 func (s *Server) ascpAgentIdentity(w http.ResponseWriter, r *http.Request, correlationID string, permission Permission, scope string) (Principal, ascporchestration.Identity, bool) {
 	principal := principalFrom(r.Context())
 	if principal.Kind != PrincipalAgent {
@@ -894,6 +951,23 @@ func (s *Server) writeASCPFlowError(w http.ResponseWriter, err error, correlatio
 		writeCorrelatedError(w, http.StatusGone, "ASCP_OPERATION_EXPIRED", err, false, correlationID)
 	default:
 		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ORCHESTRATION_FAILED", err, true, correlationID)
+	}
+}
+
+func (s *Server) writeASCPActivationError(w http.ResponseWriter, err error, correlationID string) {
+	switch {
+	case errors.Is(err, ascporchestration.ErrNotFound), errors.Is(err, ascporchestration.ErrInvalidScope),
+		errors.Is(err, ascpbearer.ErrActivationNotFound):
+		writeCorrelatedError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, correlationID)
+	case errors.Is(err, ascpbearer.ErrActivationInput):
+		writeCorrelatedError(w, http.StatusBadRequest, "INVALID_ASCP_ACTIVATION", err, false, correlationID)
+	case errors.Is(err, ascpactivation.ErrStateConflict), errors.Is(err, ascpbearer.ErrActivationBinding),
+		errors.Is(err, ascpbearer.ErrActivationState):
+		writeCorrelatedError(w, http.StatusConflict, "ASCP_ACTIVATION_STATE_CONFLICT", err, false, correlationID)
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ACTIVATION_UNRESOLVED", err, true, correlationID)
+	default:
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ACTIVATION_FAILED", err, true, correlationID)
 	}
 }
 
@@ -1407,7 +1481,11 @@ func bearerToken(header string) (string, bool) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+	return decodeJSONLimit(w, r, target, maxRequestBytes)
+}
+
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {

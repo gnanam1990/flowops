@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gnanam1990/flowops/pkg/executioncommitment"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -114,13 +115,30 @@ func NewActivationStore(db *sql.DB, clocks ...func() time.Time) (*ActivationStor
 func (s *ActivationStore) Request(ctx context.Context, input ActivationInput) (ActivationRequest, bool, error) {
 	now := s.clock().UTC()
 	input.ValidAfter, input.ValidUntil = input.ValidAfter.UTC(), input.ValidUntil.UTC()
-	if err := validateActivationInput(input, now); err != nil {
-		return ActivationRequest{}, false, err
+	// RequestID is excluded from the logical input hash, but every attempt must
+	// still carry a valid server-generated identifier.
+	if !hash(input.RequestID) {
+		return ActivationRequest{}, false, ErrActivationInput
 	}
 	inputHash, err := activationInputHash(input)
 	if err != nil {
 		return ActivationRequest{}, false, err
 	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		request, replayed, err := s.requestOnce(ctx, input, inputHash, now)
+		if !activationSerializationFailure(err) {
+			return request, replayed, err
+		}
+		lastErr = err
+		if err := ctx.Err(); err != nil {
+			return ActivationRequest{}, false, err
+		}
+	}
+	return ActivationRequest{}, false, fmt.Errorf("signer activation serialization retries exhausted: %w", lastErr)
+}
+
+func (s *ActivationStore) requestOnce(ctx context.Context, input ActivationInput, inputHash string, now time.Time) (ActivationRequest, bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return ActivationRequest{}, false, fmt.Errorf("begin sign request: %w", err)
@@ -137,6 +155,11 @@ func (s *ActivationStore) Request(ctx context.Context, input ActivationInput) (A
 		return existing, true, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
+		return ActivationRequest{}, false, err
+	}
+	// Time-window validation applies only to the first durable creation. An
+	// exact idempotent replay remains readable after the window has elapsed.
+	if err := validateActivationInput(input, now); err != nil {
 		return ActivationRequest{}, false, err
 	}
 
@@ -178,6 +201,9 @@ func (s *ActivationStore) Request(ctx context.Context, input ActivationInput) (A
 		input.SignerKeyID, input.KeyEpoch, input.ModuleAddress, input.SafeAddress, input.KeeperID,
 		input.ValidAfter, input.ValidUntil, now)
 	if err != nil {
+		if activationUniqueViolation(err) {
+			return ActivationRequest{}, false, ErrActivationBinding
+		}
 		return ActivationRequest{}, false, fmt.Errorf("create sign request: %w", err)
 	}
 	inserted, err := result.RowsAffected()
@@ -200,6 +226,34 @@ func (s *ActivationStore) Request(ctx context.Context, input ActivationInput) (A
 		return ActivationRequest{}, false, fmt.Errorf("commit sign request: %w", err)
 	}
 	return request, inserted == 0, nil
+}
+
+func activationSerializationFailure(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) && (postgresError.Code == "40001" || postgresError.Code == "40P01")
+}
+
+func activationUniqueViolation(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) && postgresError.Code == "23505"
+}
+
+// ForAuthorization returns the one activation request bound to an execution
+// authorization. Tenant and agent scope must be established by the application
+// boundary before calling this storage primitive.
+func (s *ActivationStore) ForAuthorization(ctx context.Context, authorizationID string) (ActivationRequest, error) {
+	if !hash(authorizationID) {
+		return ActivationRequest{}, ErrActivationInput
+	}
+	var request ActivationRequest
+	err := scanActivationRequest(s.db.QueryRowContext(ctx, `SELECT `+activationColumns+` FROM ascp_sign_requests WHERE authorization_id=$1`, authorizationID), &request)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ActivationRequest{}, ErrActivationNotFound
+	}
+	if err != nil {
+		return ActivationRequest{}, fmt.Errorf("read signer activation request by authorization: %w", err)
+	}
+	return request, nil
 }
 
 func (s *ActivationStore) RecordPrepared(ctx context.Context, requestID, handle string) (ActivationRequest, error) {
