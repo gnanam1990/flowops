@@ -78,6 +78,14 @@ stale, wrong-version, and unknown-leaf cases fail before operation creation.
 The existing `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` also bounds small positive
 observer/API host clock skew; larger future observations fail closed.
 
+The same directory switch enables durable ASCP policy/approval/authorization
+orchestration. `FLOWOPS_ESCROW_CONTRACT` supplies the immutable commitment
+domain and `FLOWOPS_ESCROW_RELEASE_WINDOW_SECONDS` supplies the settlement
+window; startup rejects an incomplete escrow tuple. This creates only a
+pre-signature reservation and execution authorization. Signer activation,
+broadcast, settlement, reconciliation, and ledger readiness remain separate
+gates and must not be inferred from a successful authorization response.
+
 Do not set `FLOWOPS_CONTROL_ADDR` on the selected runtime; `PORT` produces the
 required `0.0.0.0:PORT` listener and still requires explicit trusted-proxy
 mode. Apply migrations with a transient privileged database credential through

@@ -138,20 +138,21 @@ func (s *ActivationStore) Request(ctx context.Context, input ActivationInput) (A
 	}
 
 	var authorizationState, executionSnapshotHash, reservationState string
+	var reservationExpiresAt time.Time
 	err = tx.QueryRowContext(ctx, `
-		SELECT a.state, a.execution_snapshot_hash, r.state
+		SELECT a.state, a.execution_snapshot_hash, r.state, r.expires_at
 		FROM ascp_execution_authorizations a
 		JOIN ascp_budget_reservations r ON r.reservation_id=a.reservation_id
 		WHERE a.authorization_id=$1 AND a.intent_id=$2 AND r.reservation_id=$3 AND r.operation_id=$2
 		FOR UPDATE OF a, r`, input.AuthorizationID, input.OperationID, input.ReservationID).
-		Scan(&authorizationState, &executionSnapshotHash, &reservationState)
+		Scan(&authorizationState, &executionSnapshotHash, &reservationState, &reservationExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ActivationRequest{}, false, ErrActivationBinding
 	}
 	if err != nil {
 		return ActivationRequest{}, false, fmt.Errorf("lock execution authorization for signing: %w", err)
 	}
-	if authorizationState != "VALIDATED_AND_RESERVED" || reservationState != "RESERVED" {
+	if authorizationState != "VALIDATED_AND_RESERVED" || reservationState != "RESERVED" || !now.Before(reservationExpiresAt) {
 		return ActivationRequest{}, false, ErrActivationState
 	}
 	// The signer payload is a later, action-specific object, so it need not be
@@ -269,17 +270,18 @@ func (s *ActivationStore) Activate(ctx context.Context, requestID string) (Regis
 		return RegistryEntry{}, ErrActivationState
 	}
 	var authorizationState, reservationState string
+	var reservationExpiresAt time.Time
 	err = tx.QueryRowContext(ctx, `
-		SELECT a.state, r.state
+		SELECT a.state, r.state, r.expires_at
 		FROM ascp_execution_authorizations a
 		JOIN ascp_budget_reservations r ON r.reservation_id=a.reservation_id
 		WHERE a.authorization_id=$1 AND a.intent_id=$2 AND r.reservation_id=$3
 		FOR UPDATE OF a, r`, request.AuthorizationID, request.OperationID, request.ReservationID).
-		Scan(&authorizationState, &reservationState)
+		Scan(&authorizationState, &reservationState, &reservationExpiresAt)
 	if err != nil {
 		return RegistryEntry{}, fmt.Errorf("lock signer activation bindings: %w", err)
 	}
-	if authorizationState != "VALIDATED_AND_RESERVED" || reservationState != "RESERVED" {
+	if authorizationState != "VALIDATED_AND_RESERVED" || reservationState != "RESERVED" || !now.Before(reservationExpiresAt) {
 		return RegistryEntry{}, ErrActivationState
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE ascp_budget_reservations SET state='AUTHORIZATION_LIVE' WHERE reservation_id=$1 AND state='RESERVED'`, request.ReservationID); err != nil {

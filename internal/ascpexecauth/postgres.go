@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpreservation"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -69,7 +70,7 @@ func (s *PostgresStore) ValidateAndReserve(ctx context.Context, input Input) (Au
 
 func (s *PostgresStore) validateAndReserveOnce(ctx context.Context, input Input, now time.Time) (Authorization, error) {
 	now = now.UTC()
-	if !validInput(input) || input.ApprovalID == "" || !reservationExpiresAfter(input, now) ||
+	if !validInput(input) || !reservationExpiresAfter(input, now) ||
 		input.Reservation.ExpiresAt.After(now.Add(ReservationTTL)) {
 		return Authorization{}, ErrInvalidInput
 	}
@@ -101,24 +102,43 @@ func (s *PostgresStore) validateAndReserveOnce(ctx context.Context, input Input,
 	}
 
 	output := Authorization{Input: input, State: Invalidated}
-	var approvalState, snapshot string
-	var approvalExpiresAt time.Time
-	err = tx.QueryRowContext(ctx, `
-		SELECT state, review_snapshot_hash, expires_at
-		FROM ascp_approvals
-		WHERE approval_id=$1 AND intent_id=$2 AND organization_id=$3
-		FOR UPDATE`, input.ApprovalID, input.IntentID, organizationID).Scan(&approvalState, &snapshot, &approvalExpiresAt)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Authorization{}, fmt.Errorf("read approval for execution authorization: %w", err)
-	}
-	if errors.Is(err, sql.ErrNoRows) || approvalState != "APPROVED" {
-		return s.persistInvalid(ctx, tx, output, now, ErrApprovalNotApproved)
-	}
-	if snapshot != input.ApprovalSnapshotHash {
-		return s.persistInvalid(ctx, tx, output, now, ErrApprovalSnapshot)
-	}
-	if !now.Before(approvalExpiresAt) {
-		return s.persistInvalid(ctx, tx, output, now, ErrApprovalExpired)
+	if input.ApprovalID != "" {
+		var approvalState, snapshot string
+		var approvalExpiresAt time.Time
+		err = tx.QueryRowContext(ctx, `
+			SELECT state, review_snapshot_hash, expires_at
+			FROM ascp_approvals
+			WHERE approval_id=$1 AND intent_id=$2 AND organization_id=$3
+			FOR UPDATE`, input.ApprovalID, input.IntentID, organizationID).Scan(&approvalState, &snapshot, &approvalExpiresAt)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Authorization{}, fmt.Errorf("read approval for execution authorization: %w", err)
+		}
+		if errors.Is(err, sql.ErrNoRows) || approvalState != "APPROVED" {
+			return s.persistInvalid(ctx, tx, output, now, ErrApprovalNotApproved)
+		}
+		if snapshot != input.ApprovalSnapshotHash {
+			return s.persistInvalid(ctx, tx, output, now, ErrApprovalSnapshot)
+		}
+		if !now.Before(approvalExpiresAt) {
+			return s.persistInvalid(ctx, tx, output, now, ErrApprovalExpired)
+		}
+	} else {
+		var reviewSnapshotHash string
+		err = tx.QueryRowContext(ctx, `
+			SELECT review_snapshot_hash
+			FROM ascp_policy_decisions
+			WHERE decision_id=$1 AND operation_id=$2 AND organization_id=$3 AND outcome='AUTO_APPROVE'
+			FOR SHARE`, input.AutoDecisionRef, input.IntentID, organizationID).Scan(&reviewSnapshotHash)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Authorization{}, ErrInvalidInput
+		}
+		if err != nil {
+			return Authorization{}, fmt.Errorf("read automatic policy decision for execution authorization: %w", err)
+		}
+		wantSnapshot, err := ascpapproval.ReviewHash(input.Review)
+		if err != nil || wantSnapshot != reviewSnapshotHash {
+			return Authorization{}, ErrInvalidInput
+		}
 	}
 
 	reason, err := s.revalidator.Revalidate(ctx, tx, input, now)
@@ -141,9 +161,9 @@ func (s *PostgresStore) validateAndReserveOnce(ctx context.Context, input Input,
 	output.State = ValidatedAndReserved
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO ascp_execution_authorizations
-			(authorization_id, approval_id, intent_id, state, execution_snapshot_hash, reservation_id, created_at, evaluated_at)
-		VALUES ($1,$2,$3,'VALIDATED_AND_RESERVED',$4,$5,$6,$6)
-		RETURNING authorization_id`, input.AuthorizationID, input.ApprovalID, input.IntentID,
+			(authorization_id, approval_id, auto_decision_ref, intent_id, state, execution_snapshot_hash, reservation_id, created_at, evaluated_at)
+		VALUES ($1,NULLIF($2,''),NULLIF($3,''),$4,'VALIDATED_AND_RESERVED',$5,$6,$7,$7)
+		RETURNING authorization_id`, input.AuthorizationID, input.ApprovalID, input.AutoDecisionRef, input.IntentID,
 		input.ExecutionSnapshotHash, reservationID(input), now).Scan(&output.AuthorizationID)
 	if err != nil {
 		return Authorization{}, fmt.Errorf("create execution authorization: %w", err)
@@ -161,13 +181,13 @@ func serializationFailure(err error) bool {
 
 func loadExisting(ctx context.Context, tx *sql.Tx, input Input) (Authorization, bool, error) {
 	var authorizationID, executionSnapshotHash string
-	var approvalID, storedReservation sql.NullString
+	var approvalID, autoDecisionRef, storedReservation sql.NullString
 	var state, invalidationReason string
 	err := tx.QueryRowContext(ctx, `
-		SELECT authorization_id, approval_id, state, execution_snapshot_hash, reservation_id, invalidation_reason
+		SELECT authorization_id, approval_id, auto_decision_ref, state, execution_snapshot_hash, reservation_id, invalidation_reason
 		FROM ascp_execution_authorizations
 		WHERE intent_id=$1
-		FOR UPDATE`, input.IntentID).Scan(&authorizationID, &approvalID, &state,
+		FOR UPDATE`, input.IntentID).Scan(&authorizationID, &approvalID, &autoDecisionRef, &state,
 		&executionSnapshotHash, &storedReservation, &invalidationReason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Authorization{}, false, nil
@@ -178,6 +198,7 @@ func loadExisting(ctx context.Context, tx *sql.Tx, input Input) (Authorization, 
 	current := Authorization{Input: input, State: State(state), InvalidationReason: invalidationReason}
 	current.AuthorizationID = authorizationID
 	current.ApprovalID = approvalID.String
+	current.AutoDecisionRef = autoDecisionRef.String
 	current.ExecutionSnapshotHash = executionSnapshotHash
 	if storedReservation.Valid {
 		current.Reservation.ReservationID = storedReservation.String
@@ -307,9 +328,9 @@ func (s *PostgresStore) persistInvalid(ctx context.Context, tx *sql.Tx, output A
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO ascp_execution_authorizations
-			(authorization_id, approval_id, intent_id, state, execution_snapshot_hash, invalidation_reason, created_at, evaluated_at)
-		VALUES ($1,$2,$3,'INVALIDATED',$4,$5,$6,$6)`, output.AuthorizationID, output.ApprovalID,
-		output.IntentID, output.ExecutionSnapshotHash, output.InvalidationReason, now)
+			(authorization_id, approval_id, auto_decision_ref, intent_id, state, execution_snapshot_hash, invalidation_reason, created_at, evaluated_at)
+		VALUES ($1,NULLIF($2,''),NULLIF($3,''),$4,'INVALIDATED',$5,$6,$7,$7)`, output.AuthorizationID, output.ApprovalID,
+		output.AutoDecisionRef, output.IntentID, output.ExecutionSnapshotHash, output.InvalidationReason, now)
 	if err != nil {
 		return Authorization{}, fmt.Errorf("persist invalid execution authorization: %w", err)
 	}

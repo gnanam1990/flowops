@@ -30,6 +30,12 @@ const (
 	reasonSnapshotChanged      = "EXECUTION_SNAPSHOT_CHANGED"
 	reasonBudgetDimensions     = "BUDGET_DIMENSIONS_CHANGED"
 	reasonPurchaseSpecLegacy   = "PURCHASE_SPEC_BYTES_UNAVAILABLE"
+
+	BudgetDimensionAgentCategoryDay = "agent-category-day"
+	BudgetDimensionAgentDay         = "agent-day"
+	BudgetDimensionAgentTask        = "agent-task"
+	BudgetDimensionAgentLifetime    = "agent-lifetime"
+	BudgetDimensionOrganizationDay  = "organization-day"
 )
 
 // LocalRevalidator reruns rings 1-5 from rows locked by the same serializable
@@ -161,7 +167,12 @@ func (r *LocalRevalidator) Revalidate(ctx context.Context, tx *sql.Tx, input Inp
 		       e.amount_base_units, e.verification_spec_hash, e.declared_work_time,
 		       e.verification_budget_seconds, e.active, e.quote_key_revoked
 		FROM ascp_directory_heads h
-		JOIN ascp_directory_snapshots s ON s.observation_digest=h.observation_digest
+		JOIN ascp_directory_snapshots s
+		  ON s.observation_digest=h.observation_digest
+		 AND s.chain_id=h.chain_id
+		 AND s.directory_contract=h.directory_contract
+		 AND s.directory_version=h.directory_version
+		 AND s.finalized_block_number=h.finalized_block_number
 		JOIN ascp_directory_quote_evidence e ON e.observation_digest=h.observation_digest
 		WHERE h.chain_id=$1 AND h.directory_contract=$2 AND e.seller_id=$3 AND e.resource_id=$4
 		FOR SHARE OF h, s, e`, chainID, directoryContract, quote.SellerID, quote.ResourceID).Scan(
@@ -212,6 +223,7 @@ func ExecutionSnapshotHash(input Input, organizationID, actorID, observationDige
 		IntentID             string                      `json:"intentId"`
 		ApprovalID           string                      `json:"approvalId"`
 		ApprovalSnapshotHash string                      `json:"approvalSnapshotHash"`
+		AutoDecisionRef      string                      `json:"autoDecisionRef,omitempty"`
 		PolicyVersion        string                      `json:"policyVersion"`
 		PolicyHash           string                      `json:"policyHash"`
 		DirectoryVersion     uint64                      `json:"directoryVersion"`
@@ -222,7 +234,7 @@ func ExecutionSnapshotHash(input Input, organizationID, actorID, observationDige
 		ExpiresAt            int64                       `json:"expiresAt"`
 	}{
 		"ASCP_EXECUTION_SNAPSHOT_V1", organizationID, actorID, input.IntentID, input.ApprovalID,
-		input.ApprovalSnapshotHash, input.Review.PolicyVersion, input.Review.PolicyHash,
+		input.ApprovalSnapshotHash, input.AutoDecisionRef, input.Review.PolicyVersion, input.Review.PolicyHash,
 		input.Review.DirectoryVersion, observationDigest, input.Reservation.ReservationID,
 		input.Reservation.Amount, dimensions, input.Reservation.ExpiresAt.UTC().Unix(),
 	}
@@ -255,17 +267,19 @@ func RequiredBudgetDimensions(config policy.Config, spec purchasespec.Spec, now 
 		organizationLimit = config.DailyBudgetAtomic
 	}
 	dimensions := []ascpreservation.Dimension{
-		{ID: budgetDimensionID("agent-category-day", spec.OrgID, spec.AgentID, spec.Category, day), Limit: categoryLimit, Refundable: true},
-		{ID: budgetDimensionID("agent-day", spec.OrgID, spec.AgentID, day), Limit: config.DailyBudgetAtomic, Refundable: true},
-		{ID: budgetDimensionID("agent-task", spec.OrgID, spec.AgentID, spec.TaskID), Limit: config.TaskBudgetAtomic, Refundable: true},
-		{ID: budgetDimensionID("agent-lifetime", spec.OrgID, spec.AgentID), Limit: lifetimeLimit, Refundable: false},
-		{ID: budgetDimensionID("organization-day", spec.OrgID, day), Limit: organizationLimit, Refundable: true},
+		{ID: BudgetDimensionID(BudgetDimensionAgentCategoryDay, spec.OrgID, spec.AgentID, spec.Category, day), Limit: categoryLimit, Refundable: true},
+		{ID: BudgetDimensionID(BudgetDimensionAgentDay, spec.OrgID, spec.AgentID, day), Limit: config.DailyBudgetAtomic, Refundable: true},
+		{ID: BudgetDimensionID(BudgetDimensionAgentTask, spec.OrgID, spec.AgentID, spec.TaskID), Limit: config.TaskBudgetAtomic, Refundable: true},
+		{ID: BudgetDimensionID(BudgetDimensionAgentLifetime, spec.OrgID, spec.AgentID), Limit: lifetimeLimit, Refundable: false},
+		{ID: BudgetDimensionID(BudgetDimensionOrganizationDay, spec.OrgID, day), Limit: organizationLimit, Refundable: true},
 	}
 	sort.Slice(dimensions, func(i, j int) bool { return dimensions[i].ID < dimensions[j].ID })
 	return dimensions, nil
 }
 
-func budgetDimensionID(kind string, parts ...string) string {
+// BudgetDimensionID returns the stable opaque accounting key used by both
+// policy preflight and the atomic reservation transaction.
+func BudgetDimensionID(kind string, parts ...string) string {
 	payload := struct {
 		Kind  string   `json:"kind"`
 		Parts []string `json:"parts"`

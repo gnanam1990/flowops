@@ -85,6 +85,50 @@
       }
     },
     {
+      "name": "ascp.operation.evaluate",
+      "title": "Evaluate durable ASCP operation",
+      "description": "Run the authenticated operation through the current durable policy boundary. The server reconstructs the exact commitment, current spend snapshot, and approval review; callers cannot supply economic or approval fields.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operationId"],
+        "properties": {"operationId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"}}
+      }
+    },
+    {
+      "name": "ascp.operation.decision.get",
+      "title": "Get ASCP policy decision",
+      "description": "Read the immutable policy decision, execution commitment, and organization-scoped approval status for an operation owned by the authenticated agent.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operationId"],
+        "properties": {"operationId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"}}
+      }
+    },
+    {
+      "name": "ascp.operation.authorize",
+      "title": "Authorize durable ASCP operation",
+      "description": "After an automatic allow or exact human approval, rerun current policy, identity, directory, quote, pause, and budget checks and atomically create one reservation and execution authorization. This does not sign or broadcast.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operationId"],
+        "properties": {"operationId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"}}
+      }
+    },
+    {
+      "name": "ascp.operation.authorization.get",
+      "title": "Get ASCP execution authorization",
+      "description": "Read the redacted execution-authorization and reservation state for an operation owned by the authenticated agent. No signer handle or signature is exposed.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operationId"],
+        "properties": {"operationId": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"}}
+      }
+    },
+    {
       "name": "ascp.intent.create",
       "title": "Create spend intent",
       "description": "Legacy pre-ASCP compatibility tool. Submit one bounded PaymentIntent through the legacy policy and approval path. This does not create a durable ASCP operation and never signs or broadcasts a payment.",

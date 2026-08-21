@@ -344,6 +344,30 @@ func (s *Server) callTool(ctx context.Context, authorization string, params json
 			return nil, invalidParams()
 		}
 		response = s.callBackend(ctx, authorization, http.MethodGet, "/agent/v1/intents/"+url.PathEscape(operationID), nil, nil)
+	case "ascp.operation.evaluate":
+		operationID, ok := oneIdentifierArgument(call.Arguments, "operationId")
+		if !ok {
+			return nil, invalidParams()
+		}
+		response = s.callBackend(ctx, authorization, http.MethodPost, "/agent/v1/intents/"+url.PathEscape(operationID)+"/evaluate", nil, nil)
+	case "ascp.operation.decision.get":
+		operationID, ok := oneIdentifierArgument(call.Arguments, "operationId")
+		if !ok {
+			return nil, invalidParams()
+		}
+		response = s.callBackend(ctx, authorization, http.MethodGet, "/agent/v1/intents/"+url.PathEscape(operationID)+"/decision", nil, nil)
+	case "ascp.operation.authorize":
+		operationID, ok := oneIdentifierArgument(call.Arguments, "operationId")
+		if !ok {
+			return nil, invalidParams()
+		}
+		response = s.callBackend(ctx, authorization, http.MethodPost, "/agent/v1/intents/"+url.PathEscape(operationID)+"/authorization", nil, nil)
+	case "ascp.operation.authorization.get":
+		operationID, ok := oneIdentifierArgument(call.Arguments, "operationId")
+		if !ok {
+			return nil, invalidParams()
+		}
+		response = s.callBackend(ctx, authorization, http.MethodGet, "/agent/v1/intents/"+url.PathEscape(operationID)+"/authorization", nil, nil)
 	case "ascp.intent.create":
 		var arguments struct {
 			Intent         json.RawMessage `json:"intent"`

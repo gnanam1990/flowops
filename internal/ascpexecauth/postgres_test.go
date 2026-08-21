@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpreservation"
 )
 
@@ -33,12 +34,46 @@ func TestPostgresValidateAndReserveCommitsAtomicBinding(t *testing.T) {
 		WithArgs(input.Reservation.ReservationID, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO ascp_execution_authorizations")).
-		WithArgs(input.AuthorizationID, input.ApprovalID, input.IntentID, input.ExecutionSnapshotHash, input.Reservation.ReservationID, authorizationNow).
+		WithArgs(input.AuthorizationID, input.ApprovalID, "", input.IntentID, input.ExecutionSnapshotHash, input.Reservation.ReservationID, authorizationNow).
 		WillReturnRows(sqlmock.NewRows([]string{"authorization_id"}).AddRow(input.AuthorizationID))
 	mock.ExpectCommit()
 
 	output, err := store.ValidateAndReserve(context.Background(), input)
 	if err != nil || output.State != ValidatedAndReserved || output.Reservation.ReservationID != input.Reservation.ReservationID {
+		t.Fatalf("output=%+v err=%v", output, err)
+	}
+	expectationsMet(t, mock)
+}
+
+func TestPostgresAutomaticDecisionCommitsWithoutInventingHumanApproval(t *testing.T) {
+	db, mock := postgresMock(t)
+	store := postgresStore(t, db, successfulRevalidator())
+	input := postgresInput()
+	input.ApprovalID, input.ApprovalSnapshotHash = "", ""
+	input.AutoDecisionRef = testHash(88)
+	reviewHash, err := ascpapproval.ReviewHash(input.Review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectBeginAndNoExisting(mock, input)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT review_snapshot_hash")).
+		WithArgs(input.AutoDecisionRef, input.IntentID, authorizationOrganizationID).
+		WillReturnRows(sqlmock.NewRows([]string{"review_snapshot_hash"}).AddRow(reviewHash))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT rd.dimension_id, r.amount_base_units, r.state, rd.refundable")).
+		WithArgs(authorizationOrganizationID, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"dimension_id", "amount_base_units", "state", "refundable"}))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO ascp_budget_reservations")).
+		WithArgs(input.Reservation.ReservationID, input.IntentID, input.Reservation.Amount, sqlmock.AnyArg(), authorizationNow, input.Reservation.ExpiresAt.UTC()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO ascp_budget_reservation_dimensions")).
+		WithArgs(input.Reservation.ReservationID, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO ascp_execution_authorizations")).
+		WithArgs(input.AuthorizationID, "", input.AutoDecisionRef, input.IntentID, input.ExecutionSnapshotHash, input.Reservation.ReservationID, authorizationNow).
+		WillReturnRows(sqlmock.NewRows([]string{"authorization_id"}).AddRow(input.AuthorizationID))
+	mock.ExpectCommit()
+
+	output, err := store.ValidateAndReserve(context.Background(), input)
+	if err != nil || output.State != ValidatedAndReserved || output.ApprovalID != "" || output.AutoDecisionRef != input.AutoDecisionRef {
 		t.Fatalf("output=%+v err=%v", output, err)
 	}
 	expectationsMet(t, mock)
@@ -182,10 +217,10 @@ func TestPostgresExistingAuthorizationIsReturnedWithoutReevaluation(t *testing.T
 	store := postgresStore(t, db, successfulRevalidator())
 	input := postgresInput()
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT authorization_id, approval_id, state, execution_snapshot_hash, reservation_id, invalidation_reason")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT authorization_id, approval_id, auto_decision_ref, state, execution_snapshot_hash, reservation_id, invalidation_reason")).
 		WithArgs(input.IntentID).
-		WillReturnRows(sqlmock.NewRows([]string{"authorization_id", "approval_id", "state", "execution_snapshot_hash", "reservation_id", "invalidation_reason"}).
-			AddRow(input.AuthorizationID, input.ApprovalID, "VALIDATED_AND_RESERVED", input.ExecutionSnapshotHash, input.Reservation.ReservationID, ""))
+		WillReturnRows(sqlmock.NewRows([]string{"authorization_id", "approval_id", "auto_decision_ref", "state", "execution_snapshot_hash", "reservation_id", "invalidation_reason"}).
+			AddRow(input.AuthorizationID, input.ApprovalID, nil, "VALIDATED_AND_RESERVED", input.ExecutionSnapshotHash, input.Reservation.ReservationID, ""))
 	mock.ExpectRollback()
 
 	output, err := store.ValidateAndReserve(context.Background(), input)
@@ -248,9 +283,9 @@ func postgresStore(t *testing.T, db *sql.DB, revalidator TransactionRevalidator)
 
 func expectBeginAndNoExisting(mock sqlmock.Sqlmock, input Input) {
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT authorization_id, approval_id, state, execution_snapshot_hash, reservation_id, invalidation_reason")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT authorization_id, approval_id, auto_decision_ref, state, execution_snapshot_hash, reservation_id, invalidation_reason")).
 		WithArgs(input.IntentID).
-		WillReturnRows(sqlmock.NewRows([]string{"authorization_id", "approval_id", "state", "execution_snapshot_hash", "reservation_id", "invalidation_reason"}))
+		WillReturnRows(sqlmock.NewRows([]string{"authorization_id", "approval_id", "auto_decision_ref", "state", "execution_snapshot_hash", "reservation_id", "invalidation_reason"}))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT organization_id")).
 		WithArgs(input.IntentID).
 		WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow(authorizationOrganizationID))
@@ -265,7 +300,7 @@ func expectApproved(mock sqlmock.Sqlmock, input Input, expiresAt time.Time) {
 
 func expectInvalidInsert(mock sqlmock.Sqlmock, input Input, reason string) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO ascp_execution_authorizations")).
-		WithArgs(input.AuthorizationID, input.ApprovalID, input.IntentID, input.ExecutionSnapshotHash, reason, authorizationNow).
+		WithArgs(input.AuthorizationID, input.ApprovalID, "", input.IntentID, input.ExecutionSnapshotHash, reason, authorizationNow).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 }
 

@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpagent"
+	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
+	"github.com/gnanam1990/flowops/internal/ascporchestration"
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/directoryreader"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
@@ -49,6 +51,15 @@ type ASCPAgentService interface {
 	Get(context.Context, ascpagent.Identity, string) (ascpintake.Operation, error)
 }
 
+type ASCPFlowService interface {
+	Evaluate(context.Context, ascporchestration.Identity, string) (ascporchestration.Decision, error)
+	Decision(context.Context, ascporchestration.Identity, string) (ascporchestration.Decision, error)
+	Approval(context.Context, string, string) (ascpapproval.Approval, error)
+	DecideApproval(context.Context, string, string, string, bool, string) (ascpapproval.Approval, error)
+	Authorize(context.Context, ascporchestration.Identity, string) (ascporchestration.Authorization, error)
+	Authorization(context.Context, ascporchestration.Identity, string) (ascporchestration.Authorization, error)
+}
+
 type ServerConfig struct {
 	Store                    Store
 	Lifecycle                *controlplane.Lifecycle
@@ -63,6 +74,7 @@ type ServerConfig struct {
 	Escrow                   *EscrowRegistrar
 	Reconciliation           ReconciliationReader
 	ASCPAgent                ASCPAgentService
+	ASCPFlow                 ASCPFlowService
 }
 
 type Server struct {
@@ -79,6 +91,7 @@ type Server struct {
 	escrow                   *EscrowRegistrar
 	reconciliation           ReconciliationReader
 	ascpAgent                ASCPAgentService
+	ascpFlow                 ASCPFlowService
 	handler                  http.Handler
 }
 
@@ -109,6 +122,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		escrow:                 cfg.Escrow,
 		reconciliation:         cfg.Reconciliation,
 		ascpAgent:              cfg.ASCPAgent,
+		ascpFlow:               cfg.ASCPFlow,
 	}
 	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
 		return nil, errors.New("operator control key must contain exactly 32 bytes")
@@ -122,6 +136,12 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST /v1/intents/{requestID}/authorization", s.authenticate(http.HandlerFunc(s.handleIssueAuthorization)))
 	mux.Handle("POST /agent/v1/intents", s.authenticate(http.HandlerFunc(s.handleCreateASCPIntent)))
 	mux.Handle("GET /agent/v1/intents/{operationID}", s.authenticate(http.HandlerFunc(s.handleASCPIntent)))
+	mux.Handle("POST /agent/v1/intents/{operationID}/evaluate", s.authenticate(http.HandlerFunc(s.handleEvaluateASCPIntent)))
+	mux.Handle("GET /agent/v1/intents/{operationID}/decision", s.authenticate(http.HandlerFunc(s.handleASCPDecision)))
+	mux.Handle("POST /agent/v1/intents/{operationID}/authorization", s.authenticate(http.HandlerFunc(s.handleAuthorizeASCPIntent)))
+	mux.Handle("GET /agent/v1/intents/{operationID}/authorization", s.authenticate(http.HandlerFunc(s.handleASCPAuthorization)))
+	mux.Handle("GET /v1/ascp/approvals/{approvalID}", s.authenticate(http.HandlerFunc(s.handleASCPApproval)))
+	mux.Handle("POST /v1/ascp/approvals/{approvalID}/decision", s.authenticate(http.HandlerFunc(s.handleASCPApprovalDecision)))
 	mux.Handle("GET /v1/approvals", s.authenticate(http.HandlerFunc(s.handleApprovals)))
 	mux.Handle("GET /v1/approvals/{requestID}", s.authenticate(http.HandlerFunc(s.handleApproval)))
 	mux.Handle("POST /v1/approvals/{requestID}/decision", s.authenticate(http.HandlerFunc(s.handleApprovalDecision)))
@@ -600,6 +620,162 @@ func (s *Server) handleASCPIntent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "operation": operation})
 }
 
+func (s *Server) handleEvaluateASCPIntent(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	_, identity, ok := s.ascpAgentIdentity(w, r, correlationID, PermissionCreateIntent, "intents:create")
+	if !ok {
+		return
+	}
+	if s.ascpFlow == nil {
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ORCHESTRATION_UNAVAILABLE", errors.New("durable ASCP orchestration is not configured"), true, correlationID)
+		return
+	}
+	decision, err := s.ascpFlow.Evaluate(r.Context(), identity, r.PathValue("operationID"))
+	if err != nil {
+		s.writeASCPFlowError(w, err, correlationID)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "decision": decision})
+}
+
+func (s *Server) handleASCPDecision(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	_, identity, ok := s.ascpAgentIdentity(w, r, correlationID, PermissionRead, "intents:read")
+	if !ok {
+		return
+	}
+	if s.ascpFlow == nil {
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ORCHESTRATION_UNAVAILABLE", errors.New("durable ASCP orchestration is not configured"), true, correlationID)
+		return
+	}
+	decision, err := s.ascpFlow.Decision(r.Context(), identity, r.PathValue("operationID"))
+	if err != nil {
+		s.writeASCPFlowError(w, err, correlationID)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "decision": decision})
+}
+
+func (s *Server) handleAuthorizeASCPIntent(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	_, identity, ok := s.ascpAgentIdentity(w, r, correlationID, PermissionIssue, "authorizations:issue")
+	if !ok {
+		return
+	}
+	if s.ascpFlow == nil {
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ORCHESTRATION_UNAVAILABLE", errors.New("durable ASCP orchestration is not configured"), true, correlationID)
+		return
+	}
+	authorization, err := s.ascpFlow.Authorize(r.Context(), identity, r.PathValue("operationID"))
+	if err != nil && authorization.AuthorizationID == "" {
+		s.writeASCPFlowError(w, err, correlationID)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "authorization": authorization})
+}
+
+func (s *Server) handleASCPAuthorization(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	_, identity, ok := s.ascpAgentIdentity(w, r, correlationID, PermissionRead, "intents:read")
+	if !ok {
+		return
+	}
+	if s.ascpFlow == nil {
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ORCHESTRATION_UNAVAILABLE", errors.New("durable ASCP orchestration is not configured"), true, correlationID)
+		return
+	}
+	authorization, err := s.ascpFlow.Authorization(r.Context(), identity, r.PathValue("operationID"))
+	if err != nil {
+		s.writeASCPFlowError(w, err, correlationID)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "authorization": authorization})
+}
+
+func (s *Server) ascpAgentIdentity(w http.ResponseWriter, r *http.Request, correlationID string, permission Permission, scope string) (Principal, ascporchestration.Identity, bool) {
+	principal := principalFrom(r.Context())
+	if principal.Kind != PrincipalAgent {
+		writeCorrelatedError(w, http.StatusForbidden, "AGENT_CREDENTIAL_REQUIRED", ErrForbidden, false, correlationID)
+		return Principal{}, ascporchestration.Identity{}, false
+	}
+	if !s.authorize(w, principal, permission, scope) {
+		return Principal{}, ascporchestration.Identity{}, false
+	}
+	return principal, ascporchestration.Identity{OrganizationID: principal.OrganizationID, AgentID: principal.AgentID}, true
+}
+
+func (s *Server) handleASCPApproval(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if principal.Kind != PrincipalHuman {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", ErrForbidden, false, "")
+		return
+	}
+	if !s.authorize(w, principal, PermissionRead, "records:read") {
+		return
+	}
+	if s.ascpFlow == nil {
+		writeError(w, http.StatusServiceUnavailable, "ASCP_ORCHESTRATION_UNAVAILABLE", errors.New("durable ASCP orchestration is not configured"), true, "")
+		return
+	}
+	approval, err := s.ascpFlow.Approval(r.Context(), principal.OrganizationID, r.PathValue("approvalID"))
+	if err != nil {
+		status, code, retriable := classifyError(err)
+		writeError(w, status, code, err, retriable, "")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approval": approval})
+}
+
+type ascpApprovalDecisionRequest struct {
+	ReviewSnapshotHash string `json:"reviewSnapshotHash"`
+	Action             string `json:"action"`
+}
+
+func (s *Server) handleASCPApprovalDecision(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if principal.Kind != PrincipalHuman {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", ErrForbidden, false, "")
+		return
+	}
+	if !s.authorize(w, principal, PermissionDecide, "approvals:decide") || !s.requireStepUp(w, principal) {
+		return
+	}
+	if s.ascpFlow == nil {
+		writeError(w, http.StatusServiceUnavailable, "ASCP_ORCHESTRATION_UNAVAILABLE", errors.New("durable ASCP orchestration is not configured"), true, "")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var request ascpApprovalDecisionRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	if request.Action != "APPROVE" && request.Action != "REJECT" {
+		writeError(w, http.StatusBadRequest, "INVALID_DECISION", errors.New("action must be APPROVE or REJECT"), false, "")
+		return
+	}
+	approvalID := r.PathValue("approvalID")
+	digest := digestJSON(struct {
+		ApprovalID string                      `json:"approvalId"`
+		Decision   ascpApprovalDecisionRequest `json:"decision"`
+	}{approvalID, request})
+	command, created, ok := s.beginCommand(w, r, principal, "ascp.approval.decide", approvalID, idempotencyKey, digest)
+	if !ok || !created {
+		if ok {
+			writeStoredCommand(w, command)
+		}
+		return
+	}
+	approval, err := s.ascpFlow.DecideApproval(r.Context(), principal.OrganizationID, approvalID, request.ReviewSnapshotHash, request.Action == "APPROVE", principal.ID)
+	if err != nil {
+		s.failCommand(w, r, command, err)
+		return
+	}
+	s.succeedCommand(w, r, command, approval, http.StatusOK)
+}
+
 func (s *Server) correlationID(w http.ResponseWriter) string {
 	if existing := w.Header().Get("X-Correlation-ID"); existing != "" {
 		return existing
@@ -630,6 +806,26 @@ func (s *Server) writeASCPError(w http.ResponseWriter, err error, correlationID 
 		writeCorrelatedError(w, http.StatusBadRequest, "INVALID_ASCP_INTENT", err, false, correlationID)
 	default:
 		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_INTAKE_FAILED", err, true, correlationID)
+	}
+}
+
+func (s *Server) writeASCPFlowError(w http.ResponseWriter, err error, correlationID string) {
+	switch {
+	case errors.Is(err, ascporchestration.ErrNotFound), errors.Is(err, ascporchestration.ErrInvalidScope):
+		writeCorrelatedError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, correlationID)
+	case errors.Is(err, ascporchestration.ErrPolicyUnavailable):
+		writeCorrelatedError(w, http.StatusConflict, "POLICY_UNAVAILABLE", err, false, correlationID)
+	case errors.Is(err, ascporchestration.ErrDecisionDenied):
+		writeCorrelatedError(w, http.StatusConflict, "POLICY_DENIED", err, false, correlationID)
+	case errors.Is(err, ascporchestration.ErrApprovalPending):
+		writeCorrelatedError(w, http.StatusConflict, "APPROVAL_PENDING", err, true, correlationID)
+	case errors.Is(err, ascporchestration.ErrApprovalUnavailable), errors.Is(err, ascporchestration.ErrStateConflict),
+		errors.Is(err, ascpapproval.ErrSnapshotMismatch), errors.Is(err, ascpapproval.ErrNotRequested):
+		writeCorrelatedError(w, http.StatusConflict, "ORCHESTRATION_STATE_CONFLICT", err, false, correlationID)
+	case errors.Is(err, ascporchestration.ErrOperationExpired):
+		writeCorrelatedError(w, http.StatusGone, "ASCP_OPERATION_EXPIRED", err, false, correlationID)
+	default:
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_ORCHESTRATION_FAILED", err, true, correlationID)
 	}
 }
 
@@ -1088,17 +1284,20 @@ func classifyError(err error) (int, string, bool) {
 	case errors.Is(err, controlplane.ErrIdempotencyConflict), errors.Is(err, controlplane.ErrApprovalDigest),
 		errors.Is(err, controlplane.ErrNotPendingApproval), errors.Is(err, controlplane.ErrNotApproved),
 		errors.Is(err, controlplane.ErrPolicyChanged), errors.Is(err, reconciliation.ErrConflict), errors.Is(err, reconciliation.ErrEscrowDeployment),
-		errors.Is(err, reconciliation.ErrEscrowFinality), errors.Is(err, ErrEscrowBinding):
+		errors.Is(err, reconciliation.ErrEscrowFinality), errors.Is(err, ErrEscrowBinding),
+		errors.Is(err, ascpapproval.ErrSnapshotMismatch), errors.Is(err, ascpapproval.ErrNotRequested),
+		errors.Is(err, ascporchestration.ErrStateConflict), errors.Is(err, ascporchestration.ErrApprovalUnavailable):
 		return http.StatusConflict, "STATE_CONFLICT", false
 	case errors.Is(err, reconciliation.ErrEscrowTransition):
 		return http.StatusBadRequest, "INVALID_ESCROW_TRANSITION", false
 	case errors.Is(err, controlplane.ErrApprovalExpired):
 		return http.StatusGone, "APPROVAL_EXPIRED", false
-	case errors.Is(err, controlplane.ErrPolicyUnavailable):
+	case errors.Is(err, controlplane.ErrPolicyUnavailable), errors.Is(err, ascporchestration.ErrPolicyUnavailable):
 		return http.StatusConflict, "POLICY_UNAVAILABLE", false
 	case errors.Is(err, controlplane.ErrFrozen):
 		return http.StatusConflict, "AGENT_FROZEN", false
-	case errors.Is(err, controlplane.ErrUnknownRequest), errors.Is(err, reconciliation.ErrUnknownExecution), errors.Is(err, ErrNotFound):
+	case errors.Is(err, controlplane.ErrUnknownRequest), errors.Is(err, reconciliation.ErrUnknownExecution), errors.Is(err, ErrNotFound),
+		errors.Is(err, ascporchestration.ErrNotFound), errors.Is(err, ascporchestration.ErrInvalidScope):
 		return http.StatusNotFound, "NOT_FOUND", false
 	case errors.Is(err, reconciliation.ErrChainUnavailable):
 		return http.StatusServiceUnavailable, "CHAIN_UNAVAILABLE", true

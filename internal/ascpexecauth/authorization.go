@@ -35,6 +35,7 @@ type Input struct {
 	AuthorizationID       string
 	ApprovalID            string
 	ApprovalSnapshotHash  string
+	AutoDecisionRef       string
 	IntentID              string
 	ExecutionSnapshotHash string
 	Review                ascpapproval.Review
@@ -104,8 +105,8 @@ func validInput(input Input) bool {
 		input.Reservation.OperationID == input.IntentID && hash(input.Reservation.ReservationID) &&
 		!input.Reservation.ExpiresAt.IsZero() &&
 		((input.ApprovalID != "" && hash(input.ApprovalID) && hash(input.ApprovalSnapshotHash) &&
-			reviewErr == nil && reviewHash == input.ApprovalSnapshotHash) ||
-			(input.ApprovalID == "" && input.ApprovalSnapshotHash == ""))
+			input.AutoDecisionRef == "" && reviewErr == nil && reviewHash == input.ApprovalSnapshotHash) ||
+			(input.ApprovalID == "" && input.ApprovalSnapshotHash == "" && hash(input.AutoDecisionRef) && reviewErr == nil))
 }
 
 func reservationID(input Input) string { return input.Reservation.ReservationID }
