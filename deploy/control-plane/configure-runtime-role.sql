@@ -24,6 +24,7 @@ GRANT SELECT, INSERT ON audit_events, control_events TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_intents, ascp_financial_tombstones, ascp_policy_decisions, ascp_execution_authorizations,
     ascp_budget_reservation_dimensions, ascp_directory_snapshots,
     ascp_directory_quote_evidence TO :"runtime_role";
+GRANT SELECT ON ascp_asset_health TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_adaptation_grants TO :"runtime_role";
 GRANT UPDATE (state, remaining_attempts, consumed_operation_id, consumed_at)
     ON ascp_adaptation_grants TO :"runtime_role";

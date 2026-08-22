@@ -134,6 +134,27 @@ if sed 's/^REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC;/-
 	exit 1
 fi
 
+asset_health_grant_file=deploy/control-plane/configure-asset-health-role.sql
+for required in \
+	'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT' \
+	'asset_health_role must not participate in role memberships' \
+	'asset_health_role must not own database objects' \
+	'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC' \
+	'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
+	'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
+	'ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC' \
+	'GRANT SELECT, INSERT ON ascp_asset_health' \
+	'GRANT UPDATE (state,epoch,evidence_digest,providers,finalized_block,observed_at,updated_at)' \
+	'ascp_asset_health_observations, ascp_asset_recovery_proofs' \
+	'GRANT SELECT ON ascp_payment_operations, ascp_payment_attempts, ascp_ledger_transactions'
+do
+	grep -F "$required" "$asset_health_grant_file" >/dev/null
+done
+if grep -Eiq 'GRANT[[:space:]]+(ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)([[:space:],]|$)|GRANT[[:space:]]+UPDATE[[:space:]]+ON' "$asset_health_grant_file"; then
+	echo "asset health role contains a forbidden broad privilege" >&2
+	exit 1
+fi
+
 rails_grant_file=deploy/control-plane/configure-rails-role.sql
 for required in \
     'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \

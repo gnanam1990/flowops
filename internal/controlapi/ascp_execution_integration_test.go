@@ -649,6 +649,7 @@ func ascpIntegrationDatabase(t *testing.T) *sql.DB {
 		adminDB.Close()
 		t.Fatal(err)
 	}
+	seedHealthyASCPAsset(t, ctx, db, time.Now().UTC().Truncate(time.Microsecond))
 	t.Cleanup(func() {
 		_ = db.Close()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -657,6 +658,33 @@ func ascpIntegrationDatabase(t *testing.T) *sql.DB {
 		_ = adminDB.Close()
 	})
 	return db
+}
+
+func seedHealthyASCPAsset(t *testing.T, ctx context.Context, db *sql.DB, now time.Time) {
+	t.Helper()
+	evidence := ascpIntegrationHash(990001)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_asset_health
+			(chain_id,asset,proxy_implementation,runtime_code_hash,quorum,state,epoch,updated_at)
+		VALUES (84532,$1,$2,$3,2,'NORMAL',0,$4)`, ascpIntegrationUSDC,
+		"0x1111111111111111111111111111111111111111", ascpIntegrationHash(990002), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_asset_health_observations
+			(evidence_digest,chain_id,asset,previous_state,observed_state,resulting_state,epoch,
+			 providers,finalized_block,observed_at,recorded_at)
+		VALUES ($1,84532,$2,'NORMAL','NORMAL','NORMAL',0,'["asset-alpha","asset-bravo"]'::jsonb,100,$3,$3)`,
+		evidence, ascpIntegrationUSDC, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE ascp_asset_health
+		SET evidence_digest=$1,providers='["asset-alpha","asset-bravo"]'::jsonb,
+		    finalized_block=100,observed_at=$2,updated_at=$2
+		WHERE chain_id=84532 AND asset=$3`, evidence, now, ascpIntegrationUSDC); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func ascpRawIntegrationDatabase(t *testing.T) *sql.DB {

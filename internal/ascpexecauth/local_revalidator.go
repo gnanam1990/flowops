@@ -19,17 +19,19 @@ import (
 )
 
 const (
-	reasonIntentBindingChanged = "INTENT_BINDING_CHANGED"
-	reasonAgentInactive        = "AGENT_INACTIVE"
-	reasonOrganizationPaused   = "ORGANIZATION_PAUSED"
-	reasonPolicyChanged        = "POLICY_CHANGED"
-	reasonDirectoryStale       = "DIRECTORY_OBSERVATION_STALE"
-	reasonDirectoryChanged     = "DIRECTORY_CHANGED"
-	reasonSellerUnavailable    = "SELLER_UNAVAILABLE"
-	reasonQuoteExpired         = "QUOTE_EXPIRED"
-	reasonSnapshotChanged      = "EXECUTION_SNAPSHOT_CHANGED"
-	reasonBudgetDimensions     = "BUDGET_DIMENSIONS_CHANGED"
-	reasonPurchaseSpecLegacy   = "PURCHASE_SPEC_BYTES_UNAVAILABLE"
+	reasonIntentBindingChanged   = "INTENT_BINDING_CHANGED"
+	reasonAgentInactive          = "AGENT_INACTIVE"
+	reasonOrganizationPaused     = "ORGANIZATION_PAUSED"
+	reasonPolicyChanged          = "POLICY_CHANGED"
+	reasonDirectoryStale         = "DIRECTORY_OBSERVATION_STALE"
+	reasonDirectoryChanged       = "DIRECTORY_CHANGED"
+	reasonSellerUnavailable      = "SELLER_UNAVAILABLE"
+	reasonQuoteExpired           = "QUOTE_EXPIRED"
+	reasonSnapshotChanged        = "EXECUTION_SNAPSHOT_CHANGED"
+	reasonBudgetDimensions       = "BUDGET_DIMENSIONS_CHANGED"
+	reasonPurchaseSpecLegacy     = "PURCHASE_SPEC_BYTES_UNAVAILABLE"
+	reasonAssetHealthUnavailable = "ASSET_HEALTH_UNAVAILABLE"
+	reasonAssetUnhealthy         = "ASSET_UNHEALTHY"
 
 	BudgetDimensionAgentCategoryDay = "agent-category-day"
 	BudgetDimensionAgentDay         = "agent-day"
@@ -44,6 +46,7 @@ const (
 type LocalRevalidator struct{ maxDirectoryAge time.Duration }
 
 const maximumDirectoryAge = 5 * time.Minute
+const maximumAssetHealthAge = time.Minute
 
 func NewLocalRevalidator(maxDirectoryAge time.Duration) (*LocalRevalidator, error) {
 	if maxDirectoryAge <= 0 || maxDirectoryAge > maximumDirectoryAge {
@@ -156,6 +159,28 @@ func (r *LocalRevalidator) Revalidate(ctx context.Context, tx *sql.Tx, input Inp
 	chainID, err := strconv.ParseUint(quote.ChainID, 10, 64)
 	if err != nil {
 		return "", fmt.Errorf("parse stored execution chain: %w", err)
+	}
+	var assetState string
+	var assetObservedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, `
+		SELECT state,observed_at FROM ascp_asset_health
+		WHERE chain_id=$1 AND asset=$2
+		FOR SHARE`, chainID, quote.Asset).Scan(&assetState, &assetObservedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return reasonAssetHealthUnavailable, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read current asset health: %w", err)
+	}
+	assetHealthAge := r.maxDirectoryAge
+	if assetHealthAge > maximumAssetHealthAge {
+		assetHealthAge = maximumAssetHealthAge
+	}
+	if !assetObservedAt.Valid || assetObservedAt.Time.After(now.Add(time.Minute)) || now.Sub(assetObservedAt.Time) > assetHealthAge {
+		return reasonAssetHealthUnavailable, nil
+	}
+	if assetState != "NORMAL" {
+		return reasonAssetUnhealthy, nil
 	}
 	var currentVersion, finalizedBlock, keyEpoch, declaredWorkTime, verificationBudget uint64
 	var observationDigest, quoteSigningKey, payoutAddress, ackAuthority, amount, verificationSpecHash string

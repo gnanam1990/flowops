@@ -22,8 +22,9 @@ The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/flowops-admin`, `/flowops/flowops-operator`,
 `/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`,
 `/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`,
-`/flowops/ascp-bearer-worker`, `/flowops/ascp-signer-runtime`, and
-`/flowops/postgres-readiness`. `railway.json` selects that image, checks `/health`,
+`/flowops/ascp-bearer-worker`, `/flowops/ascp-signer-runtime`,
+`/flowops/ascp-asset-health`, and `/flowops/postgres-readiness`. `railway.json`
+selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
 before the API starts.
@@ -588,3 +589,13 @@ replay prune routine in addition to its table/sequence allowlist. Intake replay 
 are immutable for 24 hours and pruned at startup and hourly; alert on prune
 failure and database growth. Verdict decisions and finalized key observations
 are never pruned. Do not run the file signer for production funds.
+
+## ASCP asset-health runtime
+
+Run `/flowops/ascp-asset-health` as a separate supervised, non-listening
+process. Apply migration `0029_ascp_asset_health.sql`, create a dedicated LOGIN
+role, and apply `deploy/control-plane/configure-asset-health-role.sql`. Pin the
+reviewed USDC proxy implementation and runtime code hash; do not discover or
+accept replacements automatically. The full variable contract, recovery
+invariants, accounting behavior, alert conditions, and fork-drill gate are in
+`docs/modules/ASCP_ASSET_HEALTH.md`.

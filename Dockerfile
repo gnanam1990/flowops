@@ -17,6 +17,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/control-plane-api 
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ascp-bearer-worker ./cmd/ascp-bearer-worker && \
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ascp-signer-runtime ./cmd/ascp-signer-runtime && \
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ascp-ring6-runtime ./cmd/ascp-ring6-runtime && \
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ascp-asset-health ./cmd/ascp-asset-health && \
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/postgres-readiness ./cmd/postgres-readiness
 
 FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
@@ -25,9 +26,9 @@ RUN apk add --no-cache ca-certificates su-exec && \
     addgroup -S -g 10001 flowops && \
     adduser -S -D -H -u 10001 -G flowops flowops && \
     install -d -m 0700 -o flowops -g flowops /var/lib/flowops /flowops
-COPY --from=build /out/control-plane-api /out/flowops-admin /out/flowops-operator /out/ascp-leadership /out/ascp-seller-worker /out/ascp-event-recovery /out/ascp-verifier /out/ascp-keeper /out/ascp-bearer-worker /out/ascp-signer-runtime /out/ascp-ring6-runtime /out/postgres-readiness /flowops/
+COPY --from=build /out/control-plane-api /out/flowops-admin /out/flowops-operator /out/ascp-leadership /out/ascp-seller-worker /out/ascp-event-recovery /out/ascp-verifier /out/ascp-keeper /out/ascp-bearer-worker /out/ascp-signer-runtime /out/ascp-ring6-runtime /out/ascp-asset-health /out/postgres-readiness /flowops/
 COPY deploy/control-plane/entrypoint.sh /flowops/entrypoint.sh
-RUN chmod 0555 /flowops/control-plane-api /flowops/flowops-admin /flowops/flowops-operator /flowops/ascp-leadership /flowops/ascp-seller-worker /flowops/ascp-event-recovery /flowops/ascp-verifier /flowops/ascp-keeper /flowops/ascp-bearer-worker /flowops/ascp-signer-runtime /flowops/ascp-ring6-runtime /flowops/postgres-readiness /flowops/entrypoint.sh
+RUN chmod 0555 /flowops/control-plane-api /flowops/flowops-admin /flowops/flowops-operator /flowops/ascp-leadership /flowops/ascp-seller-worker /flowops/ascp-event-recovery /flowops/ascp-verifier /flowops/ascp-keeper /flowops/ascp-bearer-worker /flowops/ascp-signer-runtime /flowops/ascp-ring6-runtime /flowops/ascp-asset-health /flowops/postgres-readiness /flowops/entrypoint.sh
 
 EXPOSE 8080 8082
 ENTRYPOINT ["/flowops/entrypoint.sh"]
