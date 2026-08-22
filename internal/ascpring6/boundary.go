@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
@@ -24,7 +23,7 @@ const ComponentProtocol = "ASCP_RING6_COMPONENT_V1"
 
 type ComponentBoundary struct {
 	name, path string
-	identity   [2]uint64
+	identity   socketIdentity
 	client     *http.Client
 }
 
@@ -67,7 +66,7 @@ func (b *ComponentBoundary) Check(ctx context.Context) error {
 
 func ValidateComponentSockets(boundaries ...*ComponentBoundary) error {
 	seenPaths := map[string]struct{}{}
-	seenInodes := map[[2]uint64]string{}
+	seenInodes := map[socketIdentity]string{}
 	for _, boundary := range boundaries {
 		if boundary == nil {
 			return errors.New("Ring 6 component is required")
@@ -205,34 +204,34 @@ func (b *ComponentBoundary) call(ctx context.Context, method, endpoint string, i
 	return decodeStrict(raw, output)
 }
 
-func (b *ComponentBoundary) inspectPinned() ([2]uint64, error) {
+func (b *ComponentBoundary) inspectPinned() (socketIdentity, error) {
 	identity, err := inspectSocket(b.path)
 	if err != nil {
-		return [2]uint64{}, err
+		return socketIdentity{}, err
 	}
 	if identity != b.identity {
-		return [2]uint64{}, errors.New("Ring 6 component socket identity changed")
+		return socketIdentity{}, errors.New("Ring 6 component socket identity changed")
 	}
 	return identity, nil
 }
 
-func inspectSocket(path string) ([2]uint64, error) {
+func inspectSocket(path string) (socketIdentity, error) {
 	parent, err := securefile.OpenDirectory(filepath.Dir(path))
 	if err != nil {
-		return [2]uint64{}, err
+		return socketIdentity{}, err
 	}
 	defer parent.Close()
 	info, err := parent.Stat()
 	if err != nil || info.Mode().Perm() != 0o700 || !securefile.OwnerAllowed(info) {
-		return [2]uint64{}, errors.New("Ring 6 socket parent must be private and owner controlled")
+		return socketIdentity{}, errors.New("Ring 6 socket parent must be private and owner controlled")
 	}
 	info, err = os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 || !securefile.OwnerAllowed(info) {
-		return [2]uint64{}, errors.New("Ring 6 component must be a private owner-controlled Unix socket")
+		return socketIdentity{}, errors.New("Ring 6 component must be a private owner-controlled Unix socket")
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
+	identity, ok := identityFromFileInfo(info)
 	if !ok {
-		return [2]uint64{}, errors.New("Ring 6 component identity unavailable")
+		return socketIdentity{}, errors.New("Ring 6 component identity unavailable")
 	}
-	return [2]uint64{uint64(stat.Dev), uint64(stat.Ino)}, nil
+	return identity, nil
 }

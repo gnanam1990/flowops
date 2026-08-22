@@ -36,12 +36,14 @@ repeating verifier work and remains replayable only until `ValidUntil`.
 
 The runtime listener is a new owner-controlled `0600` Unix socket. Verifier and
 HSM dependencies are pre-existing, different `0600` Unix sockets in owner-only
-directories. Their paths and device/inode identities must differ. Each exposes
-exact health JSON using `ASCP_RING6_COMPONENT_V1` and boundary `verifier` or
-`hsm`.
-The runtime pins each component socket's startup device/inode identity and
-requires that identity before every call; replacing a socket at the same path
-requires an explicit runtime restart.
+directories. Their paths and device/inode/change-time identities must differ.
+Each exposes exact health JSON using `ASCP_RING6_COMPONENT_V1` and boundary
+`verifier` or `hsm`.
+The runtime pins each component socket's startup device/inode/change-time
+identity and requires that identity before every call. Including filesystem
+change time prevents immediate inode-number reuse from authenticating a
+replacement socket; replacing a socket at the same path requires an explicit
+runtime restart.
 
 - `POST /v1/verify` receives `{protocol,input,inputHash}` and returns
   `{verified:true,inputHash}`. Exact HTTP `422` `{code}` is the only permanent
@@ -86,8 +88,9 @@ fit the platform Unix address bound. Startup gives component health checks a
 ten-second deadline, then replays the journal under the process lifecycle
 context so journal size does not inherit the health timeout. The listener
 refuses any startup path that already exists. Graceful shutdown unlinks only
-the device/inode created by that process, allowing safe same-path restart while
-preserving a replacement path for operator inspection.
+the exact device/inode/change-time identity created by that process, allowing
+safe same-path restart while preserving a replacement path for operator
+inspection.
 
 ## Verification and production gates
 
