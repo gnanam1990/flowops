@@ -3,6 +3,7 @@ package ascpsignerruntime
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -121,7 +122,9 @@ func TestServeUnixRefusesExistingPathAndInsecureParentWithoutRemovingEither(t *t
 		t.Fatal("socket parent below a replaceable writable ancestor was accepted")
 	}
 	missingError := validateSocketParent(filepath.Join(shortTempDir(t), "missing"))
-	if missingError == nil || !strings.Contains(missingError.Error(), "open secure signer socket parent") || strings.Contains(missingError.Error(), "must contain no symlinks") {
+	if missingError == nil || !errors.Is(missingError, os.ErrNotExist) ||
+		!strings.Contains(missingError.Error(), "open secure signer socket parent") ||
+		strings.Contains(missingError.Error(), "owner-only non-symlink directory") {
 		t.Fatalf("missing socket parent error=%v", missingError)
 	}
 	tooLong := "/" + strings.Repeat("a", len(unix.RawSockaddrUnix{}.Path))
