@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	ProposalTTL       = 24 * time.Hour
-	MaximumStepUpLife = 5 * time.Minute
+	ProposalTTL                  = 24 * time.Hour
+	MaximumStepUpLife            = 5 * time.Minute
+	GovernanceWorkflowBoundTopic = "0x71840a8df3cf7e14c302ff72b4fd1c651a2845389dfb0a4fdd884a2ffb104bfe"
 )
 
 var (
@@ -30,8 +31,9 @@ var (
 	ErrNotFound              = errors.New("proposal workflow was not found")
 	ErrIdempotencyConflict   = errors.New("workflow idempotency key names different input")
 	ErrStateConflict         = errors.New("proposal workflow state conflicts with the requested transition")
-	ErrCompletionUnavailable = errors.New("workflow completion verifier is unavailable")
+	ErrCompletionUnavailable = errors.New("workflow completion observer is unavailable")
 	ErrInvalidReceipt        = errors.New("workflow completion receipt is invalid")
+	ErrReceiptOwned          = errors.New("workflow completion receipt is already owned")
 )
 
 type Kind string
@@ -106,26 +108,35 @@ type CreateRequest struct {
 }
 
 type CompletionReceipt struct {
-	WorkflowID      string `json:"workflowId"`
-	PayloadHash     string `json:"payloadHash"`
-	ChainID         uint64 `json:"chainId"`
-	TransactionHash string `json:"transactionHash"`
-	BlockNumber     uint64 `json:"blockNumber"`
-	BlockHash       string `json:"blockHash"`
-	LogIndex        uint64 `json:"logIndex"`
-	ContractAddress string `json:"contractAddress"`
-	EventSignature  string `json:"eventSignature"`
-	Finality        string `json:"finality"`
+	WorkflowID           string   `json:"workflowId"`
+	PayloadHash          string   `json:"payloadHash"`
+	ChainID              uint64   `json:"chainId"`
+	TransactionHash      string   `json:"transactionHash"`
+	BlockNumber          uint64   `json:"blockNumber"`
+	BlockHash            string   `json:"blockHash"`
+	BlockTimestamp       uint64   `json:"blockTimestamp"`
+	ConfirmedHead        uint64   `json:"confirmedHead"`
+	FinalizedHead        uint64   `json:"finalizedHead"`
+	LogIndex             uint64   `json:"logIndex"`
+	ContractAddress      string   `json:"contractAddress"`
+	EventSignature       string   `json:"eventSignature"`
+	FunctionSelector     string   `json:"functionSelector"`
+	ActionEventSignature string   `json:"actionEventSignature"`
+	ActionLogIndexes     []uint64 `json:"actionLogIndexes"`
+	Observers            []string `json:"observers"`
+	EvidenceDigest       string   `json:"evidenceDigest"`
+	Finality             string   `json:"finality"`
 }
 
-type CompletionVerifier interface {
-	VerifyWorkflowCompletion(context.Context, Workflow, CompletionReceipt) error
+type CompletionObserver interface {
+	ObserveWorkflowCompletion(context.Context, Workflow) (CompletionReceipt, error)
 }
 
 type Store interface {
 	ReplayCreate(context.Context, Actor, string, string) (Workflow, bool, error)
 	Create(context.Context, Workflow, string, string) (Workflow, bool, error)
 	Get(context.Context, string, string) (Workflow, error)
+	Pending(context.Context, int) ([]Workflow, error)
 	Approve(context.Context, Actor, string, string, string, time.Time) (Workflow, bool, error)
 	Cancel(context.Context, Actor, string, string, string, time.Time) (Workflow, bool, error)
 	Expire(context.Context, string, string, time.Time) (Workflow, bool, error)
@@ -134,12 +145,12 @@ type Store interface {
 
 type Service struct {
 	store    Store
-	verifier CompletionVerifier
+	observer CompletionObserver
 	clock    func() time.Time
 	newID    func() (string, error)
 }
 
-func New(store Store, verifier CompletionVerifier, clock func() time.Time, random io.Reader) (*Service, error) {
+func New(store Store, observer CompletionObserver, clock func() time.Time, random io.Reader) (*Service, error) {
 	if store == nil {
 		return nil, errors.New("durable workflow store is required")
 	}
@@ -149,7 +160,7 @@ func New(store Store, verifier CompletionVerifier, clock func() time.Time, rando
 	if random == nil {
 		random = rand.Reader
 	}
-	return &Service{store: store, verifier: verifier, clock: clock, newID: workflowIDSource(random)}, nil
+	return &Service{store: store, observer: observer, clock: clock, newID: workflowIDSource(random)}, nil
 }
 
 func (s *Service) Create(ctx context.Context, actor Actor, idempotencyKey string, request CreateRequest) (Workflow, error) {
@@ -233,31 +244,40 @@ func (s *Service) Cancel(ctx context.Context, actor Actor, workflowID, idempoten
 	return workflow, nil
 }
 
-// Complete is an internal observer boundary, not an owner API. The configured
-// verifier must independently establish canonical finalized chain evidence.
-func (s *Service) Complete(ctx context.Context, organizationID, workflowID string, receipt CompletionReceipt) (Workflow, error) {
-	if s.verifier == nil {
+// ObserveAndComplete is an internal worker boundary, not an owner API. The
+// configured observer independently discovers and validates canonical finalized
+// chain evidence; no caller supplies a receipt or transaction hash.
+func (s *Service) ObserveAndComplete(ctx context.Context, organizationID, workflowID string) (Workflow, error) {
+	if s.observer == nil {
 		return Workflow{}, ErrCompletionUnavailable
 	}
-	if !identifier(organizationID) || !hash(workflowID) || !validReceipt(receipt) {
+	if !identifier(organizationID) || !hash(workflowID) {
+		return Workflow{}, ErrInvalidReceipt
+	}
+	workflow, err := s.store.Get(ctx, organizationID, workflowID)
+	if err != nil {
+		return Workflow{}, err
+	}
+	if workflow.State == Approved && workflow.CompletionDigest != "" {
+		workflow.Replayed = true
+		return workflow, nil
+	}
+	if workflow.State != ApprovedPendingChain {
+		return Workflow{}, ErrStateConflict
+	}
+	receipt, err := s.observer.ObserveWorkflowCompletion(ctx, workflow)
+	if err != nil {
+		return Workflow{}, fmt.Errorf("%w: %w", ErrInvalidReceipt, err)
+	}
+	if !validReceipt(receipt) || workflow.WorkflowID != receipt.WorkflowID || workflow.PayloadHash != receipt.PayloadHash ||
+		workflow.ApprovedAt <= 0 || receipt.BlockTimestamp <= uint64(workflow.ApprovedAt) {
 		return Workflow{}, ErrInvalidReceipt
 	}
 	bytes, err := json.Marshal(receipt)
 	if err != nil {
 		return Workflow{}, err
 	}
-	digest := "0x" + hex.EncodeToString(sha256Bytes(bytes))
-	workflow, err := s.store.Get(ctx, organizationID, workflowID)
-	if err != nil {
-		return Workflow{}, err
-	}
-	if workflow.WorkflowID != receipt.WorkflowID || workflow.PayloadHash != receipt.PayloadHash ||
-		(workflow.State != ApprovedPendingChain && !(workflow.State == Approved && workflow.CompletionDigest == digest)) {
-		return Workflow{}, ErrStateConflict
-	}
-	if err := s.verifier.VerifyWorkflowCompletion(ctx, workflow, receipt); err != nil {
-		return Workflow{}, fmt.Errorf("%w: %v", ErrInvalidReceipt, err)
-	}
+	digest := completionDigest(receipt)
 	stored, replayed, err := s.store.Complete(ctx, organizationID, workflowID, receipt, digest, bytes, s.clock().UTC().Truncate(time.Second))
 	if err != nil {
 		return Workflow{}, err
@@ -314,9 +334,40 @@ func validRole(role Role) bool {
 }
 
 func validReceipt(receipt CompletionReceipt) bool {
-	return hash(receipt.WorkflowID) && hash(receipt.PayloadHash) && (receipt.ChainID == 8453 || receipt.ChainID == 84532) &&
-		hash(receipt.TransactionHash) && hash(receipt.BlockHash) && receipt.BlockNumber > 0 && canonicalAddress(receipt.ContractAddress) &&
-		hash(receipt.EventSignature) && receipt.Finality == "FINALIZED"
+	if !hash(receipt.WorkflowID) || !hash(receipt.PayloadHash) ||
+		(receipt.ChainID != 8453 && receipt.ChainID != 84532) || !hash(receipt.TransactionHash) ||
+		!hash(receipt.BlockHash) || receipt.BlockNumber == 0 || !canonicalAddress(receipt.ContractAddress) ||
+		receipt.BlockTimestamp == 0 ||
+		receipt.EventSignature != GovernanceWorkflowBoundTopic || receipt.Finality != "FINALIZED" {
+		return false
+	}
+	if receipt.ConfirmedHead < receipt.BlockNumber || receipt.FinalizedHead < receipt.BlockNumber || !selector(receipt.FunctionSelector) ||
+		!hash(receipt.ActionEventSignature) || !hash(receipt.EvidenceDigest) ||
+		len(receipt.ActionLogIndexes) == 0 || len(receipt.ActionLogIndexes) > 100 ||
+		len(receipt.Observers) < 2 || len(receipt.Observers) > 5 {
+		return false
+	}
+	seenIndexes := make(map[uint64]struct{}, len(receipt.ActionLogIndexes))
+	for _, index := range receipt.ActionLogIndexes {
+		if index >= receipt.LogIndex {
+			return false
+		}
+		if _, duplicate := seenIndexes[index]; duplicate {
+			return false
+		}
+		seenIndexes[index] = struct{}{}
+	}
+	seenObservers := make(map[string]struct{}, len(receipt.Observers))
+	for _, observer := range receipt.Observers {
+		if !identifier(observer) {
+			return false
+		}
+		if _, duplicate := seenObservers[observer]; duplicate {
+			return false
+		}
+		seenObservers[observer] = struct{}{}
+	}
+	return true
 }
 
 func actionHash(action string, actor Actor, workflowID, idempotencyKey string, input any) string {
@@ -346,8 +397,26 @@ func workflowIDSource(random io.Reader) func() (string, error) {
 }
 
 func sha256Bytes(value []byte) []byte { sum := sha256.Sum256(value); return sum[:] }
-func identifier(value string) bool    { return envelope.ValidIdentifier(value) && len(value) <= 128 }
-func idempotency(value string) bool   { return identifier(value) }
+
+// completionDigest excludes observation-time metadata so two independent
+// runtime instances converge on one idempotency identity for the same
+// canonical chain event even if their responding-provider subsets or observed
+// heads differ.
+func completionDigest(receipt CompletionReceipt) string {
+	encoded, _ := json.Marshal(struct {
+		WorkflowID, PayloadHash, TransactionHash, BlockHash, ContractAddress string
+		EventSignature, FunctionSelector, ActionEventSignature, Finality     string
+		ChainID, BlockNumber, BlockTimestamp, LogIndex                       uint64
+		ActionLogIndexes                                                     []uint64
+	}{
+		receipt.WorkflowID, receipt.PayloadHash, receipt.TransactionHash, receipt.BlockHash, receipt.ContractAddress,
+		receipt.EventSignature, receipt.FunctionSelector, receipt.ActionEventSignature, receipt.Finality,
+		receipt.ChainID, receipt.BlockNumber, receipt.BlockTimestamp, receipt.LogIndex, receipt.ActionLogIndexes,
+	})
+	return "0x" + hex.EncodeToString(sha256Bytes(append([]byte("ASCP_WORKFLOW_COMPLETION_V1\n"), encoded...)))
+}
+func identifier(value string) bool  { return envelope.ValidIdentifier(value) && len(value) <= 128 }
+func idempotency(value string) bool { return identifier(value) }
 func hash(value string) bool {
 	if len(value) != 66 || !strings.HasPrefix(value, "0x") || value != strings.ToLower(value) {
 		return false
@@ -378,4 +447,12 @@ func canonicalAddress(value string) bool {
 		}
 	}
 	return false
+}
+
+func selector(value string) bool {
+	if len(value) != 10 || value == "0x00000000" || !strings.HasPrefix(value, "0x") || value != strings.ToLower(value) {
+		return false
+	}
+	decoded, err := hex.DecodeString(value[2:])
+	return err == nil && len(decoded) == 4
 }

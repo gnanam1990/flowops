@@ -3,6 +3,8 @@ package ascpworkflow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -11,6 +13,7 @@ type MemoryStore struct {
 	mu        sync.Mutex
 	workflows map[string]Workflow
 	actions   map[string]memoryAction
+	receipts  map[string]memoryReceiptOwner
 }
 
 type memoryAction struct {
@@ -18,8 +21,15 @@ type memoryAction struct {
 	workflowID string
 }
 
+type memoryReceiptOwner struct {
+	workflowID string
+	digest     string
+}
+
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{workflows: make(map[string]Workflow), actions: make(map[string]memoryAction)}
+	return &MemoryStore{
+		workflows: make(map[string]Workflow), actions: make(map[string]memoryAction), receipts: make(map[string]memoryReceiptOwner),
+	}
 }
 
 func (s *MemoryStore) ReplayCreate(ctx context.Context, actor Actor, key, inputHash string) (Workflow, bool, error) {
@@ -67,6 +77,33 @@ func (s *MemoryStore) Get(ctx context.Context, organizationID, workflowID string
 		return Workflow{}, ErrNotFound
 	}
 	return cloneWorkflow(workflow), nil
+}
+
+func (s *MemoryStore) Pending(ctx context.Context, limit int) ([]Workflow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit < 1 {
+		return nil, ErrInvalidWorkflow
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]Workflow, 0, limit)
+	for _, workflow := range s.workflows {
+		if workflow.State == ApprovedPendingChain {
+			result = append(result, cloneWorkflow(workflow))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].ApprovedAt != result[j].ApprovedAt {
+			return result[i].ApprovedAt < result[j].ApprovedAt
+		}
+		return result[i].WorkflowID < result[j].WorkflowID
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
 }
 
 func (s *MemoryStore) Approve(ctx context.Context, actor Actor, workflowID, key, inputHash string, now time.Time) (Workflow, bool, error) {
@@ -161,8 +198,18 @@ func (s *MemoryStore) Complete(ctx context.Context, organizationID, workflowID s
 	if workflow.State != ApprovedPendingChain || workflow.PayloadHash != receipt.PayloadHash {
 		return Workflow{}, false, ErrStateConflict
 	}
+	receiptKey := fmt.Sprintf("%d\x00%s\x00%d", receipt.ChainID, receipt.TransactionHash, receipt.LogIndex)
+	if owner, exists := s.receipts[receiptKey]; exists {
+		if owner.workflowID != workflowID {
+			return Workflow{}, false, ErrReceiptOwned
+		}
+		if owner.digest != digest {
+			return Workflow{}, false, ErrStateConflict
+		}
+	}
 	workflow.State, workflow.CompletionDigest, workflow.CompletionReceipt, workflow.CompletedAt = Approved, digest, append(json.RawMessage(nil), bytes...), now.Unix()
 	s.workflows[workflowID] = cloneWorkflow(workflow)
+	s.receipts[receiptKey] = memoryReceiptOwner{workflowID: workflowID, digest: digest}
 	return cloneWorkflow(workflow), false, nil
 }
 

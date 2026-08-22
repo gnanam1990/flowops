@@ -46,11 +46,12 @@ Every successful governed call emits:
 GovernanceWorkflowBound(workflowId, workflowPayloadHash, functionSelector)
 ```
 
-in the same transaction as its action-specific event. A future independent
-observer must retrieve a canonical finalized receipt from the configured RPC
-quorum and verify chain, contract, transaction, both events, workflow ID,
-payload hash, selector, and one-time receipt ownership. The public workflow API
-still has no completion endpoint.
+in the same transaction as its action-specific event. The independent observer
+discovers the binding with `eth_getLogs`, re-reads the successful receipt and
+canonical block from the configured RPC quorum, and verifies chain, contract,
+transaction, both events, workflow ID, payload hash, selector, finality, and
+one-time `(chainId, transactionHash, bindingLogIndex)` ownership. The public
+workflow API still has no completion endpoint.
 
 `addVerifier`, `scheduleCaps`, and `approveVersion` emit their binding when the
 change is scheduled. Their later permissionless activation is a separate chain

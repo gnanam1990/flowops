@@ -71,6 +71,30 @@ func (s *PostgresStore) Get(ctx context.Context, organizationID, workflowID stri
 	return scanWorkflow(s.db.QueryRowContext(ctx, workflowSelect+` WHERE organization_id=$1 AND workflow_id=$2`, organizationID, workflowID))
 }
 
+func (s *PostgresStore) Pending(ctx context.Context, limit int) ([]Workflow, error) {
+	if limit < 1 || limit > 1001 {
+		return nil, ErrInvalidWorkflow
+	}
+	rows, err := s.db.QueryContext(ctx, workflowSelect+`
+		WHERE state='APPROVED_PENDING_CHAIN' ORDER BY approved_at, workflow_id LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list pending proposal workflows: %w", err)
+	}
+	defer rows.Close()
+	workflows := make([]Workflow, 0, limit)
+	for rows.Next() {
+		workflow, err := scanWorkflow(rows)
+		if err != nil {
+			return nil, err
+		}
+		workflows = append(workflows, workflow)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending proposal workflows: %w", err)
+	}
+	return workflows, nil
+}
+
 func (s *PostgresStore) Approve(ctx context.Context, actor Actor, workflowID, key, inputHash string, now time.Time) (Workflow, bool, error) {
 	return s.decide(ctx, actor, workflowID, "APPROVE", key, inputHash, now)
 }
@@ -186,6 +210,42 @@ func (s *PostgresStore) Complete(ctx context.Context, organizationID, workflowID
 	}
 	if workflow.State != ApprovedPendingChain {
 		return Workflow{}, false, ErrStateConflict
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO ascp_workflow_receipt_ownership
+		(chain_id, transaction_hash, log_index, workflow_id, organization_id, completion_digest, claimed_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`, receipt.ChainID, receipt.TransactionHash,
+		receipt.LogIndex, workflowID, organizationID, digest, now)
+	if err != nil {
+		return Workflow{}, false, fmt.Errorf("claim workflow completion receipt: %w", err)
+	}
+	claimed, err := result.RowsAffected()
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	if claimed == 0 {
+		var ownerWorkflow, ownerOrganization, ownerDigest string
+		err := tx.QueryRowContext(ctx, `SELECT workflow_id, organization_id, completion_digest
+			FROM ascp_workflow_receipt_ownership WHERE chain_id=$1 AND transaction_hash=$2 AND log_index=$3 FOR UPDATE`,
+			receipt.ChainID, receipt.TransactionHash, receipt.LogIndex).Scan(&ownerWorkflow, &ownerOrganization, &ownerDigest)
+		if errors.Is(err, sql.ErrNoRows) {
+			// The INSERT can also conflict on UNIQUE(workflow_id). Resolve that
+			// axis explicitly rather than returning an opaque sql.ErrNoRows.
+			err = tx.QueryRowContext(ctx, `SELECT workflow_id, organization_id, completion_digest
+				FROM ascp_workflow_receipt_ownership WHERE workflow_id=$1 FOR UPDATE`, workflowID).
+				Scan(&ownerWorkflow, &ownerOrganization, &ownerDigest)
+			if err == nil {
+				return Workflow{}, false, ErrStateConflict
+			}
+		}
+		if err != nil {
+			return Workflow{}, false, fmt.Errorf("read workflow receipt owner: %w", err)
+		}
+		if ownerWorkflow != workflowID || ownerOrganization != organizationID {
+			return Workflow{}, false, ErrReceiptOwned
+		}
+		if ownerDigest != digest {
+			return Workflow{}, false, ErrStateConflict
+		}
 	}
 	workflow.State, workflow.CompletionReceipt, workflow.CompletionDigest, workflow.CompletedAt = Approved, append([]byte(nil), encoded...), digest, now.Unix()
 	if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state='APPROVED', completion_receipt=$3::jsonb,

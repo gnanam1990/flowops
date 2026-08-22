@@ -104,7 +104,7 @@ func TestASCPWorkflowRealPostgresConcurrentDecisionAndImmutableAudit(t *testing.
 		t.Fatalf("cross-tenant read error=%v", err)
 	}
 
-	verifiedService, err := ascpworkflow.New(store, workflowCompletionVerifier{}, func() time.Time { return now }, nil)
+	verifiedService, err := ascpworkflow.New(store, workflowCompletionObserver{}, func() time.Time { return now }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,21 +118,50 @@ func TestASCPWorkflowRealPostgresConcurrentDecisionAndImmutableAudit(t *testing.
 	if err != nil || chainWorkflow.State != ascpworkflow.ApprovedPendingChain {
 		t.Fatalf("pending chain=%+v err=%v", chainWorkflow, err)
 	}
-	receipt := ascpworkflow.CompletionReceipt{WorkflowID: chainWorkflow.WorkflowID, PayloadHash: chainWorkflow.PayloadHash, ChainID: 84532,
-		TransactionHash: fmt.Sprintf("0x%064x", 4), BlockNumber: 99, BlockHash: fmt.Sprintf("0x%064x", 5), LogIndex: 1,
-		ContractAddress: "0x1111111111111111111111111111111111111111", EventSignature: fmt.Sprintf("0x%064x", 6), Finality: "FINALIZED"}
-	completed, err := verifiedService.Complete(ctx, "org_workflow_it", chainWorkflow.WorkflowID, receipt)
+	completed, err := verifiedService.ObserveAndComplete(ctx, "org_workflow_it", chainWorkflow.WorkflowID)
 	if err != nil || completed.State != ascpworkflow.Approved || completed.CompletionDigest == "" {
 		t.Fatalf("completed=%+v err=%v", completed, err)
 	}
-	replay, err := verifiedService.Complete(ctx, "org_workflow_it", chainWorkflow.WorkflowID, receipt)
+	replay, err := verifiedService.ObserveAndComplete(ctx, "org_workflow_it", chainWorkflow.WorkflowID)
 	if err != nil || !replay.Replayed || replay.CompletionDigest != completed.CompletionDigest {
 		t.Fatalf("completion replay=%+v err=%v", replay, err)
 	}
+	var receiptOwners int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM ascp_workflow_receipt_ownership WHERE workflow_id=$1`, chainWorkflow.WorkflowID).Scan(&receiptOwners); err != nil || receiptOwners != 1 {
+		t.Fatalf("receipt owners=%d err=%v", receiptOwners, err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM ascp_workflow_receipt_ownership WHERE workflow_id=$1`, chainWorkflow.WorkflowID); err == nil {
+		t.Fatal("database accepted workflow receipt ownership deletion")
+	}
+	conflict, err := verifiedService.Create(ctx, actor("signer_conflict", ascpworkflow.SignerOperator), "create_chain_conflict", ascpworkflow.CreateRequest{
+		Kind: ascpworkflow.SignerCaps, PayloadHash: fmt.Sprintf("0x%064x", 30),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict, err = verifiedService.Approve(ctx, actor("chain_owner_conflict", ascpworkflow.OrgAdmin), conflict.WorkflowID, "approve_chain_conflict")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifiedService.ObserveAndComplete(ctx, "org_workflow_it", conflict.WorkflowID); !errors.Is(err, ascpworkflow.ErrReceiptOwned) {
+		t.Fatalf("shared receipt ownership error=%v", err)
+	}
+	storedConflict, err := verifiedService.Get(ctx, actor("chain_owner_conflict", ascpworkflow.OrgAdmin), conflict.WorkflowID)
+	if err != nil || storedConflict.State != ascpworkflow.ApprovedPendingChain {
+		t.Fatalf("conflicting receipt changed workflow=%+v err=%v", storedConflict, err)
+	}
 }
 
-type workflowCompletionVerifier struct{}
+type workflowCompletionObserver struct{}
 
-func (workflowCompletionVerifier) VerifyWorkflowCompletion(context.Context, ascpworkflow.Workflow, ascpworkflow.CompletionReceipt) error {
-	return nil
+func (workflowCompletionObserver) ObserveWorkflowCompletion(_ context.Context, workflow ascpworkflow.Workflow) (ascpworkflow.CompletionReceipt, error) {
+	return ascpworkflow.CompletionReceipt{
+		WorkflowID: workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ChainID: 84532,
+		TransactionHash: fmt.Sprintf("0x%064x", 4), BlockNumber: 99, BlockHash: fmt.Sprintf("0x%064x", 5),
+		BlockTimestamp: uint64(workflow.ApprovedAt + 1), ConfirmedHead: 130, FinalizedHead: 120, LogIndex: 2,
+		ContractAddress: "0x1111111111111111111111111111111111111111",
+		EventSignature:  ascpworkflow.GovernanceWorkflowBoundTopic, FunctionSelector: "0x12345678",
+		ActionEventSignature: fmt.Sprintf("0x%064x", 7), ActionLogIndexes: []uint64{1},
+		Observers: []string{"rpc_a", "rpc_b"}, EvidenceDigest: fmt.Sprintf("0x%064x", 8), Finality: "FINALIZED",
+	}, nil
 }

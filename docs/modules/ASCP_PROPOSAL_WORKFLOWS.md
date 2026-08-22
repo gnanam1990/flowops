@@ -36,19 +36,20 @@ cancellation transactions lock the same row and converge on one terminal
 outcome.
 
 Chain-backed workflows transition from `PROPOSED` to
-`APPROVED_PENDING_CHAIN`. Only the internal `Complete` boundary, backed by an
-independent finalized-receipt verifier, can reach `APPROVED`. The main API is
-currently wired without that verifier and therefore fails closed.
+`APPROVED_PENDING_CHAIN`. Only the internal observer boundary, backed by an
+independent finalized-receipt quorum, can reach `APPROVED`. There is no public
+completion route or caller-supplied receipt path.
 
 Chain governance contracts now recompute the exact approved payload and emit a
 shared workflow-binding event with the action event. See
-`ASCP_GOVERNANCE_WORKFLOW_BINDINGS.md`. The independent finalized receipt
-observer and one-time receipt ownership check remain the next completion
-boundary; contract events alone do not mutate workflow state.
+`ASCP_GOVERNANCE_WORKFLOW_BINDINGS.md`. The internal worker discovers the exact
+binding and completes only after paired-event, canonical-block, finality, and
+atomic one-time receipt ownership checks pass.
 
 ## Persistence and operations
 
-Migration `0027_ascp_proposal_workflows.sql` adds the authoritative workflow,
+Migrations `0027_ascp_proposal_workflows.sql` and
+`0028_ascp_governance_receipt_ownership.sql` add the authoritative workflow,
 idempotent action, immutable event, and immutable outbox tables. A database
 trigger rejects payload or identity changes, deletion, and illegal transitions.
 Runtime role setup grants column-level updates only for the reviewed transition
@@ -57,7 +58,7 @@ fields. PostgreSQL readiness verifies these exact grants and all four tables.
 Run focused validation with:
 
 ```sh
-go test -race ./internal/ascpworkflow ./internal/controlapi ./cmd/control-plane-api
+go test -race ./internal/ascpworkflow ./internal/ascpgovernanceobserver ./internal/reconciliation ./internal/controlapi ./cmd/control-plane-api
 FLOWOPS_TEST_DATABASE_URL="$FLOWOPS_TEST_DATABASE_URL" go test ./internal/controlapi \
   -run TestASCPWorkflowRealPostgresConcurrentDecisionAndImmutableAudit -count=3
 deploy/control-plane/test-postgres-readiness.sh

@@ -51,6 +51,7 @@ var runtimeTables = []tableContract{
 	{name: "ascp_workflow_actions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_workflow_events", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_workflow_outbox", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_workflow_receipt_ownership", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_policy_decisions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_approvals", allowed: set("SELECT", "INSERT", "UPDATE")},
 	{name: "ascp_budget_reservations", allowed: set("SELECT", "INSERT", "UPDATE")},

@@ -13,8 +13,8 @@ import (
 func TestKindRoleMatrixDualControlAndReceiptGate(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	clock := func() time.Time { return now }
-	verifier := &completionVerifierStub{}
-	service, err := New(NewMemoryStore(), verifier, clock, workflowRandom(16))
+	observer := &completionObserverStub{}
+	service, err := New(NewMemoryStore(), observer, clock, workflowRandom(16))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,18 +47,67 @@ func TestKindRoleMatrixDualControlAndReceiptGate(t *testing.T) {
 				t.Fatalf("approved=%+v err=%v want=%s", approved, err, want)
 			}
 			if want == ApprovedPendingChain {
-				receipt := testReceipt(workflow)
-				completed, err := service.Complete(t.Context(), "org_a", workflow.WorkflowID, receipt)
-				if err != nil || completed.State != Approved || completed.CompletionDigest == "" || verifier.calls != 1 {
-					t.Fatalf("completed=%+v err=%v verifier=%d", completed, err, verifier.calls)
+				completed, err := service.ObserveAndComplete(t.Context(), "org_a", workflow.WorkflowID)
+				if err != nil || completed.State != Approved || completed.CompletionDigest == "" || observer.calls != 1 {
+					t.Fatalf("completed=%+v err=%v observer=%d", completed, err, observer.calls)
 				}
-				replay, err := service.Complete(t.Context(), "org_a", workflow.WorkflowID, receipt)
-				if err != nil || !replay.Replayed || replay.CompletionDigest != completed.CompletionDigest {
+				replay, err := service.ObserveAndComplete(t.Context(), "org_a", workflow.WorkflowID)
+				if err != nil || !replay.Replayed || replay.CompletionDigest != completed.CompletionDigest || observer.calls != 1 {
 					t.Fatalf("completion replay=%+v err=%v", replay, err)
 				}
-				verifier.calls = 0
+				observer.calls = 0
 			}
 		})
+	}
+}
+
+func TestCompletionReceiptOwnershipIsAtomicAcrossWorkflows(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	observer := &completionObserverStub{transactionHash: testHash(900), logIndex: 7}
+	service, err := New(NewMemoryStore(), observer, func() time.Time { return now }, workflowRandom(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	createApproved := func(proposer, owner, key string) Workflow {
+		workflow, err := service.Create(t.Context(), actor(proposer, SignerOperator, now), "create_"+key,
+			CreateRequest{Kind: SignerCaps, PayloadHash: testHash(uint64(len(key) + 100))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		workflow, err = service.Approve(t.Context(), actor(owner, OrgAdmin, now), workflow.WorkflowID, "approve_"+key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return workflow
+	}
+	first := createApproved("signer_a", "owner_a", "a")
+	second := createApproved("signer_b", "owner_b", "bb")
+	if _, err := service.ObserveAndComplete(t.Context(), "org_a", first.WorkflowID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ObserveAndComplete(t.Context(), "org_a", second.WorkflowID); !errors.Is(err, ErrReceiptOwned) {
+		t.Fatalf("shared receipt ownership error=%v", err)
+	}
+	stored, err := service.Get(t.Context(), actor("owner_b", OrgAdmin, now), second.WorkflowID)
+	if err != nil || stored.State != ApprovedPendingChain {
+		t.Fatalf("conflicting receipt changed second workflow=%+v err=%v", stored, err)
+	}
+}
+
+func TestCompletionDigestIgnoresObservationTimeMetadata(t *testing.T) {
+	workflow := Workflow{WorkflowID: testHash(70), PayloadHash: testHash(71)}
+	first := testReceipt(workflow)
+	second := first
+	second.ConfirmedHead = first.ConfirmedHead + 50
+	second.FinalizedHead = first.FinalizedHead + 40
+	second.Observers = []string{"rpc_b", "rpc_c"}
+	second.EvidenceDigest = testHash(999)
+	if completionDigest(first) != completionDigest(second) {
+		t.Fatal("same canonical receipt received a provider-dependent completion identity")
+	}
+	second.LogIndex++
+	if completionDigest(first) == completionDigest(second) {
+		t.Fatal("different binding log received the same completion identity")
 	}
 }
 
@@ -171,10 +220,10 @@ func TestTwentyConcurrentWorkflowDecisionsHaveOneTerminalTransition(t *testing.T
 	}
 }
 
-func TestCompletionFailsClosedWhenIndependentVerifierRejectsReceipt(t *testing.T) {
+func TestCompletionFailsClosedWhenIndependentObserverRejectsReceipt(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
-	verifier := &completionVerifierStub{err: errors.New("receipt is not canonical")}
-	service, _ := New(NewMemoryStore(), verifier, func() time.Time { return now }, workflowRandom(2))
+	observer := &completionObserverStub{err: errors.New("receipt is not canonical")}
+	service, _ := New(NewMemoryStore(), observer, func() time.Time { return now }, workflowRandom(2))
 	workflow, err := service.Create(t.Context(), actor("signer", SignerOperator, now), "create_rejected", CreateRequest{Kind: SignerCaps, PayloadHash: testHash(20)})
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +232,7 @@ func TestCompletionFailsClosedWhenIndependentVerifierRejectsReceipt(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Complete(t.Context(), "org_a", workflow.WorkflowID, testReceipt(workflow)); !errors.Is(err, ErrInvalidReceipt) {
+	if _, err := service.ObserveAndComplete(t.Context(), "org_a", workflow.WorkflowID); !errors.Is(err, ErrInvalidReceipt) {
 		t.Fatalf("rejected completion error=%v", err)
 	}
 	stored, err := service.Get(t.Context(), actor("owner", OrgAdmin, now), workflow.WorkflowID)
@@ -192,14 +241,75 @@ func TestCompletionFailsClosedWhenIndependentVerifierRejectsReceipt(t *testing.T
 	}
 }
 
-type completionVerifierStub struct {
-	calls int
-	err   error
+func TestCompletionRejectsMalformedObserverOutputBeforePersistence(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	observer := &completionObserverStub{mutate: func(receipt *CompletionReceipt) {
+		receipt.EventSignature = testHash(404)
+	}}
+	service, _ := New(NewMemoryStore(), observer, func() time.Time { return now }, workflowRandom(2))
+	workflow, err := service.Create(t.Context(), actor("signer", SignerOperator, now), "create_malformed",
+		CreateRequest{Kind: SignerCaps, PayloadHash: testHash(405)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, err = service.Approve(t.Context(), actor("owner", OrgAdmin, now), workflow.WorkflowID, "approve_malformed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ObserveAndComplete(t.Context(), "org_a", workflow.WorkflowID); !errors.Is(err, ErrInvalidReceipt) {
+		t.Fatalf("malformed observer output error=%v", err)
+	}
+	stored, err := service.Get(t.Context(), actor("owner", OrgAdmin, now), workflow.WorkflowID)
+	if err != nil || stored.State != ApprovedPendingChain || stored.CompletionDigest != "" {
+		t.Fatalf("malformed output changed workflow=%+v err=%v", stored, err)
+	}
 }
 
-func (s *completionVerifierStub) VerifyWorkflowCompletion(_ context.Context, _ Workflow, _ CompletionReceipt) error {
+func TestCompletionRejectsObserverReceiptAtOrBeforeApproval(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	observer := &completionObserverStub{mutate: func(receipt *CompletionReceipt) {
+		receipt.BlockTimestamp = uint64(now.Unix())
+	}}
+	service, _ := New(NewMemoryStore(), observer, func() time.Time { return now }, workflowRandom(2))
+	workflow, err := service.Create(t.Context(), actor("signer", SignerOperator, now), "create_premature",
+		CreateRequest{Kind: SignerCaps, PayloadHash: testHash(406)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, err = service.Approve(t.Context(), actor("owner", OrgAdmin, now), workflow.WorkflowID, "approve_premature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ObserveAndComplete(t.Context(), "org_a", workflow.WorkflowID); !errors.Is(err, ErrInvalidReceipt) {
+		t.Fatalf("pre-approval observer output error=%v", err)
+	}
+}
+
+type completionObserverStub struct {
+	calls           int
+	err             error
+	transactionHash string
+	logIndex        uint64
+	mutate          func(*CompletionReceipt)
+}
+
+func (s *completionObserverStub) ObserveWorkflowCompletion(_ context.Context, workflow Workflow) (CompletionReceipt, error) {
 	s.calls++
-	return s.err
+	if s.err != nil {
+		return CompletionReceipt{}, s.err
+	}
+	receipt := testReceipt(workflow)
+	if s.transactionHash != "" {
+		receipt.TransactionHash = s.transactionHash
+	}
+	if s.logIndex != 0 {
+		receipt.LogIndex = s.logIndex
+		receipt.ActionLogIndexes = []uint64{s.logIndex - 1}
+	}
+	if s.mutate != nil {
+		s.mutate(&receipt)
+	}
+	return receipt, nil
 }
 
 func actor(id string, role Role, now time.Time) Actor {
@@ -211,8 +321,11 @@ func testHash(value uint64) string { return fmt.Sprintf("0x%064x", value) }
 func testReceipt(workflow Workflow) CompletionReceipt {
 	return CompletionReceipt{
 		WorkflowID: workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ChainID: 84532,
-		TransactionHash: testHash(10), BlockNumber: 100, BlockHash: testHash(11), LogIndex: 1,
-		ContractAddress: "0x1111111111111111111111111111111111111111", EventSignature: testHash(12), Finality: "FINALIZED",
+		TransactionHash: workflow.WorkflowID, BlockNumber: 100, BlockHash: testHash(11), BlockTimestamp: 1_800_000_001,
+		ConfirmedHead: 130, FinalizedHead: 120, LogIndex: 2,
+		ContractAddress: "0x1111111111111111111111111111111111111111", EventSignature: GovernanceWorkflowBoundTopic,
+		FunctionSelector: "0x12345678", ActionEventSignature: testHash(13), ActionLogIndexes: []uint64{1},
+		Observers: []string{"rpc_a", "rpc_b"}, EvidenceDigest: testHash(14), Finality: "FINALIZED",
 	}
 }
 
