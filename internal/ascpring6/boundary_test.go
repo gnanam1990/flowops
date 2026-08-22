@@ -111,6 +111,28 @@ func TestComponentBoundaryRejectsSocketReplacementAfterPinning(t *testing.T) {
 	}
 }
 
+func TestComponentBoundaryRejectsReplacementBetweenCheckAndDial(t *testing.T) {
+	path := filepath.Join(ringTempDir(t), "verifier.sock")
+	stopFirst := serveComponent(t, path, "verifier", func(*http.ServeMux) {})
+	defer stopFirst()
+	boundary, err := NewComponentBoundary("verifier", path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stopReplacement func()
+	_, err = boundary.dialPinned(context.Background(), func(ctx context.Context, network, address string) (net.Conn, error) {
+		stopFirst()
+		stopReplacement = serveComponent(t, path, "verifier", func(*http.ServeMux) {})
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	})
+	if stopReplacement != nil {
+		defer stopReplacement()
+	}
+	if err == nil {
+		t.Fatal("component replacement between validation and dial was accepted")
+	}
+}
+
 func TestComponentBoundaryRejectsDuplicateAndWrongHealthIdentity(t *testing.T) {
 	path := filepath.Join(ringTempDir(t), "hsm.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
@@ -137,6 +159,41 @@ func TestComponentBoundaryRejectsDuplicateAndWrongHealthIdentity(t *testing.T) {
 	hsm, _ := NewUnixHSM(boundary)
 	if _, err := hsm.Sign(context.Background(), HSMRequest{}); err == nil {
 		t.Fatal("duplicate component response accepted")
+	}
+}
+
+func TestComponentBoundaryPinLifecycle(t *testing.T) {
+	path := filepath.Join(ringTempDir(t), "verifier.sock")
+	stop := serveComponent(t, path, "verifier", func(*http.ServeMux) {})
+	defer stop()
+	boundary, err := NewComponentBoundary("verifier", path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source, err := inspectSocket(path); err != nil || source != boundary.identity {
+		t.Fatalf("source identity=%v err=%v", source, err)
+	}
+	if pin, err := inspectSocket(boundary.pinPath); err != nil || pin != boundary.identity {
+		t.Fatalf("pin identity=%v err=%v", pin, err)
+	}
+	if err := boundary.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(boundary.pinPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("component pin remained after close: %v", err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("component source removed with pin: %v", err)
+	}
+	if err := os.WriteFile(boundary.pinPath, []byte("operator-inspection"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewComponentBoundary("verifier", path, time.Second); err == nil {
+		t.Fatal("stale component pin was accepted")
+	}
+	content, err := os.ReadFile(boundary.pinPath)
+	if err != nil || string(content) != "operator-inspection" {
+		t.Fatalf("stale component pin changed: %q err=%v", content, err)
 	}
 }
 

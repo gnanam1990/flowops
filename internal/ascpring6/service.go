@@ -150,7 +150,7 @@ func (s *Service) VerifyAndSign(ctx context.Context, input ascpbearer.Activation
 		return nil, ErrBinding
 	}
 	if !exists || stored.State == "BOUND" {
-		if err := ascpbearer.ValidateActivationInput(input, now); err != nil {
+		if err := ascpbearer.ValidateActivationInputFreshness(input, now); err != nil {
 			return nil, err
 		}
 	}

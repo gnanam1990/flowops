@@ -75,7 +75,7 @@ func TestRunStartsFullRing6WirePathAndStopsCleanly(t *testing.T) {
 			writeRingJSON(w, map[string]any{"verified": true, "inputHash": request.InputHash})
 		})
 	})
-	defer verifier.Close()
+	defer func() { _ = verifier.Close() }()
 	hsm := startRingComponent(t, filepath.Join(directory, "hsm.sock"), "hsm", func(mux *http.ServeMux) {
 		mux.HandleFunc("POST /v1/sign", func(w http.ResponseWriter, r *http.Request) {
 			var envelope struct {
@@ -94,7 +94,7 @@ func TestRunStartsFullRing6WirePathAndStopsCleanly(t *testing.T) {
 			writeRingJSON(w, ascpring6.HSMResult{OperationHandle: "hsm-operation-1", Digest: envelope.Request.Digest, Signature: signature})
 		})
 	})
-	defer hsm.Close()
+	defer func() { _ = hsm.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
@@ -184,7 +184,7 @@ func startRingComponent(t *testing.T, path, boundary string, configure func(*htt
 	})
 	configure(mux)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second}
-	go server.Serve(listener)
+	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close(); _ = listener.Close() })
 	return server
 }

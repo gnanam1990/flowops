@@ -247,6 +247,16 @@ func TestServiceAllowsOnlyPersistedHSMReplayAfterFreshnessWindow(t *testing.T) {
 	if signature, err := service.VerifyAndSign(context.Background(), input); err != nil || len(signature) != 65 {
 		t.Fatalf("late persisted replay signature=%x err=%v", signature, err)
 	}
+	clock = now.Add(-2 * time.Minute)
+	if signature, err := service.VerifyAndSign(context.Background(), input); err != nil || len(signature) != 65 {
+		t.Fatalf("backward-clock persisted replay signature=%x err=%v", signature, err)
+	}
+	futureOnly := input
+	futureOnly.ActionID = "new-future-action"
+	if _, err := service.VerifyAndSign(context.Background(), futureOnly); !errors.Is(err, ascpbearer.ErrActivationInput) {
+		t.Fatalf("new future binding error=%v", err)
+	}
+	clock = now.Add(2 * time.Minute)
 	freshnessOnly := input
 	freshnessOnly.ActionID = "new-stale-action"
 	if _, err := service.VerifyAndSign(context.Background(), freshnessOnly); !errors.Is(err, ascpbearer.ErrActivationInput) {

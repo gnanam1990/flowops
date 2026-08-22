@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
@@ -22,31 +23,65 @@ import (
 const ComponentProtocol = "ASCP_RING6_COMPONENT_V1"
 
 type ComponentBoundary struct {
-	name, path string
-	identity   socketIdentity
-	client     *http.Client
+	name, path, pinPath string
+	identity            socketIdentity
+	client              *http.Client
+	closeOnce           sync.Once
+	closeErr            error
 }
 
 func NewComponentBoundary(name, path string, timeout time.Duration) (*ComponentBoundary, error) {
 	if name != "verifier" && name != "hsm" || !cleanAbsoluteSocket(path) || timeout < time.Second || timeout > 10*time.Second {
 		return nil, errors.New("Ring 6 component configuration is invalid")
 	}
-	identity, err := inspectSocket(path)
-	if err != nil {
+	if err := inspectSocketParent(path); err != nil {
+		return nil, fmt.Errorf("inspect Ring 6 %s component parent: %w", name, err)
+	}
+	if _, err := inspectSocket(path); err != nil {
 		return nil, fmt.Errorf("inspect Ring 6 %s component: %w", name, err)
 	}
+	pinPath := privateComponentPinPath(path, name)
+	if _, err := os.Lstat(pinPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("Ring 6 component pin path must not already exist")
+	}
+	if err := os.Link(path, pinPath); err != nil {
+		return nil, fmt.Errorf("pin Ring 6 %s component: %w", name, err)
+	}
+	pinIdentity, err := inspectSocket(pinPath)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Ring 6 %s component pin: %w", name, err)
+	}
+	identity, err := inspectSocket(path)
+	if err != nil || pinIdentity != identity {
+		return nil, errors.Join(errors.New("Ring 6 component pin identity mismatch"), err, unlinkPinnedSocket(pinPath, pinIdentity))
+	}
 	dialer := &net.Dialer{Timeout: min(timeout, 5*time.Second), KeepAlive: 30 * time.Second}
+	boundary := &ComponentBoundary{name: name, path: path, pinPath: pinPath, identity: identity}
 	transport := &http.Transport{
 		Proxy: nil, DisableCompression: true, MaxIdleConns: 2, MaxIdleConnsPerHost: 2,
 		IdleConnTimeout: 30 * time.Second, ResponseHeaderTimeout: timeout, MaxResponseHeaderBytes: 16 << 10,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "unix", path)
+			return boundary.dialPinned(ctx, dialer.DialContext)
 		},
 	}
-	return &ComponentBoundary{name: name, path: path, identity: identity, client: &http.Client{
+	boundary.client = &http.Client{
 		Transport: transport, Timeout: timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}}, nil
+	}
+	return boundary, nil
+}
+
+func (b *ComponentBoundary) Close() error {
+	if b == nil {
+		return nil
+	}
+	b.closeOnce.Do(func() {
+		if b.client != nil {
+			b.client.CloseIdleConnections()
+		}
+		b.closeErr = unlinkPinnedSocket(b.pinPath, b.identity)
+	})
+	return b.closeErr
 }
 
 func (b *ComponentBoundary) Check(ctx context.Context) error {
@@ -205,27 +240,43 @@ func (b *ComponentBoundary) call(ctx context.Context, method, endpoint string, i
 }
 
 func (b *ComponentBoundary) inspectPinned() (socketIdentity, error) {
+	pinIdentity, err := inspectSocket(b.pinPath)
+	if err != nil {
+		return socketIdentity{}, err
+	}
+	if pinIdentity.device != b.identity.device || pinIdentity.inode != b.identity.inode {
+		return socketIdentity{}, errors.New("Ring 6 component pin identity changed")
+	}
 	identity, err := inspectSocket(b.path)
 	if err != nil {
 		return socketIdentity{}, err
 	}
-	if identity != b.identity {
+	if identity != pinIdentity {
 		return socketIdentity{}, errors.New("Ring 6 component socket identity changed")
 	}
 	return identity, nil
 }
 
-func inspectSocket(path string) (socketIdentity, error) {
-	parent, err := securefile.OpenDirectory(filepath.Dir(path))
+func (b *ComponentBoundary) dialPinned(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	if _, err := b.inspectPinned(); err != nil {
+		return nil, fmt.Errorf("validate Ring 6 %s component before dial: %w", b.name, err)
+	}
+	connection, err := dial(ctx, "unix", b.path)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := b.inspectPinned(); err != nil {
+		_ = connection.Close()
+		return nil, fmt.Errorf("validate Ring 6 %s component after dial: %w", b.name, err)
+	}
+	return connection, nil
+}
+
+func inspectSocket(path string) (socketIdentity, error) {
+	if err := inspectSocketParent(path); err != nil {
 		return socketIdentity{}, err
 	}
-	defer func() { _ = parent.Close() }()
-	info, err := parent.Stat()
-	if err != nil || info.Mode().Perm() != 0o700 || !securefile.OwnerAllowed(info) {
-		return socketIdentity{}, errors.New("Ring 6 socket parent must be private and owner controlled")
-	}
-	info, err = os.Lstat(path)
+	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 || !securefile.OwnerAllowed(info) {
 		return socketIdentity{}, errors.New("Ring 6 component must be a private owner-controlled Unix socket")
 	}
@@ -234,4 +285,17 @@ func inspectSocket(path string) (socketIdentity, error) {
 		return socketIdentity{}, errors.New("Ring 6 component identity unavailable")
 	}
 	return identity, nil
+}
+
+func inspectSocketParent(path string) error {
+	parent, err := securefile.OpenDirectory(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	info, err := parent.Stat()
+	if err != nil || info.Mode().Perm() != 0o700 || !securefile.OwnerAllowed(info) {
+		return errors.New("Ring 6 socket parent must be private and owner controlled")
+	}
+	return nil
 }

@@ -634,7 +634,14 @@ func (s *ActivationStore) Get(ctx context.Context, requestID string) (Activation
 }
 
 func validateActivationInput(input ActivationInput, now time.Time) error {
-	if err := validateActivationInputReplay(input, now); err != nil || input.ValidAfter.Before(now.Add(-time.Minute)) {
+	if err := validateActivationInputReplay(input, now); err != nil {
+		return ErrActivationInput
+	}
+	return validateActivationInputFreshness(input, now)
+}
+
+func validateActivationInputFreshness(input ActivationInput, now time.Time) error {
+	if input.ValidAfter.Before(now.Add(-time.Minute)) || input.ValidAfter.After(now.Add(time.Minute)) {
 		return ErrActivationInput
 	}
 	return nil
@@ -649,7 +656,7 @@ func validateActivationInputReplay(input ActivationInput, now time.Time) error {
 		!hash(input.Nonce) || input.InstrumentType != InstrumentLockAuthorization || input.SignerBindingVersion == 0 ||
 		!identifier(input.SignerKeyID) || input.KeyEpoch == 0 || !address(input.ModuleAddress) ||
 		!address(input.SafeAddress) || !identifier(input.KeeperID) || input.ValidAfter.IsZero() ||
-		input.ValidUntil.IsZero() || input.ValidAfter.After(now.Add(time.Minute)) ||
+		input.ValidUntil.IsZero() ||
 		!input.ValidAfter.Before(input.ValidUntil) || !now.Before(input.ValidUntil) ||
 		input.ValidUntil.Sub(input.ValidAfter) > maximumAuthorizationWindow {
 		return ErrActivationInput
@@ -670,6 +677,12 @@ func ValidateActivationInput(input ActivationInput, now time.Time) error {
 // before relying on this replay-only validation.
 func ValidateActivationInputReplay(input ActivationInput, now time.Time) error {
 	return validateActivationInputReplay(input, now.UTC())
+}
+
+// ValidateActivationInputFreshness reapplies only the one-minute intake clock
+// bound after the complete replay-safe validation has already succeeded.
+func ValidateActivationInputFreshness(input ActivationInput, now time.Time) error {
+	return validateActivationInputFreshness(input, now.UTC())
 }
 
 // CanonicalPayloadHash is the module-facing calldataHash:

@@ -32,7 +32,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context) error {
+func run(ctx context.Context) (returnErr error) {
 	config, err := loadConfig()
 	if err != nil {
 		return err
@@ -41,10 +41,12 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer func() { returnErr = errors.Join(returnErr, verifierBoundary.Close()) }()
 	hsmBoundary, err := ascpring6.NewComponentBoundary("hsm", config.hsmSocket, config.dependencyTimeout)
 	if err != nil {
 		return err
 	}
+	defer func() { returnErr = errors.Join(returnErr, hsmBoundary.Close()) }()
 	if err := ascpring6.ValidateComponentSockets(verifierBoundary, hsmBoundary); err != nil {
 		return err
 	}
@@ -57,7 +59,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer journal.Close()
+	defer func() { returnErr = errors.Join(returnErr, journal.Close()) }()
 	verifier, err := ascpring6.NewUnixVerifier(verifierBoundary)
 	if err != nil {
 		return err
@@ -133,7 +135,10 @@ func loadConfig() (startupConfig, error) {
 		}
 		seen[path] = struct{}{}
 	}
-	for _, path := range []string{config.runtimeSocket, config.verifierSocket, config.hsmSocket} {
+	if !ascpring6.ValidRuntimeSocketPath(config.runtimeSocket) {
+		return startupConfig{}, errors.New("Ring 6 runtime socket path cannot fit its private publish path")
+	}
+	for _, path := range []string{config.verifierSocket, config.hsmSocket} {
 		if !ascpring6.ValidSocketPath(path) {
 			return startupConfig{}, errors.New("Ring 6 socket paths must fit the Unix socket address limit")
 		}

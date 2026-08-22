@@ -89,9 +89,13 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- service.ServeUnix(ctx, UnixConfig{Socket: socket, RequestTimeout: time.Second}) }()
 	waitForSocket(t, socket)
+	waitForRuntimeHealth(t, socket)
 	info, err := os.Lstat(socket)
 	if err != nil || info.Mode().Perm() != 0o600 || info.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("socket info=%v err=%v", info, err)
+	}
+	if _, err := os.Lstat(privateBindPath(socket)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private publish link remained after startup: %v", err)
 	}
 	client := unixHTTPClient(socket)
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://unix/healthz", nil)
@@ -119,6 +123,7 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 		restarted <- service.ServeUnix(restartCtx, UnixConfig{Socket: socket, RequestTimeout: time.Second})
 	}()
 	waitForSocket(t, socket)
+	waitForRuntimeHealth(t, socket)
 	restartCancel()
 	if err := <-restarted; err != nil {
 		t.Fatalf("same-path restart failed: %v", err)
@@ -134,6 +139,18 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 	content, err := os.ReadFile(existing)
 	if err != nil || string(content) != "do-not-remove" {
 		t.Fatalf("existing path changed: %q err=%v", content, err)
+	}
+	staleTarget := filepath.Join(directory, "stale.sock")
+	staleBind := privateBindPath(staleTarget)
+	if err := os.WriteFile(staleBind, []byte("operator-inspection"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ServeUnix(context.Background(), UnixConfig{Socket: staleTarget, RequestTimeout: time.Second}); err == nil {
+		t.Fatal("stale private publish path was accepted")
+	}
+	content, err = os.ReadFile(staleBind)
+	if err != nil || string(content) != "operator-inspection" {
+		t.Fatalf("stale private publish path changed: %q err=%v", content, err)
 	}
 }
 
@@ -157,6 +174,7 @@ func TestServeUnixAllowsSequentialDependencyBudgets(t *testing.T) {
 	result := make(chan error, 1)
 	go func() { result <- service.ServeUnix(ctx, UnixConfig{Socket: socket, RequestTimeout: time.Second}) }()
 	waitForSocket(t, socket)
+	waitForRuntimeHealth(t, socket)
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -253,6 +271,45 @@ func TestPrivateUnixListenerPreservesReplacementPathOnClose(t *testing.T) {
 	}
 }
 
+func TestServeUnixReportsReplacementPathOnShutdown(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	key, _ := crypto.GenerateKey()
+	directory := ringTempDir(t)
+	journal, err := OpenJournal(context.Background(), filepath.Join(directory, "ring6.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = journal.Close() }()
+	service := ringService(t, journal, &testVerifier{}, &deterministicHSM{
+		key: crypto.FromECDSA(key), operations: map[string]HSMResult{},
+	}, key, now)
+	socket := filepath.Join(directory, "reported.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- service.ServeUnix(ctx, UnixConfig{Socket: socket, RequestTimeout: time.Second}) }()
+	waitForSocket(t, socket)
+	waitForRuntimeHealth(t, socket)
+	if err := os.Remove(socket); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(socket, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "no longer identifies this listener") {
+			t.Fatalf("replacement shutdown error=%v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runtime did not report replacement on shutdown")
+	}
+	content, err := os.ReadFile(socket)
+	if err != nil || string(content) != "replacement" {
+		t.Fatalf("reported replacement changed: %q err=%v", content, err)
+	}
+}
+
 func serveJSON(handler http.Handler, body []byte) *httptest.ResponseRecorder {
 	request := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/verify-and-sign", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -271,6 +328,32 @@ func waitForSocket(t *testing.T, path string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("Unix socket was not created")
+}
+
+func waitForRuntimeHealth(t *testing.T, path string) {
+	t.Helper()
+	client := unixHTTPClient(path)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/healthz", nil)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			cancel()
+			if response.StatusCode == http.StatusOK {
+				return
+			}
+		} else {
+			cancel()
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("Ring 6 runtime health did not become ready")
 }
 
 func unixHTTPClient(path string) *http.Client {

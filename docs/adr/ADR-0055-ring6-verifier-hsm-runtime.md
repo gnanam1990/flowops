@@ -32,17 +32,22 @@ on one provider operation.
   cancellation, and timeouts remain nonterminal. Once `HSM_REQUESTED` is
   durable, no later verifier response can terminalize the action as refused.
 - Pin each component socket's startup device/inode/change-time identity for its
-  process lifetime. The change-time generation prevents immediate inode reuse
-  from authenticating a same-path replacement, which fails closed before
-  request bytes are sent.
+  process lifetime with a hidden hard link that prevents immediate inode reuse.
+  Validate the source against that pin before a call and after establishing
+  every new connection, closing the check-before-connect replacement race.
+  Remove only the pinned inode on graceful shutdown; preserve a stale or
+  substituted pin for operator inspection.
 - Reapply intake freshness while an action is new or merely `BOUND`. Exact
   `HSM_REQUESTED`/`SIGNED` recovery skips repeated verification and may replay
   the same provider operation until `ValidUntil`.
 - Refuse existing listener paths and insecure or symlinked ancestors. Bound all
   JSON to 2 MiB and reject duplicate keys, unknown fields, trailing values,
   excessive nesting, wrong content type, and protocol/health substitution.
+  Create the listener at a private same-directory name and atomically hard-link
+  it to the final name only after mode and identity validation; this avoids
+  platform-specific socket-FD inode assumptions during publication.
   On shutdown, remove only the exact socket identity created by this process;
-  preserve and report any replacement path.
+  preserve a replacement path and return the mismatch as a runtime error.
 
 ## Consequences
 

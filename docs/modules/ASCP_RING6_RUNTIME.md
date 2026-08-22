@@ -28,9 +28,10 @@ After `HSM_REQUESTED`, an ambiguous call may have created a signature, so no
 later verifier refusal is classified as permanent. The action stays recoverable
 through the same HSM idempotency key. A refusal is exposed to the caller only
 after its `REFUSED` journal transition is fsynced successfully.
-The one-minute intake freshness bound is retained for new and `BOUND` actions.
-An exact persisted `HSM_REQUESTED` or `SIGNED` operation is recovered without
-repeating verifier work and remains replayable only until `ValidUntil`.
+The one-minute past/future intake freshness bound is retained for new and
+`BOUND` actions. An exact persisted `HSM_REQUESTED` or `SIGNED` operation is
+recovered without repeating verifier work and remains replayable only until
+`ValidUntil`, even if the runtime clock moves behind `ValidAfter`.
 
 ## Trust boundaries
 
@@ -40,10 +41,13 @@ directories. Their paths and device/inode/change-time identities must differ.
 Each exposes exact health JSON using `ASCP_RING6_COMPONENT_V1` and boundary
 `verifier` or `hsm`.
 The runtime pins each component socket's startup device/inode/change-time
-identity and requires that identity before every call. Including filesystem
-change time prevents immediate inode-number reuse from authenticating a
-replacement socket; replacing a socket at the same path requires an explicit
-runtime restart.
+identity with a same-directory hidden hard link. Keeping that link prevents an
+unlinked component inode from being freed and immediately reused. The source
+path must still match the pin before every call and again after every new
+connection is established, closing the check-before-connect race. Graceful
+shutdown removes only the pinned inode; an existing pin blocks startup for
+operator inspection. Replacing a component requires an explicit runtime
+restart.
 
 - `POST /v1/verify` receives `{protocol,input,inputHash}` and returns
   `{verified:true,inputHash}`. Exact HTTP `422` `{code}` is the only permanent
@@ -93,7 +97,16 @@ call retains the configured one-to-ten-second bound. It refuses any startup
 path that already exists. Graceful shutdown unlinks only
 the exact device/inode/change-time identity created by that process, allowing
 safe same-path restart while preserving a replacement path for operator
-inspection.
+inspection. A replacement detected during shutdown is returned as a runtime
+error rather than discarded.
+
+The runtime listener is created under a deterministic same-length private bind
+name, changed to `0600`, and atomically hard-linked to the configured final
+name. Both names must identify the same full filesystem identity before the
+private link is removed and the final identity is pinned. An existing private
+bind name is preserved and blocks startup for operator inspection. This avoids
+depending on platform-specific socket-FD inode metadata and closes the
+bind/chmod/publication reuse window on both Linux and macOS.
 
 ## Verification and production gates
 

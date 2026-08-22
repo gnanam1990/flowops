@@ -5,9 +5,9 @@ import (
 	"reflect"
 )
 
-// socketIdentity includes the inode change generation so an immediately
-// recreated Unix socket cannot pass a device/inode-only pin when the filesystem
-// reuses the just-freed inode number.
+// socketIdentity captures the filesystem generation as well as device/inode.
+// Long-lived component pins additionally keep the original inode allocated;
+// runtime publication compares the full identity at each transition.
 type socketIdentity struct {
 	device, inode       uint64
 	changeSec, changeNS int64
@@ -51,10 +51,6 @@ func identityFromFileInfo(info os.FileInfo) (socketIdentity, bool) {
 		return socketIdentity{}, false
 	}
 	return socketIdentity{device: device, inode: inode, changeSec: seconds, changeNS: nanoseconds}, true
-}
-
-func sameSocketObject(left, right socketIdentity) bool {
-	return left.device == right.device && left.inode == right.inode
 }
 
 func unsignedStatField(value reflect.Value, name string) (uint64, bool) {
