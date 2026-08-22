@@ -163,6 +163,32 @@ func TestGovernancePayloadRejectsDomainAndValueSubstitution(t *testing.T) {
 	}
 }
 
+func TestDirectoryAndRegistryAuthorityPayloadsBindDomainSelectorAndCurrentState(t *testing.T) {
+	current := "0x2222222222222222222222222222222222222222"
+	next := "0x3333333333333333333333333333333333333333"
+	publisher := mustHash(t, func() (common.Hash, error) {
+		return DirectorySetPublisher(8453, vectorContract, vectorWorkflow, current, 7, next)
+	})
+	pauser := mustHash(t, func() (common.Hash, error) {
+		return DirectorySetPauser(8453, vectorContract, vectorWorkflow, current, 7, next)
+	})
+	registry := mustHash(t, func() (common.Hash, error) {
+		return AgentSetRegistryAdmin(8453, vectorContract, vectorWorkflow, current, 7, next)
+	})
+	if publisher == pauser || publisher == registry || pauser == registry {
+		t.Fatal("authority payload domains and selectors must not collide")
+	}
+	if _, err := DirectorySetPublisher(8453, vectorContract, vectorWorkflow, current, 7, current); !errors.Is(err, ErrInvalidPayload) {
+		t.Fatalf("unchanged authority error=%v", err)
+	}
+	if _, err := DirectoryPauseSeller(8453, vectorContract, vectorWorkflow, hashValue(12), true, true); !errors.Is(err, ErrInvalidPayload) {
+		t.Fatalf("unchanged seller overlay error=%v", err)
+	}
+	if _, err := DirectoryQuoteKeyRevocation(8453, vectorContract, vectorWorkflow, current, false, false); !errors.Is(err, ErrInvalidPayload) {
+		t.Fatalf("unchanged quote-key overlay error=%v", err)
+	}
+}
+
 func mustHash(t *testing.T, source func() (common.Hash, error)) string {
 	t.Helper()
 	value, err := source()

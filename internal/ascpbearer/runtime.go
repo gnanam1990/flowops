@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
 )
 
 var (
@@ -49,16 +51,24 @@ type runtimeRepository interface {
 }
 
 type RuntimeClaim struct {
-	WorkerID      string
-	SignerKeyID   string
-	KeyEpoch      uint64
-	KeeperID      string
-	LeaseDuration time.Duration
+	WorkerID       string
+	OrganizationID string
+	SignerKeyID    string
+	KeyEpoch       uint64
+	KeeperID       string
+	LeaseDuration  time.Duration
 }
 
 type RuntimeConfig struct {
-	Claim      RuntimeClaim
-	RetryDelay time.Duration
+	Claim           RuntimeClaim
+	RetryDelay      time.Duration
+	OrganizationID  string
+	LeadershipEpoch uint64
+	Leadership      RuntimeLeadershipGate
+}
+
+type RuntimeLeadershipGate interface {
+	FenceSink(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error
 }
 
 type RuntimeStep struct {
@@ -82,6 +92,13 @@ func NewRuntimeService(store runtimeRepository, signer RuntimeSigner, mirror Pri
 		config.RetryDelay < time.Second || config.RetryDelay > time.Hour {
 		return nil, ErrActivationInput
 	}
+	leadershipConfigured := config.Leadership != nil || config.OrganizationID != "" || config.LeadershipEpoch != 0
+	if leadershipConfigured && (config.Leadership == nil || !identifier(config.OrganizationID) || config.LeadershipEpoch == 0) {
+		return nil, ErrActivationInput
+	}
+	if leadershipConfigured && config.Claim.OrganizationID != config.OrganizationID {
+		return nil, ErrActivationInput
+	}
 	coordinator, err := NewCoordinator(store, signer, mirror)
 	if err != nil {
 		return nil, err
@@ -95,7 +112,21 @@ func (s *RuntimeService) AdvanceOnce(ctx context.Context) (RuntimeStep, bool, er
 		return RuntimeStep{}, ok, err
 	}
 	leasedCtx := withRuntimeLease(ctx, lease)
-	request, err := s.coordinator.Advance(leasedCtx, lease.Request.RequestID)
+	var request ActivationRequest
+	advance := func(fencedContext context.Context) error {
+		var advanceErr error
+		request, advanceErr = s.coordinator.Advance(fencedContext, lease.Request.RequestID)
+		return advanceErr
+	}
+	if s.config.Leadership != nil {
+		sink := ascpleadership.SinkOutboxDispatch
+		if lease.Request.State == SignRequested {
+			sink = ascpleadership.SinkSignerIssuance
+		}
+		err = s.config.Leadership.FenceSink(leasedCtx, s.config.OrganizationID, s.config.LeadershipEpoch, sink, advance)
+	} else {
+		err = advance(leasedCtx)
+	}
 	if err != nil {
 		if permanentSignerRefusal(err) {
 			request, refuseErr := s.store.Refuse(leasedCtx, lease, "SIGNER_REFUSED")

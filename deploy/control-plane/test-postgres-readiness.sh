@@ -13,7 +13,7 @@ for required in \
     'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public' \
     'GRANT SELECT, INSERT, UPDATE ON commands' \
     'GRANT SELECT, INSERT ON audit_events, control_events' \
-    'GRANT SELECT, INSERT ON ascp_intents, ascp_policy_decisions, ascp_execution_authorizations' \
+    'GRANT SELECT, INSERT ON ascp_intents, ascp_financial_tombstones, ascp_policy_decisions, ascp_execution_authorizations' \
 	'GRANT SELECT, INSERT ON ascp_adaptation_grants' \
 	'GRANT UPDATE (state, remaining_attempts, consumed_operation_id, consumed_at)' \
 	'GRANT SELECT, INSERT ON ascp_proposal_workflows, ascp_workflow_actions' \
@@ -26,6 +26,8 @@ for required in \
 	'GRANT UPDATE (state) ON ascp_bearer_handles' \
 	'GRANT UPDATE (outcome)' \
 	'GRANT SELECT ON ascp_payment_operations' \
+	'GRANT SELECT ON ascp_capacity_counters, ascp_capacity_admissions' \
+	'GRANT EXECUTE ON FUNCTION public.ascp_acquire_capacity(text,text,integer,timestamptz)' \
 	'GRANT SELECT, INSERT ON ascp_payment_attempts, ascp_chain_observations' \
 	'GRANT SELECT, INSERT ON ascp_keeper_jobs' \
 	'GRANT SELECT ON ascp_seller_jobs, ascp_seller_responses' \
@@ -67,12 +69,15 @@ keeper_contract_is_complete() {
 		allowed["REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA PUBLIC FROM :\"KEEPER_ROLE\""]=1
 		allowed["ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC"]=1
 		allowed["GRANT SELECT, INSERT ON PUBLIC.ASCP_KEEPER_JOBS, PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES, PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\""]=1
-		allowed["GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS, PUBLIC.ASCP_KEEPER_RELAY_EFFECTS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT INSERT (EFFECT_ID,ORGANIZATION_ID,EPOCH,SINK,STATE,STARTED_AT) ON PUBLIC.ASCP_KEEPER_RELAY_EFFECTS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT UPDATE (STATE,RESOLVED_AT) ON PUBLIC.ASCP_KEEPER_RELAY_EFFECTS TO :\"KEEPER_ROLE\""]=1
+		allowed["GRANT INSERT (REJECTION_ID,ORGANIZATION_ID,SINK,PRESENTED_EPOCH,OBSERVED_EPOCH,OBSERVED_STATE,REJECTED_AT) ON PUBLIC.ASCP_KEEPER_RELAY_REJECTIONS TO :\"KEEPER_ROLE\""]=1
 		allowed["GRANT UPDATE (LEASE_OWNER, LEASE_TOKEN, LEASE_EXPIRES_AT, NONCE, STATE, ATTEMPT_COUNT, CURRENT_ATTEMPT, LAST_ERROR, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_JOBS TO :\"KEEPER_ROLE\""]=1
 		allowed["GRANT UPDATE (NEXT_NONCE, UPDATED_AT) ON PUBLIC.ASCP_KEEPER_NONCE_SEQUENCES TO :\"KEEPER_ROLE\""]=1
 		allowed["GRANT UPDATE (STATE, BROADCAST_AT, LAST_ERROR, EVIDENCE_DIGEST, OBSERVED_AT) ON PUBLIC.ASCP_KEEPER_TX_ATTEMPTS TO :\"KEEPER_ROLE\""]=1
 		allowed["COMMIT"]=1
-		expected_count=23
+		expected_count=26
 	}
 	function normalize(raw, lines, count, idx, line, result) {
 		count=split(raw, lines, "\n")
@@ -134,17 +139,41 @@ if sed 's/^REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC;/-
 	exit 1
 fi
 
+asset_health_grant_file=deploy/control-plane/configure-asset-health-role.sql
+for required in \
+	'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT' \
+	'asset_health_role must not participate in role memberships' \
+	'asset_health_role must not own database objects' \
+	'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC' \
+	'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
+	'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
+	'ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC' \
+	'GRANT SELECT, INSERT ON ascp_asset_health' \
+	'GRANT UPDATE (state,epoch,evidence_digest,providers,finalized_block,observed_at,updated_at)' \
+	'ascp_asset_health_observations, ascp_asset_recovery_proofs' \
+	'GRANT SELECT ON ascp_payment_operations, ascp_payment_attempts, ascp_ledger_transactions'
+do
+	grep -F "$required" "$asset_health_grant_file" >/dev/null
+done
+if grep -Eiq 'GRANT[[:space:]]+(ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)([[:space:],]|$)|GRANT[[:space:]]+UPDATE[[:space:]]+ON' "$asset_health_grant_file"; then
+	echo "asset health role contains a forbidden broad privilege" >&2
+	exit 1
+fi
+
 rails_grant_file=deploy/control-plane/configure-rails-role.sql
 for required in \
     'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
 	'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
 	'GRANT SELECT ON ascp_seller_jobs, ascp_seller_attempts, ascp_seller_responses' \
-	'ascp_leadership_effects TO :"rails_role"' \
+	'ascp_seller_proxy_egress_effects TO :"rails_role"' \
 	'GRANT SELECT ON ascp_payment_operations' \
 	'GRANT SELECT ON ascp_leadership_epochs' \
     'GRANT INSERT ON ascp_seller_attempts, ascp_seller_responses' \
-	'GRANT INSERT (effect_id,organization_id,epoch,state,started_at)' \
-	'GRANT UPDATE (state,resolved_at) ON ascp_leadership_effects' \
+	'GRANT INSERT (effect_id,organization_id,epoch,sink,state,started_at)' \
+	'ON ascp_seller_proxy_egress_effects TO :"rails_role"' \
+	'GRANT INSERT (rejection_id,organization_id,sink,presented_epoch,observed_epoch,observed_state,rejected_at)' \
+	'ON ascp_seller_proxy_egress_rejections TO :"rails_role"' \
+	'GRANT UPDATE (state,resolved_at) ON ascp_seller_proxy_egress_effects' \
 	'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM PUBLIC' \
 	'REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM :"rails_role"' \
 	'GRANT EXECUTE ON FUNCTION public.ascp_current_event_head()' \
@@ -230,6 +259,13 @@ for required in \
     'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC' \
     'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC' \
     'GRANT SELECT ON ascp_leadership_epochs, ascp_leadership_events, ascp_leadership_effects' \
+	'ascp_leadership_rejections, ascp_promotion_runs TO :"leadership_role"' \
+	'GRANT SELECT (operation_id,organization_id) ON ascp_intents' \
+	'GRANT SELECT (operation_id,outcome) ON ascp_bearer_registry' \
+	'GRANT SELECT (call_id,decision_json) ON ascp_verdict_decisions' \
+	'GRANT SELECT (call_id,organization_id) ON ascp_payment_operations' \
+	'GRANT INSERT (run_id,organization_id,source_epoch,target_epoch,state,finality_margin_seconds' \
+	'GRANT UPDATE (state,ready_evidence_digest,ready_at,cutover_at,completion_evidence_digest,completed_at)' \
     'GRANT INSERT (organization_id,epoch,state,evidence_digest,actor,updated_at)' \
     'GRANT INSERT (organization_id,previous_epoch,new_epoch,previous_state,new_state,evidence_digest,actor,created_at)' \
     'GRANT UPDATE (epoch,state,evidence_digest,actor,updated_at)' \
@@ -249,11 +285,17 @@ leadership_grants_are_safe() {
         sub(/^ /, "", statement)
         sub(/ $/, "", statement)
         if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"LEADERSHIP_ROLE\"") next
-        if (statement == "GRANT SELECT ON ASCP_LEADERSHIP_EPOCHS, ASCP_LEADERSHIP_EVENTS, ASCP_LEADERSHIP_EFFECTS TO :\"LEADERSHIP_ROLE\"") next
+        if (statement == "GRANT SELECT ON ASCP_LEADERSHIP_EPOCHS, ASCP_LEADERSHIP_EVENTS, ASCP_LEADERSHIP_EFFECTS, ASCP_LEADERSHIP_REJECTIONS, ASCP_PROMOTION_RUNS TO :\"LEADERSHIP_ROLE\"") next
+		if (statement == "GRANT SELECT (OPERATION_ID,ORGANIZATION_ID) ON ASCP_INTENTS TO :\"LEADERSHIP_ROLE\"") next
+		if (statement == "GRANT SELECT (OPERATION_ID,OUTCOME) ON ASCP_BEARER_REGISTRY TO :\"LEADERSHIP_ROLE\"") next
+		if (statement == "GRANT SELECT (CALL_ID,DECISION_JSON) ON ASCP_VERDICT_DECISIONS TO :\"LEADERSHIP_ROLE\"") next
+		if (statement == "GRANT SELECT (CALL_ID,ORGANIZATION_ID) ON ASCP_PAYMENT_OPERATIONS TO :\"LEADERSHIP_ROLE\"") next
         if (statement == "GRANT INSERT (ORGANIZATION_ID,EPOCH,STATE,EVIDENCE_DIGEST,ACTOR,UPDATED_AT) ON ASCP_LEADERSHIP_EPOCHS TO :\"LEADERSHIP_ROLE\"") next
         if (statement == "GRANT INSERT (ORGANIZATION_ID,PREVIOUS_EPOCH,NEW_EPOCH,PREVIOUS_STATE,NEW_STATE,EVIDENCE_DIGEST,ACTOR,CREATED_AT) ON ASCP_LEADERSHIP_EVENTS TO :\"LEADERSHIP_ROLE\"") next
         if (statement == "GRANT UPDATE (EPOCH,STATE,EVIDENCE_DIGEST,ACTOR,UPDATED_AT) ON ASCP_LEADERSHIP_EPOCHS TO :\"LEADERSHIP_ROLE\"") next
         if (statement == "GRANT UPDATE (STATE,RESOLVED_AT,RESOLUTION_ACTOR,RESOLUTION_EVIDENCE_DIGEST) ON ASCP_LEADERSHIP_EFFECTS TO :\"LEADERSHIP_ROLE\"") next
+		if (statement == "GRANT INSERT (RUN_ID,ORGANIZATION_ID,SOURCE_EPOCH,TARGET_EPOCH,STATE,FINALITY_MARGIN_SECONDS, DRAIN_EVIDENCE_DIGEST,STARTED_AT) ON ASCP_PROMOTION_RUNS TO :\"LEADERSHIP_ROLE\"") next
+		if (statement == "GRANT UPDATE (STATE,READY_EVIDENCE_DIGEST,READY_AT,CUTOVER_AT,COMPLETION_EVIDENCE_DIGEST,COMPLETED_AT) ON ASCP_PROMOTION_RUNS TO :\"LEADERSHIP_ROLE\"") next
         if (statement == "GRANT USAGE, SELECT ON SEQUENCE ASCP_LEADERSHIP_EVENTS_EVENT_ID_SEQ TO :\"LEADERSHIP_ROLE\"") next
         exit 1
     }' "$@"
@@ -292,13 +334,19 @@ printf '%s\n' 'GRANT UPDATE (state,resolved_at,resolution_actor,resolution_evide
 checkpointer_grant_file=deploy/control-plane/configure-checkpointer-role.sql
 for required in \
     'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS' \
-    'GRANT SELECT ON ascp_events' \
-    'GRANT SELECT, INSERT ON ascp_event_checkpoints'
+	'GRANT SELECT ON ascp_events' \
+	'GRANT SELECT, INSERT ON ascp_event_checkpoints' \
+	'GRANT SELECT ON ascp_leadership_epochs, ascp_checkpoint_write_effects' \
+	'GRANT INSERT (effect_id,organization_id,epoch,sink,state,started_at)' \
+	'ON ascp_checkpoint_write_effects TO :"checkpointer_role"' \
+	'GRANT UPDATE (state,resolved_at) ON ascp_checkpoint_write_effects' \
+	'GRANT INSERT (rejection_id,organization_id,sink,presented_epoch,observed_epoch,observed_state,rejected_at)' \
+	'ON ascp_checkpoint_write_rejections TO :"checkpointer_role"'
 do
     grep -F "$required" "$checkpointer_grant_file" >/dev/null
 done
 
-if grep -Eq 'GRANT (ALL|DELETE|UPDATE|TRUNCATE|TRIGGER|REFERENCES)' "$checkpointer_grant_file"; then
+if grep -Eq 'GRANT (ALL|DELETE|TRUNCATE|TRIGGER|REFERENCES)|GRANT UPDATE ON' "$checkpointer_grant_file"; then
     echo "checkpointer grant script contains a forbidden broad privilege" >&2
     exit 1
 fi
@@ -446,6 +494,11 @@ verifier_grants_are_safe() {
         if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT SELECT, INSERT ON PUBLIC.ASCP_VERDICT_DECISIONS TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT SELECT ON PUBLIC.ASCP_VERIFIER_KEY_OBSERVATIONS_V2 TO :\"VERIFIER_ROLE\"") next
+		if (statement == "GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS, PUBLIC.ASCP_VERIFIER_ATTESTATION_EFFECTS TO :\"VERIFIER_ROLE\"") next
+		if (statement == "GRANT SELECT (OPERATION_ID,ORGANIZATION_ID) ON PUBLIC.ASCP_INTENTS TO :\"VERIFIER_ROLE\"") next
+		if (statement == "GRANT INSERT (EFFECT_ID,ORGANIZATION_ID,EPOCH,SINK,STATE,STARTED_AT) ON PUBLIC.ASCP_VERIFIER_ATTESTATION_EFFECTS TO :\"VERIFIER_ROLE\"") next
+		if (statement == "GRANT UPDATE (STATE,RESOLVED_AT) ON PUBLIC.ASCP_VERIFIER_ATTESTATION_EFFECTS TO :\"VERIFIER_ROLE\"") next
+		if (statement == "GRANT INSERT (REJECTION_ID,ORGANIZATION_ID,SINK,PRESENTED_EPOCH,OBSERVED_EPOCH,OBSERVED_STATE,REJECTED_AT) ON PUBLIC.ASCP_VERIFIER_ATTESTATION_REJECTIONS TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT INSERT ON PUBLIC.ASCP_VERIFIER_INTAKE_REPLAYS TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT USAGE, SELECT ON SEQUENCE PUBLIC.ASCP_VERDICT_NONCE_SEQ TO :\"VERIFIER_ROLE\"") next
         if (statement == "GRANT EXECUTE ON FUNCTION PUBLIC.PRUNE_ASCP_VERIFIER_INTAKE_REPLAYS() TO :\"VERIFIER_ROLE\"") next
@@ -497,6 +550,11 @@ bearer_grants_are_safe() {
         sub(/ $/, "", statement)
         if (statement == "GRANT USAGE ON SCHEMA PUBLIC TO :\"BEARER_ROLE\"") next
         if (statement == "GRANT SELECT ON PUBLIC.ASCP_SIGN_REQUESTS, PUBLIC.ASCP_SIGNER_OUTBOX, PUBLIC.ASCP_EXECUTION_AUTHORIZATIONS, PUBLIC.ASCP_BUDGET_RESERVATIONS, PUBLIC.ASCP_POLICY_DECISIONS, PUBLIC.ASCP_BEARER_REGISTRY TO :\"BEARER_ROLE\"") next
+		if (statement == "GRANT SELECT ON PUBLIC.ASCP_LEADERSHIP_EPOCHS, PUBLIC.ASCP_SIGNER_ISSUANCE_EFFECTS, PUBLIC.ASCP_OUTBOX_DISPATCH_EFFECTS TO :\"BEARER_ROLE\"") next
+		if (statement == "GRANT SELECT (OPERATION_ID,ORGANIZATION_ID) ON PUBLIC.ASCP_INTENTS TO :\"BEARER_ROLE\"") next
+		if (statement == "GRANT INSERT (EFFECT_ID,ORGANIZATION_ID,EPOCH,SINK,STATE,STARTED_AT) ON PUBLIC.ASCP_SIGNER_ISSUANCE_EFFECTS, PUBLIC.ASCP_OUTBOX_DISPATCH_EFFECTS TO :\"BEARER_ROLE\"") next
+		if (statement == "GRANT UPDATE (STATE,RESOLVED_AT) ON PUBLIC.ASCP_SIGNER_ISSUANCE_EFFECTS, PUBLIC.ASCP_OUTBOX_DISPATCH_EFFECTS TO :\"BEARER_ROLE\"") next
+		if (statement == "GRANT INSERT (REJECTION_ID,ORGANIZATION_ID,SINK,PRESENTED_EPOCH,OBSERVED_EPOCH,OBSERVED_STATE,REJECTED_AT) ON PUBLIC.ASCP_SIGNER_ISSUANCE_REJECTIONS, PUBLIC.ASCP_OUTBOX_DISPATCH_REJECTIONS TO :\"BEARER_ROLE\"") next
         if (statement == "GRANT INSERT (HANDLE_ID, OPERATION_ID, PAYLOAD_HASH, DIGEST, NONCE, STATE, VALID_UNTIL, CREATED_AT) ON PUBLIC.ASCP_BEARER_HANDLES TO :\"BEARER_ROLE\"") next
         if (statement == "GRANT INSERT (DIGEST, INSTRUMENT_TYPE, SIGNATURE_REF, NONCE, ISSUED_AT, VALID_UNTIL, SIGNER_KEY_ID, KEY_EPOCH, OPERATION_ID, AUTHORIZATION_ID, RESERVATION_ID, MODULE_ADDRESS, SAFE_ADDRESS, OUTCOME, CREATED_AT) ON PUBLIC.ASCP_BEARER_REGISTRY TO :\"BEARER_ROLE\"") next
         if (statement == "GRANT INSERT (OPERATION_ID, ORGANIZATION_ID, AGENT_ID, AUTHORIZATION_ID, RESERVATION_ID, BEARER_DIGEST, COMMITMENT_HASH, CALL_ID, CHAIN_ID, ESCROW_CONTRACT, ASSET, BUYER, PAY_TO, AMOUNT_BASE_UNITS, SETTLE_BY, STATE, CREATED_AT, UPDATED_AT) ON PUBLIC.ASCP_PAYMENT_OPERATIONS TO :\"BEARER_ROLE\"") next

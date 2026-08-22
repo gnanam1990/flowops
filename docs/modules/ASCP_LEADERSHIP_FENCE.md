@@ -10,19 +10,22 @@ an irreversible external effect was in flight.
 ## Entry and operator flow
 
 An isolated leadership controller bootstraps organization epoch 1 once through
-the shipped `/flowops/ascp-leadership` command. For a cutover, an authorized
-operator calls `BeginDrain` with the exact current epoch, waits for the call to
-return, drains old-host work, and calls `Advance` with that same expected epoch.
-Controlled-effect services call `Current` for early rejection and `Fence`
-immediately around their bounded effect.
+the shipped `/flowops/ascp-leadership` command. A promotion is a mandatory
+`drain -> ready -> advance -> complete` ceremony. `drain` freezes issuance,
+waits for already-admitted effects, and records the finality margin. `ready`
+requires every live lock authorization to have a registry-proven terminal
+outcome and every verifier attestation to be past its bounded validity plus
+that margin. `advance` performs the CAS cutover. `complete` then requires
+post-cutover stale-epoch rejection evidence from all six controlled sinks.
 
 ## Inputs
 
 Bootstrap binds an organization, constrained actor, lower-case SHA-256 evidence
-digest, and controller time. Drain, advance, and abandonment also bind the exact
-expected epoch; abandonment binds the durable effect ID. `Fence` binds the
-organization, expected epoch, and one synchronous callback. Organization and
-actor values reject whitespace/control or out-of-contract characters.
+digest, and controller time. Drain also binds a one-second through one-hour
+finality margin. Ready, advance, completion, and abandonment bind the exact
+source epoch and evidence digest; abandonment also binds the durable effect ID.
+`FenceSink` binds the organization, presented epoch, exact sink name, and one
+synchronous callback.
 
 ## Internal behavior
 
@@ -35,21 +38,24 @@ transactions. Database checks and triggers independently reject
 skipped epochs, illegal transitions, malformed identities, deletes, event
 mutation, duplicate state events, and events that do not match current state.
 
-`Fence` commits an `IN_FLIGHT` record under the same organization advisory lock
+`FenceSink` commits a sink-named `IN_FLIGHT` record under the same organization advisory lock
 used by `BeginDrain` and `Advance`, then invokes the callback with no leadership
 transaction held. A drain can commit `DRAINING` while that callback runs, but
 does not return until every admitted effect is `COMPLETED` or explicitly
 `ABANDONED`; the database independently rejects advance while one remains.
 Connection loss after admission leaves the durable record in place, so it
-cannot release the cutover boundary. Hash collisions can serialize admission
+cannot release the cutover boundary. A stale or draining request never invokes
+the callback and appends a rejection containing sink, presented epoch, observed
+epoch/state, and observation time. Hash collisions can serialize admission
 but cannot permit concurrent leadership. Callback database writes use their
 service transaction and are not rolled back by `Fence`; the controller
 credential remains isolated from the worker.
 
 ## Outputs and interfaces
 
-`Postgres` provides `Bootstrap`, `BeginDrain`, `Advance`, `AbandonEffect`, `Get`,
-`Current`, and `Fence`. It directly implements `ascprails.LeadershipGate` and returns shared
+`Postgres` provides `Bootstrap`, `BeginPromotion`, `MarkPromotionReady`,
+`Advance`, `CompletePromotion`, `Promotion`, `AbandonEffect`, `Get`, `Current`,
+`Fence`, and `FenceSink`. It directly implements the production sink gates and returns shared
 `ErrEpochChanged` identity for stale or draining egress. Records expose the
 durable epoch, state, actor, evidence digest, and update time. There is no UI
 mutation surface; `ascp-leadership status` is the operator read path and
@@ -58,9 +64,10 @@ an explicit validated schema, so temporary objects cannot shadow its tables.
 
 ## Authorization and security boundaries
 
-Only the dedicated role from `configure-leadership-role.sql` receives epoch
-mutation and evidence-bound effect-abandonment rights. The rails role receives
-only the column-scoped effect admission/completion rights required by `Fence`;
+Only the dedicated role from `configure-leadership-role.sql` receives epoch and
+promotion mutation and evidence-bound effect-abandonment rights. Seller,
+keeper, bearer, verifier, and checkpointer roles receive only the column-scoped
+effect/rejection writes required by `FenceSink`;
 API/runtime reads are read-only. The controller role has no table-wide update, delete, truncate, trigger,
 reference, schema-create, superuser, role-create, database-create, replication,
 or RLS-bypass authority, inheritance, inbound/outbound role memberships, or object ownership.
@@ -68,6 +75,14 @@ The configuration script refuses pre-existing membership or ownership instead
 of relying on revocation to neutralize it. This database role is the authorization boundary;
 production routing must not expose controller methods to ordinary tenant/API
 credentials.
+
+Each worker receives only its sink-specific updatable effect and rejection
+views; it cannot name another sink or fabricate that sink's cutover evidence.
+Bearer and verifier deployments are single-organization leadership shards:
+their pinned organization is matched to the claimed intent/commitment before
+the sink callback can run. The controller sees only the operation-to-tenant,
+bearer outcome, call-to-tenant, and attestation-validity columns needed to
+evaluate the drain.
 
 ## Failure and recovery
 
@@ -80,6 +95,23 @@ database boundary. Only after reconciling the effect-specific outcome and
 proving the old host dead may an operator use `abandon-effect` with an exact
 epoch, effect ID, actor, and evidence digest.
 Controller retry is exact-CAS: a stale epoch or wrong state cannot advance.
+
+## Promotion commands
+
+Each command accepts one strict JSON object on stdin. Evidence digests below
+are placeholders for independently retained operator evidence:
+
+```sh
+printf '%s\n' '{"organizationId":"org_acme","expectedEpoch":7,"actor":"operator_a","evidenceDigest":"0x...","finalityMarginSeconds":120}' | /flowops/ascp-leadership drain
+printf '%s\n' '{"organizationId":"org_acme","expectedEpoch":7,"evidenceDigest":"0x..."}' | /flowops/ascp-leadership ready
+printf '%s\n' '{"organizationId":"org_acme","expectedEpoch":7,"actor":"operator_a","evidenceDigest":"0x..."}' | /flowops/ascp-leadership advance
+printf '%s\n' '{"organizationId":"org_acme","expectedEpoch":7,"evidenceDigest":"0x..."}' | /flowops/ascp-leadership complete
+```
+
+After `advance`, continue injecting the old epoch through signer issuance,
+verifier attestation, keeper relay, seller-proxy egress, outbox dispatch, and
+checkpoint write. `complete` remains fail-closed until all six rejection rows
+were observed at target epoch after the exact cutover timestamp.
 
 ## Observability and production operations
 
@@ -97,7 +129,11 @@ drain attempts, and recovery from an ambiguous effect before production.
 - A drain cannot complete while an old-epoch durable effect is in flight, even
   after the admitting database connection or process pool is lost.
 - After drain commits, old and same-epoch effects invoke no callback.
-- Advance succeeds only from exact `DRAINING(N)` to `ACTIVE(N+1)`.
+- Advance succeeds only from exact `DRAINING(N)` to `ACTIVE(N+1)` after the
+  authoritative bearer/attestation drain is ready.
+- Promotion completion requires named post-cutover rejection evidence for all
+  six controlled sinks; a count, caller boolean, or pre-cutover probe is not
+  sufficient.
 - Concurrent or stale mutation cannot skip, reuse, delete, or rewrite epochs or
   audit events, including through direct SQL.
 - Runtime and rails roles cannot mutate leadership; the controller cannot use

@@ -22,8 +22,10 @@ The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/flowops-admin`, `/flowops/flowops-operator`,
 `/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`,
 `/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`,
-`/flowops/ascp-bearer-worker`, `/flowops/ascp-signer-runtime`, and
-`/flowops/postgres-readiness`. `railway.json` selects that image, checks `/health`,
+`/flowops/ascp-bearer-worker`, `/flowops/ascp-signer-runtime`,
+`/flowops/ascp-asset-health`, `/flowops/ascp-capacity-audit`, and
+`/flowops/postgres-readiness`. `railway.json`
+selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
 before the API starts.
@@ -66,6 +68,8 @@ The API service requires:
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
 | `FLOWOPS_ASCP_DIRECTORY_CONTRACT` | Optional canonical lowercase ServiceDirectory address. When unset, durable agent intake remains mounted but returns a fail-closed 503 |
 | `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |
+| `FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS` | Canonical global in-flight operation limit, default `1000`; must exactly match `ascp_capacity_counters.max_active_operations` configured by the migration owner |
+| `FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON` | Optional strict deployment-owned array enabling chain-changing workflows; every row binds action, kind, Base chain, contract/code hash, on-chain principal, two-person roles, relayer policy, selector, action/workflow events, timelock, and emergency path |
 | `FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS` | Canonical recovered address of the dedicated platform adaptation key; enables signed grants only with the complete tuple below |
 | `FLOWOPS_ASCP_ADAPTATION_KEY_ID` | Canonical HSM key identifier dedicated to adaptation grants |
 | `FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH` | Positive canonical HSM key epoch |
@@ -351,6 +355,8 @@ table, or surplus column authority.
 | `FLOWOPS_BEARER_SIGNER_KEY_ID` | Exact isolated signer key identifier assigned to this worker shard |
 | `FLOWOPS_BEARER_KEY_EPOCH` | Positive signer key epoch assigned to this worker shard |
 | `FLOWOPS_BEARER_KEEPER_ID` | Exact keeper allowed to release the resulting activated artifacts |
+| `FLOWOPS_BEARER_ORGANIZATION_ID` | Exact organization assigned to this single-organization worker shard |
+| `FLOWOPS_BEARER_LEADERSHIP_EPOCH` | Positive epoch pinned into this worker's short-lived deployment identity; restart with the target epoch only after promotion cutover |
 | `FLOWOPS_BEARER_SIGNER_SOCKET` | Absolute Unix socket for prepare, activation acknowledgment, and non-activation proof |
 | `FLOWOPS_BEARER_MIRROR_SOCKET` | Different absolute Unix socket for create-if-absent primary WORM writes |
 | `FLOWOPS_BEARER_BOUNDARY_TIMEOUT` | Optional per-sidecar timeout, default `3s`, range `1s` through `10s` |
@@ -560,6 +566,8 @@ Required runtime configuration:
 | `FLOWOPS_VERIFIER_CHAIN_ID` | `8453` or `84532` |
 | `FLOWOPS_VERIFIER_ESCROW_CONTRACT` | Exact lowercase nonzero escrow address |
 | `FLOWOPS_VERIFIER_EPOCH` | Positive finalized verifier epoch |
+| `FLOWOPS_VERIFIER_ORGANIZATION_ID` | Exact organization assigned to this single-organization verifier shard |
+| `FLOWOPS_VERIFIER_LEADERSHIP_EPOCH` | Positive leadership epoch pinned into this verifier deployment; stale instances cannot issue attestations after cutover |
 | `FLOWOPS_VERIFIER_SOFTWARE_HASH` | Nonzero lowercase `0x`-prefixed 32-byte digest |
 | `FLOWOPS_VERIFIER_INTAKE_KEYS_JSON` | Strict key-id to canonical base64 32-byte HMAC key map |
 | `FLOWOPS_VERIFIER_SIGNER_KEY_FILE` | Absolute, regular, non-symlink owner-private lowercase secp256k1 key file; local/test adapter only |
@@ -588,3 +596,13 @@ replay prune routine in addition to its table/sequence allowlist. Intake replay 
 are immutable for 24 hours and pruned at startup and hourly; alert on prune
 failure and database growth. Verdict decisions and finalized key observations
 are never pruned. Do not run the file signer for production funds.
+
+## ASCP asset-health runtime
+
+Run `/flowops/ascp-asset-health` as a separate supervised, non-listening
+process. Apply migration `0029_ascp_asset_health.sql`, create a dedicated LOGIN
+role, and apply `deploy/control-plane/configure-asset-health-role.sql`. Pin the
+reviewed USDC proxy implementation and runtime code hash; do not discover or
+accept replacements automatically. The full variable contract, recovery
+invariants, accounting behavior, alert conditions, and fork-drill gate are in
+`docs/modules/ASCP_ASSET_HEALTH.md`.

@@ -37,6 +37,7 @@ func TestLocalRevalidatorBindsCurrentPolicyDirectoryAndExecutionSnapshot(t *test
 	expectLocalIntent(mock, input, quote)
 	expectLocalAgent(mock, nil, "ACTIVE", false)
 	expectLocalPolicy(mock, input, config)
+	expectLocalAssetHealth(mock, input, "NORMAL")
 	expectLocalDirectory(mock, input, quote, observationDigest, false, authorizationNow)
 
 	revalidator, err := NewLocalRevalidator(2 * time.Minute)
@@ -76,6 +77,7 @@ func TestLocalRevalidatorInvalidatesRevokedCurrentQuoteKey(t *testing.T) {
 	expectLocalIntent(mock, input, quote)
 	expectLocalAgent(mock, nil, "ACTIVE", false)
 	expectLocalPolicy(mock, input, config)
+	expectLocalAssetHealth(mock, input, "NORMAL")
 	expectLocalDirectory(mock, input, quote, observationDigest, true, authorizationNow)
 	revalidator, _ := NewLocalRevalidator(time.Minute)
 	reason, err := revalidator.Revalidate(context.Background(), tx, input, authorizationNow)
@@ -103,6 +105,42 @@ func TestLocalRevalidatorRejectsCallerInventedBudgetDimensionAndLimit(t *testing
 	revalidator, _ := NewLocalRevalidator(2 * time.Minute)
 	reason, err := revalidator.Revalidate(context.Background(), tx, input, authorizationNow)
 	if err != nil || reason != reasonBudgetDimensions {
+		t.Fatalf("reason=%q err=%v", reason, err)
+	}
+	mock.ExpectRollback()
+	_ = tx.Rollback()
+	expectationsMet(t, mock)
+}
+
+func TestLocalRevalidatorRejectsNonNormalAssetHealth(t *testing.T) {
+	db, mock := postgresMock(t)
+	input, config, quote, _ := localRevalidationFixture(t)
+	tx := beginRevalidation(t, db, mock)
+	expectLocalIntent(mock, input, quote)
+	expectLocalAgent(mock, nil, "ACTIVE", false)
+	expectLocalPolicy(mock, input, config)
+	expectLocalAssetHealth(mock, input, "TOKEN_PAUSED")
+	revalidator, _ := NewLocalRevalidator(time.Minute)
+	reason, err := revalidator.Revalidate(context.Background(), tx, input, authorizationNow)
+	if err != nil || reason != reasonAssetUnhealthy {
+		t.Fatalf("reason=%q err=%v", reason, err)
+	}
+	mock.ExpectRollback()
+	_ = tx.Rollback()
+	expectationsMet(t, mock)
+}
+
+func TestLocalRevalidatorRejectsStaleNormalAssetHealth(t *testing.T) {
+	db, mock := postgresMock(t)
+	input, config, quote, _ := localRevalidationFixture(t)
+	tx := beginRevalidation(t, db, mock)
+	expectLocalIntent(mock, input, quote)
+	expectLocalAgent(mock, nil, "ACTIVE", false)
+	expectLocalPolicy(mock, input, config)
+	expectLocalAssetHealthAt(mock, input, "NORMAL", authorizationNow.Add(-2*time.Minute))
+	revalidator, _ := NewLocalRevalidator(time.Minute)
+	reason, err := revalidator.Revalidate(context.Background(), tx, input, authorizationNow)
+	if err != nil || reason != reasonAssetHealthUnavailable {
 		t.Fatalf("reason=%q err=%v", reason, err)
 	}
 	mock.ExpectRollback()
@@ -211,4 +249,14 @@ func expectLocalDirectory(mock sqlmock.Sqlmock, input Input, quote sellerquote.Q
 		}).AddRow(input.Review.DirectoryVersion, observationDigest, uint64(100), observedAt, revalidationSigner, uint64(2),
 			quote.PayTo, quote.AckAuthority, quote.AmountBaseUnits, quote.VerificationSpecHash, quote.DeclaredWorkTime,
 			quote.VerificationBudgetSeconds, true, revoked))
+}
+
+func expectLocalAssetHealth(mock sqlmock.Sqlmock, input Input, state string) {
+	expectLocalAssetHealthAt(mock, input, state, authorizationNow)
+}
+
+func expectLocalAssetHealthAt(mock sqlmock.Sqlmock, input Input, state string, observedAt time.Time) {
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT state,observed_at FROM ascp_asset_health")).
+		WithArgs(uint64(84532), input.Review.Asset).
+		WillReturnRows(sqlmock.NewRows([]string{"state", "observed_at"}).AddRow(state, observedAt))
 }

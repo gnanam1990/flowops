@@ -146,6 +146,10 @@ type LeadershipGate interface {
 	Fence(context.Context, string, uint64, func(context.Context) error) error
 }
 
+type namedLeadershipGate interface {
+	FenceSink(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error
+}
+
 // ChainClock returns a corroborated chain timestamp and evidence digest. Local
 // wall time is deliberately excluded from escrow deadline decisions.
 type ChainClock interface {
@@ -255,11 +259,17 @@ func (s *Service) DispatchOne(ctx context.Context) (Job, error) {
 	}
 	var result Job
 	effectCalled := false
-	fenceErr := s.leadership.Fence(ctx, job.OrganizationID, job.LeadershipEpoch, func(fencedContext context.Context) error {
+	fencedEffect := func(fencedContext context.Context) error {
 		effectCalled = true
 		result, err = s.dispatchUnderLeadershipFence(fencedContext, lease)
 		return err
-	})
+	}
+	var fenceErr error
+	if named, ok := s.leadership.(namedLeadershipGate); ok {
+		fenceErr = named.FenceSink(ctx, job.OrganizationID, job.LeadershipEpoch, ascpleadership.SinkSellerProxyEgress, fencedEffect)
+	} else {
+		fenceErr = s.leadership.Fence(ctx, job.OrganizationID, job.LeadershipEpoch, fencedEffect)
+	}
 	if effectCalled {
 		return result, fenceErr
 	}

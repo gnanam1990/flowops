@@ -25,6 +25,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpagent"
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
+	"github.com/gnanam1990/flowops/internal/ascpcapacity"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
@@ -46,32 +47,34 @@ const (
 )
 
 type startupConfig struct {
-	address                string
-	databaseURL            string
-	envelopeKeyID          string
-	envelopeKey            ed25519.PrivateKey
-	siteSessionKey         []byte
-	reconciliation         string
-	trustProxy             bool
-	applyMigrations        bool
-	operatorKey            []byte
-	keeperCallbackKey      []byte
-	mcpAllowedOrigins      []string
-	observerRPCs           []reconciliation.RPCProvider
-	observerConfig         reconciliation.Config
-	observerInterval       time.Duration
-	observerTimeout        time.Duration
-	reconciliationInterval time.Duration
-	reconciliationTimeout  time.Duration
-	signerReceiptKeys      []controlapi.BroadcastKey
-	pilotLimits            *pilotlimits.Limits
-	ascpDirectoryContract  string
-	ascpDirectoryMaxAge    time.Duration
-	ascpAdaptationSigner   string
-	ascpAdaptationKeyID    string
-	ascpAdaptationKeyEpoch uint64
-	ascpAdaptationHSM      string
-	ascpAdaptationTimeout  time.Duration
+	address                 string
+	databaseURL             string
+	envelopeKeyID           string
+	envelopeKey             ed25519.PrivateKey
+	siteSessionKey          []byte
+	reconciliation          string
+	trustProxy              bool
+	applyMigrations         bool
+	operatorKey             []byte
+	keeperCallbackKey       []byte
+	mcpAllowedOrigins       []string
+	observerRPCs            []reconciliation.RPCProvider
+	observerConfig          reconciliation.Config
+	observerInterval        time.Duration
+	observerTimeout         time.Duration
+	reconciliationInterval  time.Duration
+	reconciliationTimeout   time.Duration
+	signerReceiptKeys       []controlapi.BroadcastKey
+	pilotLimits             *pilotlimits.Limits
+	ascpDirectoryContract   string
+	ascpDirectoryMaxAge     time.Duration
+	ascpMaxActiveOperations int
+	ascpAdaptationSigner    string
+	ascpAdaptationKeyID     string
+	ascpAdaptationKeyEpoch  uint64
+	ascpAdaptationHSM       string
+	ascpAdaptationTimeout   time.Duration
+	ascpAuthorityRules      []ascpworkflow.AuthorityRule
 }
 
 func main() {
@@ -120,7 +123,14 @@ func run(ctx context.Context) (returnErr error) {
 	if err != nil {
 		return fmt.Errorf("create ASCP proposal workflow store: %w", err)
 	}
-	workflowService, err := ascpworkflow.New(workflowStore, nil, nil, nil)
+	var workflowCompletionVerifier ascpworkflow.CompletionVerifier
+	if len(cfg.ascpAuthorityRules) != 0 {
+		workflowCompletionVerifier, err = ascpworkflow.NewAuthorityVerifier(cfg.ascpAuthorityRules, cfg.observerConfig.ObserverQuorum)
+		if err != nil {
+			return fmt.Errorf("create ASCP chain authority verifier: %w", err)
+		}
+	}
+	workflowService, err := ascpworkflow.New(workflowStore, workflowCompletionVerifier, nil, nil)
 	if err != nil {
 		return fmt.Errorf("create ASCP proposal workflow service: %w", err)
 	}
@@ -184,7 +194,11 @@ func run(ctx context.Context) (returnErr error) {
 		if err != nil {
 			return fmt.Errorf("create ASCP execution revalidator: %w", err)
 		}
-		executionStore, err := ascpexecauth.NewPostgresStore(db, localRevalidator)
+		capacityGate, err := ascpcapacity.NewPostgresGate(cfg.ascpMaxActiveOperations)
+		if err != nil {
+			return fmt.Errorf("create ASCP capacity gate: %w", err)
+		}
+		executionStore, err := ascpexecauth.NewPostgresStore(db, localRevalidator, capacityGate)
 		if err != nil {
 			return fmt.Errorf("create ASCP execution authorization store: %w", err)
 		}
@@ -437,6 +451,15 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_MAX_AGE cannot exceed 5m")
 	}
 	cfg.ascpDirectoryMaxAge = ascpDirectoryMaxAge
+	maxActiveRaw := strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS"))
+	if maxActiveRaw == "" {
+		maxActiveRaw = "1000"
+	}
+	maxActive, err := strconv.Atoi(maxActiveRaw)
+	if err != nil || maxActive < 1 || maxActive > 100000 || strconv.Itoa(maxActive) != maxActiveRaw {
+		return startupConfig{}, errors.New("FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS must be a canonical integer from 1 through 100000")
+	}
+	cfg.ascpMaxActiveOperations = maxActive
 	adaptationTimeoutRaw := os.Getenv("FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT")
 	ascpAdaptationTimeout, err := parseDurationEnv("FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT", adaptationTimeoutRaw, 3*time.Second)
 	if err != nil {
@@ -479,6 +502,18 @@ func loadConfig() (startupConfig, error) {
 	cfg.observerTimeout = observerRuntime.timeout
 	cfg.reconciliationInterval = observerRuntime.reconciliationInterval
 	cfg.reconciliationTimeout = observerRuntime.reconciliationTimeout
+	authorityRulesRaw := strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON"))
+	if authorityRulesRaw != "" {
+		cfg.ascpAuthorityRules, err = ascpworkflow.ParseAuthorityRules(authorityRulesRaw)
+		if err != nil {
+			return startupConfig{}, fmt.Errorf("FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON: %w", err)
+		}
+		for _, rule := range cfg.ascpAuthorityRules {
+			if rule.ChainID != cfg.observerConfig.ChainID {
+				return startupConfig{}, errors.New("ASCP chain authority rules must use the configured observer chain")
+			}
+		}
+	}
 	if cfg.ascpDirectoryContract != "" {
 		if len(cfg.ascpDirectoryContract) != 42 || !common.IsHexAddress(cfg.ascpDirectoryContract) || common.HexToAddress(cfg.ascpDirectoryContract) == (common.Address{}) {
 			return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_CONTRACT must be a non-zero canonical address")

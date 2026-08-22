@@ -58,7 +58,12 @@ ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
 
 GRANT SELECT, INSERT ON public.ascp_keeper_jobs, public.ascp_keeper_nonce_sequences,
     public.ascp_keeper_tx_attempts TO :"keeper_role";
-GRANT SELECT ON public.ascp_leadership_epochs TO :"keeper_role";
+GRANT SELECT ON public.ascp_leadership_epochs, public.ascp_keeper_relay_effects TO :"keeper_role";
+GRANT INSERT (effect_id,organization_id,epoch,sink,state,started_at)
+    ON public.ascp_keeper_relay_effects TO :"keeper_role";
+GRANT UPDATE (state,resolved_at) ON public.ascp_keeper_relay_effects TO :"keeper_role";
+GRANT INSERT (rejection_id,organization_id,sink,presented_epoch,observed_epoch,observed_state,rejected_at)
+    ON public.ascp_keeper_relay_rejections TO :"keeper_role";
 GRANT UPDATE (lease_owner, lease_token, lease_expires_at, nonce, state,
     attempt_count, current_attempt, last_error, updated_at)
     ON public.ascp_keeper_jobs TO :"keeper_role";

@@ -17,13 +17,15 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type startupConfig struct {
 	databaseURL, workerID, signerKeyID, keeperID string
+	organizationID                               string
 	signerSocket, mirrorSocket                   string
-	keyEpoch                                     uint64
+	keyEpoch, leadershipEpoch                    uint64
 	interval, cycleTimeout, leaseDuration        time.Duration
 	boundaryTimeout, retryDelay                  time.Duration
 	expiryBatchSize, advanceBatchSize            int
@@ -86,6 +88,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	leadership, err := ascpleadership.NewPostgres(db, "public")
+	if err != nil {
+		return err
+	}
 	signer, err := ascpbearer.NewRuntimeUnixSigner(boundaries["signer"])
 	if err != nil {
 		return err
@@ -96,10 +102,11 @@ func run(ctx context.Context) error {
 	}
 	service, err := ascpbearer.NewRuntimeService(store, signer, mirror, ascpbearer.RuntimeConfig{
 		Claim: ascpbearer.RuntimeClaim{
-			WorkerID: config.workerID, SignerKeyID: config.signerKeyID, KeyEpoch: config.keyEpoch,
+			WorkerID: config.workerID, OrganizationID: config.organizationID, SignerKeyID: config.signerKeyID, KeyEpoch: config.keyEpoch,
 			KeeperID: config.keeperID, LeaseDuration: config.leaseDuration,
 		},
-		RetryDelay: config.retryDelay,
+		RetryDelay: config.retryDelay, OrganizationID: config.organizationID,
+		LeadershipEpoch: config.leadershipEpoch, Leadership: leadership,
 	})
 	if err != nil {
 		return fmt.Errorf("create bearer runtime service: %w", err)
@@ -143,13 +150,14 @@ func checkBoundaries(ctx context.Context, boundaries map[string]*ascpbearer.Runt
 
 func loadConfig() (startupConfig, error) {
 	config := startupConfig{
-		databaseURL:  strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_DATABASE_URL")),
-		workerID:     strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_WORKER_ID")),
-		signerKeyID:  strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_SIGNER_KEY_ID")),
-		keeperID:     strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_KEEPER_ID")),
-		signerSocket: strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_SIGNER_SOCKET")),
-		mirrorSocket: strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_MIRROR_SOCKET")),
-		interval:     30 * time.Second, cycleTimeout: 20 * time.Second, leaseDuration: 10 * time.Second,
+		databaseURL:    strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_DATABASE_URL")),
+		workerID:       strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_WORKER_ID")),
+		signerKeyID:    strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_SIGNER_KEY_ID")),
+		keeperID:       strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_KEEPER_ID")),
+		organizationID: strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_ORGANIZATION_ID")),
+		signerSocket:   strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_SIGNER_SOCKET")),
+		mirrorSocket:   strings.TrimSpace(os.Getenv("FLOWOPS_BEARER_MIRROR_SOCKET")),
+		interval:       30 * time.Second, cycleTimeout: 20 * time.Second, leaseDuration: 10 * time.Second,
 		boundaryTimeout: 3 * time.Second, retryDelay: 10 * time.Second,
 		expiryBatchSize: 10, advanceBatchSize: 40,
 	}
@@ -157,12 +165,15 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, err
 	}
 	if !identifierPattern.MatchString(config.workerID) || !identifierPattern.MatchString(config.signerKeyID) ||
-		!identifierPattern.MatchString(config.keeperID) {
+		!identifierPattern.MatchString(config.keeperID) || !identifierPattern.MatchString(config.organizationID) {
 		return startupConfig{}, errors.New("bearer worker, signer key, and keeper identifiers are required and must be canonical")
 	}
 	var err error
 	if config.keyEpoch, err = parseUint("FLOWOPS_BEARER_KEY_EPOCH", 0); err != nil || config.keyEpoch == 0 {
 		return startupConfig{}, errors.New("FLOWOPS_BEARER_KEY_EPOCH must be a positive integer")
+	}
+	if config.leadershipEpoch, err = parseUint("FLOWOPS_BEARER_LEADERSHIP_EPOCH", 0); err != nil || config.leadershipEpoch == 0 {
+		return startupConfig{}, errors.New("FLOWOPS_BEARER_LEADERSHIP_EPOCH must be a positive integer")
 	}
 	for name, path := range map[string]string{"FLOWOPS_BEARER_SIGNER_SOCKET": config.signerSocket, "FLOWOPS_BEARER_MIRROR_SOCKET": config.mirrorSocket} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {

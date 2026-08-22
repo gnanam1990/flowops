@@ -6,7 +6,13 @@
 
 ## Inputs and authorization
 
-Every administrative action carries the shared ASCP v4 `AdminActionAuthorization`. The contract checks its immutable organization domain, own address, chain, registry-admin role, exact function selector, full semantic payload hash, workflow ID, nonzero permanent operation ID, unused role nonce, exact current admin epoch, ECDSA signer, and contract-enforced validity window of at most 600 seconds. Anyone may relay the signed bytes; the event and transaction receipt preserve signer and gas payer separately.
+Every hot-key administrative action carries the shared ASCP v4 `AdminActionAuthorization`. The contract checks its immutable organization domain, own address, chain, registry-admin role, exact function selector, full semantic payload hash, workflow ID, nonzero permanent operation ID, unused role nonce, exact current admin epoch, ECDSA signer, and contract-enforced validity window of at most 600 seconds. Anyone may relay the signed bytes; the event and transaction receipt preserve signer and gas payer separately.
+
+Safe-only `setRegistryAdmin` requires a nonzero workflow ID and payload hash
+that bind the Base chain, registry address, exact selector, current admin,
+current epoch, and next admin. A no-op rotation reverts. Success emits both
+`RegistryAdminSet` and `GovernanceWorkflowBound`, allowing the control plane to
+prove the exact Safe principal, workflow, payload, receipt, and event.
 
 Registration accepts a 1-64 byte display label and nonzero policy hash. Its permanent `agentId` is derived from `ASCP_AGENT_ID_V1`, chain, registry, organization, and the signed admin operation ID. Display labels are untrusted bytes for UI purposes and must always be escaped when rendered.
 
@@ -19,7 +25,8 @@ Events:
 - `AgentRegistered` binds agent, policy, label, workflow, admin operation, signing admin, and relayer.
 - `AgentPolicyUpdated` binds old and new policy hashes.
 - `AgentStatusSet` binds old and new lifecycle states.
-- `RegistryAdminSet` binds each monotonic epoch change.
+- `RegistryAdminSet` binds each monotonic epoch change; the adjacent
+  `GovernanceWorkflowBound` log binds its approved workflow payload.
 
 ## Failure and recovery
 

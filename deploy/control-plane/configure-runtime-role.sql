@@ -21,9 +21,12 @@ GRANT SELECT ON credentials, policies, sites_identity_providers,
     sites_memberships, flowops_schema_migrations TO :"runtime_role";
 GRANT SELECT, INSERT, UPDATE ON commands TO :"runtime_role";
 GRANT SELECT, INSERT ON audit_events, control_events TO :"runtime_role";
-GRANT SELECT, INSERT ON ascp_intents, ascp_policy_decisions, ascp_execution_authorizations,
+GRANT SELECT, INSERT ON ascp_intents, ascp_financial_tombstones, ascp_policy_decisions, ascp_execution_authorizations,
     ascp_budget_reservation_dimensions, ascp_directory_snapshots,
     ascp_directory_quote_evidence TO :"runtime_role";
+GRANT SELECT ON ascp_asset_health TO :"runtime_role";
+GRANT SELECT ON ascp_capacity_counters, ascp_capacity_admissions TO :"runtime_role";
+GRANT EXECUTE ON FUNCTION public.ascp_acquire_capacity(text,text,integer,timestamptz) TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_adaptation_grants TO :"runtime_role";
 GRANT UPDATE (state, remaining_attempts, consumed_operation_id, consumed_at)
     ON ascp_adaptation_grants TO :"runtime_role";

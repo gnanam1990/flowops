@@ -116,7 +116,7 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	executionStore, err := ascpexecauth.NewPostgresStore(db, revalidator, func() time.Time { return now })
+	executionStore, err := ascpexecauth.NewPostgresStore(db, revalidator, integrationCapacityGate(), func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `UPDATE ascp_approvals SET expires_at=$2 WHERE approval_id=$1`, humanDecision.Approval.ApprovalID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	expiredExecutionStore, err := ascpexecauth.NewPostgresStore(db, revalidator, func() time.Time { return now.Add(2 * time.Second) })
+	expiredExecutionStore, err := ascpexecauth.NewPostgresStore(db, revalidator, integrationCapacityGate(), func() time.Time { return now.Add(2 * time.Second) })
 	if err != nil {
 		t.Fatal(err)
 	}

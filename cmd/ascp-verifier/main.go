@@ -25,6 +25,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
 	"github.com/gnanam1990/flowops/internal/ascpverifier"
 	"github.com/gnanam1990/flowops/internal/ascpverifierruntime"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -32,10 +33,12 @@ import (
 
 type startupConfig struct {
 	databaseURL      string
+	organizationID   string
 	listenAddress    string
 	chainID          string
 	escrowContract   string
 	verifierEpoch    uint64
+	leadershipEpoch  uint64
 	softwareHash     string
 	attestationTTL   time.Duration
 	governanceMaxAge time.Duration
@@ -102,11 +105,21 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	leadership, err := ascpleadership.NewPostgres(db, "public")
+	if err != nil {
+		return err
+	}
+	organizations, err := ascpverifier.NewPostgresOperationOrganizationReader(db)
+	if err != nil {
+		return err
+	}
 	service, err := ascpverifier.New(ascpverifier.Config{
 		VerifierEpoch: config.verifierEpoch, VerifierSoftwareHash: config.softwareHash,
 		AttestationTTL: config.attestationTTL, Clock: time.Now,
 		Engines: map[ascpverifier.Class]ascpverifier.Engine{ascpverifier.ClassStructuredData: ascpverifier.StructuredDataEngine{}},
 		Signer:  config.signer, Nonces: nonces, VerifierKeyGate: gate, DecisionJournal: journal,
+		Leadership: leadership, Organizations: organizations,
+		LeadershipOrganizationID: config.organizationID, LeadershipEpoch: config.leadershipEpoch,
 	})
 	if err != nil {
 		return err
@@ -173,6 +186,7 @@ func pruneVerifierReplays(ctx context.Context, replays *ascpverifierruntime.Post
 func loadConfig() (startupConfig, error) {
 	config := startupConfig{
 		databaseURL:    strings.TrimSpace(os.Getenv("FLOWOPS_VERIFIER_DATABASE_URL")),
+		organizationID: strings.TrimSpace(os.Getenv("FLOWOPS_VERIFIER_ORGANIZATION_ID")),
 		listenAddress:  strings.TrimSpace(os.Getenv("FLOWOPS_VERIFIER_LISTEN_ADDRESS")),
 		chainID:        strings.TrimSpace(os.Getenv("FLOWOPS_VERIFIER_CHAIN_ID")),
 		escrowContract: strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_VERIFIER_ESCROW_CONTRACT"))),
@@ -188,12 +202,18 @@ func loadConfig() (startupConfig, error) {
 	if config.chainID != "8453" && config.chainID != "84532" {
 		return startupConfig{}, errors.New("FLOWOPS_VERIFIER_CHAIN_ID must be Base mainnet or Sepolia")
 	}
+	if config.organizationID == "" || strings.ContainsAny(config.organizationID, " \t\r\n") {
+		return startupConfig{}, errors.New("FLOWOPS_VERIFIER_ORGANIZATION_ID must be canonical")
+	}
 	if !common.IsHexAddress(config.escrowContract) || common.HexToAddress(config.escrowContract) == (common.Address{}) {
 		return startupConfig{}, errors.New("FLOWOPS_VERIFIER_ESCROW_CONTRACT is invalid")
 	}
 	var err error
 	if config.verifierEpoch, err = parseUint("FLOWOPS_VERIFIER_EPOCH"); err != nil || config.verifierEpoch == 0 || config.verifierEpoch > math.MaxInt64 {
 		return startupConfig{}, errors.New("FLOWOPS_VERIFIER_EPOCH must be positive")
+	}
+	if config.leadershipEpoch, err = parseUint("FLOWOPS_VERIFIER_LEADERSHIP_EPOCH"); err != nil || config.leadershipEpoch == 0 || config.leadershipEpoch > math.MaxInt64 {
+		return startupConfig{}, errors.New("FLOWOPS_VERIFIER_LEADERSHIP_EPOCH must be positive")
 	}
 	if !canonicalHash(config.softwareHash) {
 		return startupConfig{}, errors.New("FLOWOPS_VERIFIER_SOFTWARE_HASH is invalid")

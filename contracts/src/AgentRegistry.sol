@@ -10,6 +10,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 contract AgentRegistry is EIP712 {
     using ECDSA for bytes32;
 
+    bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("AGENT_REGISTRY_GOVERNANCE_V1");
     bytes32 public constant REGISTRY_ADMIN_ROLE = keccak256("ASCP_REGISTRY_ADMIN");
     bytes32 public constant AGENT_ID_DOMAIN = keccak256("ASCP_AGENT_ID_V1");
     bytes32 public constant ADMIN_ACTION_TYPEHASH = keccak256(
@@ -60,6 +61,9 @@ contract AgentRegistry is EIP712 {
     mapping(uint256 nonce => bool used) public usedAdminNonces;
 
     event RegistryAdminSet(address indexed previousAdmin, address indexed admin, uint64 indexed epoch);
+    event GovernanceWorkflowBound(
+        bytes32 indexed workflowId, bytes32 indexed workflowPayloadHash, bytes4 indexed functionSelector
+    );
     event AgentRegistered(
         bytes32 indexed agentId,
         bytes32 indexed policyHash,
@@ -102,6 +106,8 @@ contract AgentRegistry is EIP712 {
     error AgentRetired(bytes32 agentId);
     error InvalidStatus(Status status);
     error StatusUnchanged(Status status);
+    error RegistryAdminUnchanged(address admin);
+    error InvalidWorkflowBinding();
 
     modifier onlyGovernor() {
         if (msg.sender != governor) revert NotGovernor(msg.sender);
@@ -200,12 +206,32 @@ contract AgentRegistry is EIP712 {
         );
     }
 
-    function setRegistryAdmin(address newAdmin) external onlyGovernor {
+    function setRegistryAdmin(address newAdmin, bytes32 workflowId, bytes32 workflowPayloadHash) external onlyGovernor {
         if (newAdmin == address(0)) revert ZeroAddress();
         address previous = registryAdmin;
+        if (newAdmin == previous) revert RegistryAdminUnchanged(newAdmin);
+        bytes32 expected = governancePayloadHash(
+            workflowId, this.setRegistryAdmin.selector, keccak256(abi.encode(previous, registryAdminEpoch, newAdmin))
+        );
+        if (workflowId == bytes32(0) || workflowPayloadHash == bytes32(0) || workflowPayloadHash != expected) {
+            revert InvalidWorkflowBinding();
+        }
         registryAdmin = newAdmin;
         registryAdminEpoch += 1;
         emit RegistryAdminSet(previous, newAdmin, registryAdminEpoch);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setRegistryAdmin.selector);
+    }
+
+    function governancePayloadHash(bytes32 workflowId, bytes4 functionSelector, bytes32 argumentsHash)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), workflowId, functionSelector, argumentsHash
+            )
+        );
     }
 
     function getAgent(bytes32 agentId) external view returns (Agent memory) {

@@ -90,6 +90,43 @@ func TestCreateHasOneConcurrentNonceOwner(t *testing.T) {
 	}
 }
 
+func TestPermanentTombstoneSurvivesSevenThirtyAnd365DayRestores(t *testing.T) {
+	base := time.Unix(1_800_000_000, 0).UTC()
+	now := base
+	store := NewMemoryStore()
+	service, _ := New(store, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{8}, 128)))
+	request := validRequest(t)
+	first, err := service.Create(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, age := range []time.Duration{7 * 24 * time.Hour, 30 * 24 * time.Hour, 365 * 24 * time.Hour} {
+		now = base.Add(age)
+		restored, err := NewMemoryStoreFromTombstones(store.SnapshotTombstones())
+		if err != nil {
+			t.Fatal(err)
+		}
+		store = restored
+		service, _ = New(store, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{9}, 128)))
+		replayed, err := service.Create(context.Background(), request)
+		if err != nil || !replayed.Replayed || replayed.OperationID != first.OperationID {
+			t.Fatalf("age=%s replay=%+v err=%v", age, replayed, err)
+		}
+	}
+	changed := request
+	changed.Quote.AmountBaseUnits = "43"
+	changed.Evidence.AmountBaseUnits = "43"
+	changed.Signature = signQuote(t, changed.Quote)
+	if _, err := service.Create(context.Background(), changed); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("changed request err=%v", err)
+	}
+	secondKey := request
+	secondKey.IdempotencyKey = "intake_second_key"
+	if _, err := service.Create(context.Background(), secondKey); !errors.Is(err, ErrQuoteNonceConsumed) {
+		t.Fatalf("reused quote nonce err=%v", err)
+	}
+}
+
 func TestAdaptationGrantIssuesIdempotentlyAndConsumesWithIntentAtomically(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	store := NewMemoryStore()
@@ -243,6 +280,11 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	input := storeInput(now)
 	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO ascp_financial_tombstones`).WithArgs(
+		input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, LogicalOperation, input.IdempotencyKey, input.CanonicalInputHash,
+		input.Operation.OperationID, input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce,
+		int64(input.Operation.DirectoryVersion), input.Operation.DirectoryContract, input.Operation.SellerSigner, "", input.Operation.CreatedAt,
+	).WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 	mock.ExpectQuery(`INSERT INTO ascp_intents`).WithArgs(
 		input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, input.IdempotencyKey, input.CanonicalInputHash,
 		input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(input.Operation.DirectoryVersion), input.Operation.DirectoryContract, input.Operation.SellerSigner,
@@ -255,8 +297,8 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO ascp_intents`).WillReturnRows(sqlmock.NewRows([]string{"created_at"}))
-	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).WithArgs("org_1", "agent_1", Endpoint, "intake_1").WillReturnRows(
+	mock.ExpectQuery(`INSERT INTO ascp_financial_tombstones`).WillReturnRows(sqlmock.NewRows([]string{"created_at"}))
+	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).WithArgs("org_1", "agent_1", Endpoint, LogicalOperation, "intake_1").WillReturnRows(
 		sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "adaptation_grant_id", "created_at", "canonical_input_hash"}).AddRow(
 			input.Operation.OperationID, "org_1", "agent_1", input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(9), input.Operation.DirectoryContract, input.Operation.SellerSigner, "", now, input.CanonicalInputHash,
 		),

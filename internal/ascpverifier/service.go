@@ -16,6 +16,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
 	"github.com/gnanam1990/flowops/pkg/executioncommitment"
 )
 
@@ -43,6 +44,7 @@ var (
 	ErrVerifierInactive     = errors.New("verifier key is not active at the configured epoch")
 	ErrSigning              = errors.New("verdict signing failed")
 	ErrStateUnavailable     = errors.New("verifier durable state unavailable")
+	ErrOrganizationMismatch = errors.New("operation organization does not match verifier leadership scope")
 )
 
 type Verdict string
@@ -123,17 +125,32 @@ type VerifierKeyGate interface {
 	CheckActive(context.Context, string, string, common.Address, uint64) error
 }
 
+// OperationOrganizationReader binds the submitted commitment to the tenant
+// whose leadership epoch authorizes verifier publication. The verifier role
+// can read only this pair from the intent table.
+type OperationOrganizationReader interface {
+	Organization(context.Context, string) (string, error)
+}
+
 type Config struct {
-	VerifierEpoch        uint64
-	VerifierSoftwareHash string
-	AttestationTTL       time.Duration
-	Clock                func() time.Time
-	Engines              map[Class]Engine
-	NotesAuthorizer      NotesAuthorizer
-	Signer               DigestSigner
-	Nonces               NonceSource
-	VerifierKeyGate      VerifierKeyGate
-	DecisionJournal      DecisionJournal
+	VerifierEpoch            uint64
+	VerifierSoftwareHash     string
+	AttestationTTL           time.Duration
+	Clock                    func() time.Time
+	Engines                  map[Class]Engine
+	NotesAuthorizer          NotesAuthorizer
+	Signer                   DigestSigner
+	Nonces                   NonceSource
+	VerifierKeyGate          VerifierKeyGate
+	DecisionJournal          DecisionJournal
+	Leadership               LeadershipGate
+	Organizations            OperationOrganizationReader
+	LeadershipOrganizationID string
+	LeadershipEpoch          uint64
+}
+
+type LeadershipGate interface {
+	FenceSink(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error
 }
 
 type SignedDecision struct {
@@ -167,6 +184,10 @@ func New(config Config) (*Service, error) {
 		config.AttestationTTL < time.Second || config.AttestationTTL > MaximumAttestationWindow*time.Second || config.AttestationTTL%time.Second != 0 {
 		return nil, ErrInvalidConfiguration
 	}
+	leadershipConfigured := config.Leadership != nil || config.Organizations != nil || config.LeadershipOrganizationID != "" || config.LeadershipEpoch != 0
+	if leadershipConfigured && (config.Leadership == nil || config.Organizations == nil || strings.TrimSpace(config.LeadershipOrganizationID) == "" || config.LeadershipEpoch == 0) {
+		return nil, ErrInvalidConfiguration
+	}
 	if config.Clock == nil {
 		config.Clock = time.Now
 	}
@@ -195,6 +216,30 @@ func New(config Config) (*Service, error) {
 // Exact retries in one process return the same result; a second delivery for
 // the same call is rejected to avoid contradictory bearer attestations.
 func (s *Service) VerifyAndSign(ctx context.Context, input Input) (SignedDecision, error) {
+	if s.config.Leadership == nil {
+		return s.verifyAndSign(ctx, input)
+	}
+	if err := input.Commitment.Validate(); err != nil {
+		return SignedDecision{}, err
+	}
+	organizationID, err := s.config.Organizations.Organization(ctx, input.Commitment.OperationID)
+	if err != nil {
+		return SignedDecision{}, err
+	}
+	if organizationID != s.config.LeadershipOrganizationID {
+		return SignedDecision{}, ErrOrganizationMismatch
+	}
+	var decision SignedDecision
+	err = s.config.Leadership.FenceSink(ctx, organizationID, s.config.LeadershipEpoch,
+		ascpleadership.SinkVerifierAttestation, func(fencedContext context.Context) error {
+			var verifyErr error
+			decision, verifyErr = s.verifyAndSign(fencedContext, input)
+			return verifyErr
+		})
+	return decision, err
+}
+
+func (s *Service) verifyAndSign(ctx context.Context, input Input) (SignedDecision, error) {
 	canonicalSpec, err := ParseSpec(input.SpecJSON)
 	if err != nil {
 		return SignedDecision{}, err

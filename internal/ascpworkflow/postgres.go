@@ -50,10 +50,10 @@ func (s *PostgresStore) Create(ctx context.Context, workflow Workflow, key, inpu
 		return existing, replayed, err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO ascp_proposal_workflows
-		(workflow_id, organization_id, kind, payload_hash, proposed_by, proposer_role, proposer_step_up_at, proposer_step_up_until,
+		(workflow_id, organization_id, kind, chain_action, payload_hash, proposed_by, proposer_role, proposer_step_up_at, proposer_step_up_until,
 		 state, proposed_at, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7),to_timestamp($8),$9,to_timestamp($10),to_timestamp($11))`,
-		workflow.WorkflowID, workflow.OrganizationID, workflow.Kind, workflow.PayloadHash, workflow.ProposedBy,
+		VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7,to_timestamp($8),to_timestamp($9),$10,to_timestamp($11),to_timestamp($12))`,
+		workflow.WorkflowID, workflow.OrganizationID, workflow.Kind, workflow.ChainAction, workflow.PayloadHash, workflow.ProposedBy,
 		workflow.ProposerRole, workflow.ProposerStepUpAt, workflow.ProposerStepUpUntil, workflow.State, workflow.ProposedAt, workflow.ExpiresAt)
 	if err != nil {
 		return Workflow{}, false, fmt.Errorf("insert proposal workflow: %w", err)
@@ -122,7 +122,7 @@ func (s *PostgresStore) decide(ctx context.Context, actor Actor, workflowID, act
 		workflow.ApproverStepUpAt, workflow.ApproverStepUpUntil = actor.StepUpAt.UTC().Unix(), actor.StepUpUntil.UTC().Unix()
 		workflow.ApprovedAt = now.Unix()
 		workflow.State = ApprovedPendingChain
-		if !requiresChainReceipt(workflow.Kind) {
+		if !workflowRequiresChainReceipt(workflow) {
 			workflow.State = Approved
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state=$3, approved_by=$4, approver_role=$5,
@@ -259,7 +259,7 @@ func recordTransition(ctx context.Context, tx *sql.Tx, workflow Workflow, action
 	return nil
 }
 
-const workflowSelect = `SELECT workflow_id, organization_id, kind, payload_hash, proposed_by, proposer_role, state,
+const workflowSelect = `SELECT workflow_id, organization_id, kind, COALESCE(chain_action,''), payload_hash, proposed_by, proposer_role, state,
 	COALESCE(approved_by,''), COALESCE(approver_role,''), COALESCE(cancelled_by,''),
 	extract(epoch FROM proposer_step_up_at)::bigint, extract(epoch FROM proposer_step_up_until)::bigint,
 	COALESCE(extract(epoch FROM approver_step_up_at)::bigint,0), COALESCE(extract(epoch FROM approver_step_up_until)::bigint,0),
@@ -273,7 +273,7 @@ type scanner interface{ Scan(...any) error }
 func scanWorkflow(row scanner) (Workflow, error) {
 	var workflow Workflow
 	var receipt []byte
-	err := row.Scan(&workflow.WorkflowID, &workflow.OrganizationID, &workflow.Kind, &workflow.PayloadHash,
+	err := row.Scan(&workflow.WorkflowID, &workflow.OrganizationID, &workflow.Kind, &workflow.ChainAction, &workflow.PayloadHash,
 		&workflow.ProposedBy, &workflow.ProposerRole, &workflow.State, &workflow.ApprovedBy, &workflow.ApproverRole,
 		&workflow.CancelledBy, &workflow.ProposerStepUpAt, &workflow.ProposerStepUpUntil, &workflow.ApproverStepUpAt, &workflow.ApproverStepUpUntil, &workflow.ProposedAt,
 		&workflow.ApprovedAt, &workflow.CancelledAt, &workflow.ExpiredAt, &workflow.ExpiresAt, &receipt,

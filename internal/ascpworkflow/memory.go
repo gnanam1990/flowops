@@ -110,7 +110,7 @@ func (s *MemoryStore) transition(ctx context.Context, actor Actor, workflowID, a
 		switch action {
 		case "APPROVE":
 			workflow.State = Approved
-			if requiresChainReceipt(workflow.Kind) {
+			if workflowRequiresChainReceipt(workflow) {
 				workflow.State = ApprovedPendingChain
 			}
 			workflow.ApprovedBy, workflow.ApproverRole = actor.PrincipalID, actor.Role

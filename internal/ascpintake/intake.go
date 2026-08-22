@@ -21,7 +21,10 @@ import (
 	"github.com/gnanam1990/flowops/pkg/sellerquote"
 )
 
-const Endpoint = "ascp.intent.create"
+const (
+	Endpoint         = "ascp.intent.create"
+	LogicalOperation = "CREATE_INTENT"
+)
 
 var (
 	ErrIdempotencyConflict = errors.New("idempotency key names different ASCP intake input")
@@ -282,8 +285,47 @@ type memoryRecord struct {
 	operation Operation
 }
 
+type TombstoneSnapshot struct {
+	OrganizationID     string
+	ActorID            string
+	IdempotencyKey     string
+	CanonicalInputHash string
+	Operation          Operation
+}
+
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{byScope: make(map[string]memoryRecord), byNonce: make(map[string]string), grants: make(map[string]ascpadaptation.Record), byOriginalIntent: make(map[string]string)}
+}
+
+func NewMemoryStoreFromTombstones(tombstones []TombstoneSnapshot) (*MemoryStore, error) {
+	store := NewMemoryStore()
+	for _, tombstone := range tombstones {
+		if tombstone.Operation.OrganizationID != tombstone.OrganizationID || tombstone.Operation.ActorID != tombstone.ActorID ||
+			tombstone.CanonicalInputHash == "" || tombstone.IdempotencyKey == "" {
+			return nil, errors.New("invalid intake tombstone snapshot")
+		}
+		scope := tombstone.OrganizationID + "\x00" + tombstone.ActorID + "\x00" + Endpoint + "\x00" + tombstone.IdempotencyKey
+		if _, exists := store.byScope[scope]; exists {
+			return nil, ErrIdempotencyConflict
+		}
+		if _, exists := store.byNonce[tombstone.Operation.QuoteNonce]; exists {
+			return nil, ErrQuoteNonceConsumed
+		}
+		store.byScope[scope] = memoryRecord{hash: tombstone.CanonicalInputHash, operation: tombstone.Operation}
+		store.byNonce[tombstone.Operation.QuoteNonce] = tombstone.Operation.OperationID
+	}
+	return store, nil
+}
+
+func (s *MemoryStore) SnapshotTombstones() []TombstoneSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]TombstoneSnapshot, 0, len(s.byScope))
+	for scope, record := range s.byScope {
+		parts := strings.Split(scope, "\x00")
+		result = append(result, TombstoneSnapshot{OrganizationID: parts[0], ActorID: parts[1], IdempotencyKey: parts[3], CanonicalInputHash: record.hash, Operation: record.operation})
+	}
+	return result
 }
 
 func (s *MemoryStore) Create(ctx context.Context, input StoreInput) (Operation, bool, error) {

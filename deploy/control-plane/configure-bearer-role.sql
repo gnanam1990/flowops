@@ -57,6 +57,15 @@ ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
 GRANT SELECT ON public.ascp_sign_requests, public.ascp_signer_outbox,
     public.ascp_execution_authorizations, public.ascp_budget_reservations,
     public.ascp_policy_decisions, public.ascp_bearer_registry TO :"bearer_role";
+GRANT SELECT ON public.ascp_leadership_epochs, public.ascp_signer_issuance_effects,
+    public.ascp_outbox_dispatch_effects TO :"bearer_role";
+GRANT SELECT (operation_id,organization_id) ON public.ascp_intents TO :"bearer_role";
+GRANT INSERT (effect_id,organization_id,epoch,sink,state,started_at)
+    ON public.ascp_signer_issuance_effects, public.ascp_outbox_dispatch_effects TO :"bearer_role";
+GRANT UPDATE (state,resolved_at)
+    ON public.ascp_signer_issuance_effects, public.ascp_outbox_dispatch_effects TO :"bearer_role";
+GRANT INSERT (rejection_id,organization_id,sink,presented_epoch,observed_epoch,observed_state,rejected_at)
+    ON public.ascp_signer_issuance_rejections, public.ascp_outbox_dispatch_rejections TO :"bearer_role";
 GRANT INSERT (handle_id, operation_id, payload_hash, digest, nonce, state, valid_until, created_at)
     ON public.ascp_bearer_handles TO :"bearer_role";
 GRANT INSERT (digest, instrument_type, signature_ref, nonce, issued_at, valid_until,

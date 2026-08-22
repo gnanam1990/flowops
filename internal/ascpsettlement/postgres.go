@@ -35,7 +35,19 @@ func (s *PostgresStore) FinalizedUnchecked(ctx context.Context, limit int) ([]At
 	if limit < 1 || limit > 1000 {
 		return nil, ErrInvalidAttempt
 	}
-	return s.listAttempts(ctx, `state='FINALIZED' AND canonical_checked_at IS NULL`, limit)
+	return s.listAttempts(ctx, `state='FINALIZED' AND (
+		canonical_checked_at IS NULL OR EXISTS (
+			SELECT 1
+			FROM ascp_payment_operations recovery_operation
+			JOIN ascp_asset_health recovery_health
+			  ON recovery_health.chain_id=recovery_operation.chain_id
+			 AND recovery_health.asset=recovery_operation.asset
+			WHERE recovery_operation.operation_id=ascp_payment_attempts.operation_id
+			  AND recovery_health.state='RECOVERING'
+			  AND recovery_health.observed_at IS NOT NULL
+			  AND canonical_checked_at<recovery_health.observed_at
+		)
+	)`, limit)
 }
 
 func (s *PostgresStore) listAttempts(ctx context.Context, predicate string, limit int) ([]Attempt, error) {
@@ -211,7 +223,8 @@ func (s *PostgresStore) ConfirmCanonical(ctx context.Context, result ReorgResult
 	updated, err := s.db.ExecContext(ctx, `
 		UPDATE ascp_payment_attempts SET canonical_checked_at=$6
 		WHERE operation_id=$1 AND action=$2 AND transaction_hash=$3 AND state='FINALIZED'
-		  AND block_number=$4 AND block_hash=$5 AND canonical_checked_at IS NULL`, result.OperationID, result.Action,
+		  AND block_number=$4 AND block_hash=$5
+		  AND (canonical_checked_at IS NULL OR canonical_checked_at<$6)`, result.OperationID, result.Action,
 		result.TransactionHash, result.BlockNumber, result.OriginalBlockHash, now)
 	if err != nil {
 		return fmt.Errorf("record ASCP canonical finality check: %w", err)
@@ -224,8 +237,11 @@ func (s *PostgresStore) ConfirmCanonical(ctx context.Context, result ReorgResult
 		return nil
 	}
 	var checked sql.NullTime
-	if err := s.db.QueryRowContext(ctx, `SELECT canonical_checked_at FROM ascp_payment_attempts WHERE operation_id=$1 AND action=$2 AND transaction_hash=$3`,
-		result.OperationID, result.Action, result.TransactionHash).Scan(&checked); err != nil || !checked.Valid {
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT canonical_checked_at FROM ascp_payment_attempts
+		WHERE operation_id=$1 AND action=$2 AND transaction_hash=$3 AND state='FINALIZED'
+		  AND block_number=$4 AND block_hash=$5`, result.OperationID, result.Action, result.TransactionHash,
+		result.BlockNumber, result.OriginalBlockHash).Scan(&checked); err != nil || !checked.Valid || checked.Time.Before(now) {
 		return ErrStateConflict
 	}
 	return nil

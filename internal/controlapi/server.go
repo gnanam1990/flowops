@@ -1367,7 +1367,7 @@ func (s *Server) writeWorkflowError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", err, false, "")
 	case errors.Is(err, ascpworkflow.ErrStateConflict):
 		writeError(w, http.StatusConflict, "WORKFLOW_STATE_CONFLICT", err, false, "")
-	case errors.Is(err, ascpworkflow.ErrInvalidWorkflow):
+	case errors.Is(err, ascpworkflow.ErrInvalidWorkflow), errors.Is(err, ascpworkflow.ErrAuthorityProof):
 		writeError(w, http.StatusBadRequest, "INVALID_WORKFLOW", err, false, "")
 	default:
 		writeError(w, http.StatusServiceUnavailable, "WORKFLOW_NOT_COMMITTED", err, true, "")

@@ -36,7 +36,7 @@ func (s *ActivationStore) ClaimExpired(ctx context.Context, claim RuntimeClaim) 
 }
 
 func (s *ActivationStore) claimRuntime(ctx context.Context, claim RuntimeClaim, expired bool) (RuntimeLease, bool, error) {
-	if !s.leasesRequired || !identifier(claim.WorkerID) || !identifier(claim.SignerKeyID) || claim.KeyEpoch == 0 ||
+	if !s.leasesRequired || !identifier(claim.WorkerID) || claim.OrganizationID != "" && !identifier(claim.OrganizationID) || !identifier(claim.SignerKeyID) || claim.KeyEpoch == 0 ||
 		!identifier(claim.KeeperID) || claim.LeaseDuration < time.Second || claim.LeaseDuration > time.Minute {
 		return RuntimeLease{}, false, ErrActivationInput
 	}
@@ -51,12 +51,14 @@ func (s *ActivationStore) claimRuntime(ctx context.Context, claim RuntimeClaim, 
 		expiryPredicate = "AND ((state='SIGN_REQUESTED' AND valid_until > $5) OR (state='PREPARED' AND valid_after <= $5 AND valid_until > $5) OR state IN ('ACTIVE_PENDING_MIRROR','ACTIVE_MIRRORED'))"
 	}
 	query := `WITH candidate AS (
-		SELECT request_id FROM ascp_sign_requests
-		WHERE signer_key_id=$1 AND key_epoch=$2 AND keeper_id=$3
-		  AND next_attempt_at <= $5
-		  AND (lease_expires_at IS NULL OR lease_expires_at <= $5)
+		SELECT r.request_id FROM ascp_sign_requests r
+		JOIN ascp_intents i ON i.operation_id=r.operation_id
+		WHERE r.signer_key_id=$1 AND r.key_epoch=$2 AND r.keeper_id=$3
+		  AND ($8='' OR i.organization_id=$8)
+		  AND r.next_attempt_at <= $5
+		  AND (r.lease_expires_at IS NULL OR r.lease_expires_at <= $5)
 		  ` + expiryPredicate + `
-		ORDER BY next_attempt_at, created_at, request_id
+		ORDER BY r.next_attempt_at, r.created_at, r.request_id
 		FOR UPDATE SKIP LOCKED LIMIT 1
 	)
 	UPDATE ascp_sign_requests r
@@ -65,7 +67,7 @@ func (s *ActivationStore) claimRuntime(ctx context.Context, claim RuntimeClaim, 
 	RETURNING ` + qualifiedActivationColumns("r")
 	var request ActivationRequest
 	err = scanActivationRequest(s.db.QueryRowContext(ctx, query, claim.SignerKeyID, claim.KeyEpoch, claim.KeeperID,
-		claim.WorkerID, now, token, expires), &request)
+		claim.WorkerID, now, token, expires, claim.OrganizationID), &request)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RuntimeLease{}, false, nil
 	}

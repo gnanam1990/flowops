@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -262,6 +264,10 @@ type OutcomeSource interface {
 
 type LeadershipGate interface {
 	Current(context.Context, string) (uint64, error)
+}
+
+type namedLeadershipGate interface {
+	FenceSink(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error
 }
 
 type Config struct {

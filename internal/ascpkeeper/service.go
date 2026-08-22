@@ -19,16 +19,35 @@ func (s *Service) RunOnce(ctx context.Context) (Job, error) {
 	if lease.Job.KeeperID != s.config.KeeperID || lease.Job.GasPayer != s.config.GasPayer || lease.Job.ChainID != s.config.ChainID {
 		return Job{}, ErrInvalidJob
 	}
-	switch lease.Job.State {
-	case StateQueued:
-		return s.prepareAndBroadcast(ctx, lease)
-	case StatePrepared, StateBroadcasting:
-		return s.rebroadcast(ctx, lease)
-	case StateTimedOut, StateReorged:
-		return s.replace(ctx, lease)
-	default:
-		return Job{}, ErrStateConflict
+	advance := func(fencedContext context.Context) error {
+		var advanceErr error
+		switch lease.Job.State {
+		case StateQueued:
+			lease.Job, advanceErr = s.prepareAndBroadcast(fencedContext, lease)
+		case StatePrepared, StateBroadcasting:
+			lease.Job, advanceErr = s.rebroadcast(fencedContext, lease)
+		case StateTimedOut, StateReorged:
+			lease.Job, advanceErr = s.replace(fencedContext, lease)
+		default:
+			advanceErr = ErrStateConflict
+		}
+		return advanceErr
 	}
+	if named, ok := s.leadership.(namedLeadershipGate); ok {
+		epoch := lease.Job.LeadershipEpoch
+		if epoch == 0 {
+			epoch, err = s.leadership.Current(ctx, lease.Job.OrganizationID)
+			if err != nil {
+				return Job{}, fmt.Errorf("read keeper leadership epoch: %w", err)
+			}
+		}
+		if err := named.FenceSink(ctx, lease.Job.OrganizationID, epoch, ascpleadership.SinkKeeperRelay, advance); err != nil {
+			return lease.Job, err
+		}
+		return lease.Job, nil
+	}
+	err = advance(ctx)
+	return lease.Job, err
 }
 
 // ObserveOnce advances one submitted attempt using evidence produced by the
