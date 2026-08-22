@@ -20,11 +20,15 @@ import (
 )
 
 const (
-	ProtocolVersion = "2025-11-25"
-	defaultMaxBytes = 64 * 1024
+	ProtocolVersion         = "2025-11-25"
+	defaultMaxBytes         = 64 * 1024
+	defaultMaxResponseBytes = 1024 * 1024
 )
 
-var identifierPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
+var (
+	identifierPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`)
+	hashPattern       = regexp.MustCompile(`^0x[0-9a-f]{64}$`)
+)
 
 //go:embed schemas/tools.json schemas/manifest.sha256
 var schemaFiles embed.FS
@@ -36,11 +40,12 @@ type fileReader interface {
 }
 
 type Config struct {
-	Delegate        http.Handler
-	AllowedOrigins  []string
-	MaxRequestBytes int64
-	ServerName      string
-	ServerVersion   string
+	Delegate         http.Handler
+	AllowedOrigins   []string
+	MaxRequestBytes  int64
+	MaxResponseBytes int64
+	ServerName       string
+	ServerVersion    string
 }
 
 type Tool struct {
@@ -51,12 +56,123 @@ type Tool struct {
 }
 
 type Server struct {
-	delegate        http.Handler
-	allowedOrigins  map[string]struct{}
-	maxRequestBytes int64
-	serverName      string
-	serverVersion   string
-	tools           []Tool
+	delegate         http.Handler
+	allowedOrigins   map[string]struct{}
+	maxRequestBytes  int64
+	maxResponseBytes int64
+	serverName       string
+	serverVersion    string
+	tools            []Tool
+}
+
+type toolAudience uint8
+
+const (
+	audienceAgent toolAudience = iota + 1
+	audienceHumanRead
+	audienceHumanDecision
+)
+
+type toolEffect uint8
+
+const (
+	effectRead toolEffect = iota + 1
+	effectControlPlaneWrite
+	effectHumanDecision
+)
+
+type toolPolicy struct {
+	audience toolAudience
+	effect   toolEffect
+}
+
+// toolPolicies is the production capability allowlist. A schema entry without
+// a policy is not usable, and no policy grants signing, keeper, arbitrary RPC,
+// chain-write, evidence-override, or database capability.
+var toolPolicies = map[string]toolPolicy{
+	"ascp.operation.create":            {audienceAgent, effectControlPlaneWrite},
+	"ascp.operation.get":               {audienceAgent, effectRead},
+	"ascp.operation.evaluate":          {audienceAgent, effectControlPlaneWrite},
+	"ascp.operation.decision.get":      {audienceAgent, effectRead},
+	"ascp.operation.authorize":         {audienceAgent, effectControlPlaneWrite},
+	"ascp.operation.authorization.get": {audienceAgent, effectRead},
+	"ascp.operation.activation.create": {audienceAgent, effectControlPlaneWrite},
+	"ascp.operation.activation.get":    {audienceAgent, effectRead},
+	"ascp.intent.create":               {audienceAgent, effectControlPlaneWrite},
+	"ascp.intent.get":                  {audienceAgent, effectRead},
+	"ascp.approval.list":               {audienceHumanRead, effectRead},
+	"ascp.approval.get":                {audienceHumanRead, effectRead},
+	"ascp.approval.decide":             {audienceHumanDecision, effectHumanDecision},
+}
+
+type sessionIdentity struct {
+	PrincipalID    string `json:"principalId"`
+	OrganizationID string `json:"organizationId"`
+	Kind           string `json:"kind"`
+	Role           string `json:"role"`
+	ReadOnly       bool   `json:"readOnly"`
+	StepUpAt       string `json:"stepUpAt"`
+	StepUpUntil    string `json:"stepUpUntil"`
+}
+
+type operationCreateRequest struct {
+	TaskID               string                    `json:"taskId"`
+	Method               string                    `json:"method"`
+	URL                  string                    `json:"url"`
+	RequestBodyBase64    string                    `json:"requestBodyBase64,omitempty"`
+	Headers              []operationHeader         `json:"headers,omitempty"`
+	ResponseContract     operationResponseContract `json:"responseContract"`
+	Category             string                    `json:"category"`
+	ReasonRef            *operationReasonRef       `json:"reasonRef,omitempty"`
+	SellerQuote          operationSellerQuote      `json:"sellerQuote"`
+	SellerQuoteSignature string                    `json:"sellerQuoteSignature"`
+	AdaptationGrantID    string                    `json:"adaptationGrantId,omitempty"`
+}
+
+type operationHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type operationResponseContract struct {
+	ContentType string `json:"contentType"`
+	SchemaRef   string `json:"schemaRef"`
+}
+
+type operationReasonRef struct {
+	BlobRef     string `json:"blobRef"`
+	ContentHash string `json:"contentHash"`
+}
+
+type operationSellerQuote struct {
+	PurchaseSpecHash          string `json:"purchaseSpecHash"`
+	SellerID                  string `json:"sellerId"`
+	ResourceID                string `json:"resourceId"`
+	DirectoryVersion          uint64 `json:"directoryVersion"`
+	SchemeVersion             uint16 `json:"schemeVersion"`
+	ChainID                   string `json:"chainId"`
+	Asset                     string `json:"asset"`
+	AmountBaseUnits           string `json:"amountBaseUnits"`
+	PayTo                     string `json:"payTo"`
+	AckAuthority              string `json:"ackAuthority"`
+	VerificationSpecHash      string `json:"verificationSpecHash"`
+	DeclaredWorkTime          uint64 `json:"declaredWorkTime"`
+	VerificationBudgetSeconds uint64 `json:"verificationBudgetSeconds"`
+	QuoteExpiresAt            uint64 `json:"quoteExpiresAt"`
+	QuoteNonce                string `json:"quoteNonce"`
+}
+
+type activationRequest struct {
+	ActionID             string `json:"actionId"`
+	CanonicalPayload     string `json:"canonicalPayload"`
+	CanonicalPayloadHash string `json:"canonicalPayloadHash"`
+	EvidenceBundle       string `json:"evidenceBundle"`
+	EvidenceBundleHash   string `json:"evidenceBundleHash"`
+	Digest               string `json:"digest"`
+	Nonce                string `json:"nonce"`
+	InstrumentType       string `json:"instrumentType"`
+	ValidAfter           string `json:"validAfter"`
+	ValidUntil           string `json:"validUntil"`
 }
 
 type toolsDocument struct {
@@ -70,6 +186,9 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	tools, err := loadTools(schemaFiles)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateToolPolicies(tools); err != nil {
 		return nil, err
 	}
 	origins := make(map[string]struct{}, len(cfg.AllowedOrigins))
@@ -87,6 +206,13 @@ func NewServer(cfg Config) (*Server, error) {
 	if maxBytes < 1024 || maxBytes > 2*1024*1024 {
 		return nil, errors.New("MCP request size must be between 1 KiB and 2 MiB")
 	}
+	maxResponseBytes := cfg.MaxResponseBytes
+	if maxResponseBytes == 0 {
+		maxResponseBytes = defaultMaxResponseBytes
+	}
+	if maxResponseBytes < 1024 || maxResponseBytes > 2*1024*1024 {
+		return nil, errors.New("MCP response size must be between 1 KiB and 2 MiB")
+	}
 	name := strings.TrimSpace(cfg.ServerName)
 	if name == "" {
 		name = "flowops-ascp"
@@ -95,7 +221,23 @@ func NewServer(cfg Config) (*Server, error) {
 	if version == "" {
 		version = "0.1.0"
 	}
-	return &Server{delegate: cfg.Delegate, allowedOrigins: origins, maxRequestBytes: maxBytes, serverName: name, serverVersion: version, tools: tools}, nil
+	return &Server{
+		delegate: cfg.Delegate, allowedOrigins: origins, maxRequestBytes: maxBytes,
+		maxResponseBytes: maxResponseBytes, serverName: name, serverVersion: version, tools: tools,
+	}, nil
+}
+
+func validateToolPolicies(tools []Tool) error {
+	if len(tools) != len(toolPolicies) {
+		return errors.New("MCP schemas and capability policies disagree")
+	}
+	for _, tool := range tools {
+		policy, exists := toolPolicies[tool.Name]
+		if !exists || policy.audience == 0 || policy.effect == 0 {
+			return fmt.Errorf("MCP tool %q has no capability policy", tool.Name)
+		}
+	}
+	return nil
 }
 
 func loadTools(files fileReader) ([]Tool, error) {
@@ -197,12 +339,13 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusAccepted)
 		return
 	}
-	if !s.authenticated(request.Context(), request.Header.Get("Authorization")) {
+	identity, authenticated := s.session(request.Context(), request.Header.Get("Authorization"))
+	if !authenticated {
 		s.writeRPC(writer, id, nil, &rpcError{Code: -32001, Message: "authentication failed"})
 		return
 	}
 
-	result, rpcErr := s.dispatch(request.Context(), request.Header.Get("Authorization"), message)
+	result, rpcErr := s.dispatch(request.Context(), request.Header.Get("Authorization"), identity, message)
 	s.writeRPC(writer, id, result, rpcErr)
 }
 
@@ -261,14 +404,13 @@ type rpcError struct {
 
 func decodeRequest(writer http.ResponseWriter, request *http.Request, maxBytes int64) (rpcRequest, json.RawMessage, bool, error) {
 	request.Body = http.MaxBytesReader(writer, request.Body, maxBytes)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	var message rpcRequest
-	if err := decoder.Decode(&message); err != nil {
+	raw, err := io.ReadAll(request.Body)
+	if err != nil {
 		return rpcRequest{}, nil, false, err
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return rpcRequest{}, message.ID, false, errors.New("trailing JSON data")
+	var message rpcRequest
+	if err := strictDecode(raw, &message); err != nil {
+		return rpcRequest{}, nil, false, err
 	}
 	if message.JSONRPC != "2.0" || strings.TrimSpace(message.Method) == "" || (message.ID != nil && !validRequestID(message.ID)) {
 		return rpcRequest{}, message.ID, false, errors.New("invalid JSON-RPC fields")
@@ -288,12 +430,78 @@ func validRequestID(id json.RawMessage) bool {
 	return json.Unmarshal(id, &number) == nil
 }
 
-func (s *Server) authenticated(ctx context.Context, authorization string) bool {
+func (s *Server) session(ctx context.Context, authorization string) (sessionIdentity, bool) {
 	response := s.callBackend(ctx, authorization, http.MethodGet, "/v1/session", nil, nil)
-	return response.status == http.StatusOK
+	if response.status != http.StatusOK || response.overflow || !isJSONContentType(response.contentType) {
+		return sessionIdentity{}, false
+	}
+	var identity sessionIdentity
+	if strictDecode(response.body, &identity) != nil || !identity.valid() {
+		return sessionIdentity{}, false
+	}
+	return identity, true
 }
 
-func (s *Server) dispatch(ctx context.Context, authorization string, message rpcRequest) (any, *rpcError) {
+func (identity sessionIdentity) valid() bool {
+	if !identifierPattern.MatchString(identity.PrincipalID) || !identifierPattern.MatchString(identity.OrganizationID) {
+		return false
+	}
+	switch identity.Kind {
+	case "AGENT":
+		return identity.Role == "AGENT"
+	case "HUMAN":
+		switch identity.Role {
+		case "OWNER", "ADMIN", "DEVELOPER", "FINANCE", "APPROVER", "AUDITOR", "VIEWER",
+			"ORG_ADMIN", "SELLER_ADMIN", "SIGNER_OPERATOR", "INCIDENT_RESPONDER":
+			return true
+		}
+	}
+	return false
+}
+
+func (identity sessionIdentity) allows(policy toolPolicy) bool {
+	if !identity.valid() || identity.ReadOnly && policy.effect != effectRead {
+		return false
+	}
+	switch policy.audience {
+	case audienceAgent:
+		return identity.Kind == "AGENT" && identity.Role == "AGENT"
+	case audienceHumanRead:
+		if identity.Kind != "HUMAN" {
+			return false
+		}
+		switch identity.Role {
+		case "OWNER", "ADMIN", "DEVELOPER", "FINANCE", "APPROVER", "AUDITOR", "VIEWER":
+			return true
+		default:
+			return false
+		}
+	case audienceHumanDecision:
+		if identity.Kind != "HUMAN" || identity.ReadOnly {
+			return false
+		}
+		switch identity.Role {
+		case "OWNER", "ADMIN", "FINANCE", "APPROVER":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func (s *Server) toolsFor(identity sessionIdentity) []Tool {
+	tools := make([]Tool, 0, len(s.tools))
+	for _, tool := range s.tools {
+		if policy, exists := toolPolicies[tool.Name]; exists && identity.allows(policy) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools
+}
+
+func (s *Server) dispatch(ctx context.Context, authorization string, identity sessionIdentity, message rpcRequest) (any, *rpcError) {
 	switch message.Method {
 	case "initialize":
 		return map[string]any{
@@ -307,21 +515,28 @@ func (s *Server) dispatch(ctx context.Context, authorization string, message rpc
 		}{}); err != nil {
 			return nil, invalidParams()
 		}
-		return map[string]any{"tools": s.tools}, nil
+		return map[string]any{"tools": s.toolsFor(identity)}, nil
 	case "tools/call":
-		return s.callTool(ctx, authorization, message.Params)
+		return s.callTool(ctx, authorization, identity, message.Params)
 	default:
 		return nil, &rpcError{Code: -32601, Message: "method not found"}
 	}
 }
 
-func (s *Server) callTool(ctx context.Context, authorization string, params json.RawMessage) (any, *rpcError) {
+func (s *Server) callTool(ctx context.Context, authorization string, identity sessionIdentity, params json.RawMessage) (any, *rpcError) {
 	var call struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
 	if err := requireNoUnknown(params, &call); err != nil || call.Name == "" || len(call.Arguments) == 0 {
 		return nil, invalidParams()
+	}
+	policy, exists := toolPolicies[call.Name]
+	if !exists {
+		return nil, &rpcError{Code: -32602, Message: "tool is not supported"}
+	}
+	if !identity.allows(policy) {
+		return nil, &rpcError{Code: -32003, Message: "tool is not allowed for authenticated principal"}
 	}
 	var response backendResponse
 	switch call.Name {
@@ -334,7 +549,8 @@ func (s *Server) callTool(ctx context.Context, authorization string, params json
 			return nil, invalidParams()
 		}
 		trimmedRequest := bytes.TrimSpace(arguments.Request)
-		if !json.Valid(trimmedRequest) || len(trimmedRequest) == 0 || trimmedRequest[0] != '{' || !identifierPattern.MatchString(arguments.IdempotencyKey) {
+		var validated operationCreateRequest
+		if strictDecode(trimmedRequest, &validated) != nil || !identifierPattern.MatchString(arguments.IdempotencyKey) {
 			return nil, invalidParams()
 		}
 		response = s.callBackend(ctx, authorization, http.MethodPost, "/agent/v1/intents", map[string]string{"Idempotency-Key": arguments.IdempotencyKey}, trimmedRequest)
@@ -373,12 +589,12 @@ func (s *Server) callTool(ctx context.Context, authorization string, params json
 			OperationID string          `json:"operationId"`
 			Request     json.RawMessage `json:"request"`
 		}
-		if err := requireNoUnknown(call.Arguments, &arguments); err != nil ||
-			!identifierPattern.MatchString(arguments.OperationID) {
+		if err := requireNoUnknown(call.Arguments, &arguments); err != nil || !hashPattern.MatchString(arguments.OperationID) {
 			return nil, invalidParams()
 		}
 		request := bytes.TrimSpace(arguments.Request)
-		if len(request) == 0 || request[0] != '{' || !json.Valid(request) {
+		var validated activationRequest
+		if strictDecode(request, &validated) != nil {
 			return nil, invalidParams()
 		}
 		response = s.callBackend(ctx, authorization, http.MethodPost, "/agent/v1/intents/"+url.PathEscape(arguments.OperationID)+"/activation", nil, request)
@@ -393,7 +609,7 @@ func (s *Server) callTool(ctx context.Context, authorization string, params json
 			Intent         json.RawMessage `json:"intent"`
 			IdempotencyKey string          `json:"idempotencyKey"`
 		}
-		if err := requireNoUnknown(call.Arguments, &arguments); err != nil || !json.Valid(arguments.Intent) || !identifierPattern.MatchString(arguments.IdempotencyKey) {
+		if err := requireNoUnknown(call.Arguments, &arguments); err != nil || !strictJSONObject(arguments.Intent) || !identifierPattern.MatchString(arguments.IdempotencyKey) {
 			return nil, invalidParams()
 		}
 		response = s.callBackend(ctx, authorization, http.MethodPost, "/v1/intents", map[string]string{"Idempotency-Key": arguments.IdempotencyKey}, arguments.Intent)
@@ -430,7 +646,7 @@ func (s *Server) callTool(ctx context.Context, authorization string, params json
 	default:
 		return nil, &rpcError{Code: -32602, Message: "tool is not supported"}
 	}
-	return toolResult(response), nil
+	return toolResult(call.Name, response), nil
 }
 
 func oneIdentifierArgument(raw json.RawMessage, field string) (string, bool) {
@@ -443,14 +659,36 @@ func oneIdentifierArgument(raw json.RawMessage, field string) (string, bool) {
 		return "", false
 	}
 	var identifier string
-	return identifier, json.Unmarshal(encoded, &identifier) == nil && identifierPattern.MatchString(identifier)
+	if json.Unmarshal(encoded, &identifier) != nil {
+		return "", false
+	}
+	if field == "operationId" {
+		return identifier, hashPattern.MatchString(identifier)
+	}
+	return identifier, identifierPattern.MatchString(identifier)
 }
 
 func requireNoUnknown(raw json.RawMessage, target any) error {
 	if len(raw) == 0 {
 		raw = []byte(`{}`)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
+	return strictDecode(raw, target)
+}
+
+func strictJSONObject(raw json.RawMessage) bool {
+	var object map[string]json.RawMessage
+	return strictDecode(raw, &object) == nil
+}
+
+func strictDecode(raw []byte, target any) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return errors.New("JSON value must be an object")
+	}
+	if err := rejectDuplicateJSONKeys(trimmed); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
@@ -461,20 +699,91 @@ func requireNoUnknown(raw json.RawMessage, target any) error {
 	return nil
 }
 
+func rejectDuplicateJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := walkJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("trailing JSON data")
+		}
+		return err
+	}
+	return nil
+}
+
+func walkJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, composite := token.(json.Delim)
+	if !composite {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, exists := seen[key]; exists {
+				return fmt.Errorf("duplicate JSON key %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := walkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return errors.New("invalid JSON object")
+		}
+		return nil
+	case '[':
+		for decoder.More() {
+			if err := walkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return errors.New("invalid JSON array")
+		}
+		return nil
+	default:
+		return errors.New("invalid JSON delimiter")
+	}
+}
+
 func invalidParams() *rpcError { return &rpcError{Code: -32602, Message: "invalid params"} }
 
 type backendResponse struct {
-	status int
-	body   json.RawMessage
+	status      int
+	body        json.RawMessage
+	contentType string
+	overflow    bool
 }
 
 type backendRecorder struct {
-	header http.Header
-	status int
-	body   bytes.Buffer
+	header   http.Header
+	status   int
+	body     bytes.Buffer
+	maxBytes int64
+	overflow bool
 }
 
-func newBackendRecorder() *backendRecorder     { return &backendRecorder{header: make(http.Header)} }
+func newBackendRecorder(maxBytes int64) *backendRecorder {
+	return &backendRecorder{header: make(http.Header), maxBytes: maxBytes}
+}
 func (w *backendRecorder) Header() http.Header { return w.header }
 func (w *backendRecorder) WriteHeader(status int) {
 	if w.status == 0 {
@@ -485,13 +794,17 @@ func (w *backendRecorder) Write(value []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+	if w.overflow || int64(w.body.Len())+int64(len(value)) > w.maxBytes {
+		w.overflow = true
+		return len(value), nil
+	}
 	return w.body.Write(value)
 }
 
 func (s *Server) callBackend(ctx context.Context, authorization, method, path string, extraHeaders map[string]string, body []byte) backendResponse {
 	request, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(body))
 	if err != nil {
-		return backendResponse{status: http.StatusInternalServerError, body: []byte(`{"error":{"code":"MCP_BACKEND_BUILD_FAILED","retriable":true}}`)}
+		return backendResponse{status: http.StatusInternalServerError, body: []byte(`{"error":{"code":"MCP_BACKEND_BUILD_FAILED","retriable":true}}`), contentType: "application/json"}
 	}
 	request.Header.Set("Authorization", authorization)
 	request.Header.Set("Accept", "application/json")
@@ -501,26 +814,62 @@ func (s *Server) callBackend(ctx context.Context, authorization, method, path st
 	for key, value := range extraHeaders {
 		request.Header.Set(key, value)
 	}
-	recorder := newBackendRecorder()
+	recorder := newBackendRecorder(s.maxResponseBytes)
 	s.delegate.ServeHTTP(recorder, request)
 	if recorder.status == 0 {
 		recorder.status = http.StatusOK
 	}
-	return backendResponse{status: recorder.status, body: append(json.RawMessage(nil), recorder.body.Bytes()...)}
+	return backendResponse{
+		status: recorder.status, body: append(json.RawMessage(nil), recorder.body.Bytes()...),
+		contentType: recorder.header.Get("Content-Type"), overflow: recorder.overflow,
+	}
 }
 
-func toolResult(response backendResponse) map[string]any {
+func toolResult(toolName string, response backendResponse) map[string]any {
 	var output any
-	if json.Unmarshal(response.body, &output) != nil {
+	if response.overflow {
+		response.status = http.StatusBadGateway
+		output = map[string]any{"error": map[string]any{"code": "MCP_BACKEND_RESPONSE_TOO_LARGE", "retriable": true}}
+	} else if !isJSONContentType(response.contentType) {
+		response.status = http.StatusBadGateway
 		output = map[string]any{"error": map[string]any{"code": "MCP_BACKEND_INVALID_RESPONSE", "retriable": true}}
+	} else if decoded, err := decodeBackendOutput(response.body); err != nil {
+		response.status = http.StatusBadGateway
+		output = map[string]any{"error": map[string]any{"code": "MCP_BACKEND_INVALID_RESPONSE", "retriable": true}}
+	} else {
+		output = decoded
 	}
 	output = redact(output)
 	encoded, _ := json.Marshal(output)
 	return map[string]any{
-		"content":           []map[string]string{{"type": "text", "text": string(encoded)}},
+		"content": []map[string]string{{
+			"type": "text",
+			"text": "FLOWOPS_UNTRUSTED_DATA_V1 tool=" + toolName + "\n" + string(encoded),
+		}},
 		"structuredContent": output,
 		"isError":           response.status < 200 || response.status >= 300,
+		"_meta": map[string]any{
+			"flowops/dataTrust":  "UNTRUSTED_BACKEND_DATA",
+			"flowops/tool":       toolName,
+			"flowops/actionable": false,
+		},
 	}
+}
+
+func decodeBackendOutput(raw []byte) (any, error) {
+	if err := rejectDuplicateJSONKeys(raw); err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var output map[string]any
+	if err := decoder.Decode(&output); err != nil || output == nil {
+		return nil, errors.New("backend JSON must be an object")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("backend JSON contains trailing data")
+	}
+	return output, nil
 }
 
 func redact(value any) any {
@@ -528,8 +877,7 @@ func redact(value any) any {
 	case map[string]any:
 		result := make(map[string]any, len(current))
 		for key, nested := range current {
-			switch strings.ToLower(key) {
-			case "signature", "privatekey", "private_key", "seed", "mnemonic", "accesstoken", "access_token", "rawapprovaltoken", "raw_approval_token", "calldata":
+			if secretOutputKey(key) {
 				continue
 			}
 			result[key] = redact(nested)
@@ -543,6 +891,32 @@ func redact(value any) any {
 		return result
 	default:
 		return value
+	}
+}
+
+func secretOutputKey(key string) bool {
+	var normalized strings.Builder
+	for _, character := range strings.ToLower(key) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			normalized.WriteRune(character)
+		}
+	}
+	value := normalized.String()
+	if strings.Contains(value, "signature") || strings.Contains(value, "privatekey") ||
+		strings.Contains(value, "seedphrase") || strings.Contains(value, "mnemonic") ||
+		strings.HasSuffix(value, "token") || strings.Contains(value, "apikey") ||
+		strings.Contains(value, "secret") || strings.Contains(value, "password") ||
+		strings.Contains(value, "authorizationheader") || strings.Contains(value, "cookie") ||
+		strings.Contains(value, "sessionid") || strings.Contains(value, "preparedhandle") ||
+		strings.Contains(value, "signerhandle") ||
+		strings.Contains(value, "evidencebundle") || strings.Contains(value, "canonicalpayload") {
+		return true
+	}
+	switch value {
+	case "seed", "secret", "credential", "credentials", "bearer", "calldata", "rawtransaction", "keystore":
+		return true
+	default:
+		return false
 	}
 }
 

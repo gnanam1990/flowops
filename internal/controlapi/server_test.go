@@ -544,6 +544,12 @@ func TestApprovalReadsSweepExpiredReservations(t *testing.T) {
 
 func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *controlplane.Lifecycle, *controlplane.Journal, time.Time) {
 	t.Helper()
+	server, store, chain, lifecycle, journal, now := setupHandler(t)
+	return httptest.NewServer(server), store, chain, lifecycle, journal, now
+}
+
+func setupHandler(t *testing.T) (*Server, *memoryStore, *mutableChain, *controlplane.Lifecycle, *controlplane.Journal, time.Time) {
+	t.Helper()
 	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
 	store := newMemoryStore(func() time.Time { return now })
 	stepUp := now.Add(10 * time.Minute)
@@ -574,7 +580,7 @@ func setupServer(t *testing.T) (*httptest.Server, *memoryStore, *mutableChain, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	return httptest.NewServer(server), store, chain, lifecycle, journal, now
+	return server, store, chain, lifecycle, journal, now
 }
 
 type settlementRegistrarStub struct {

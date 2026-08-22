@@ -330,6 +330,115 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreRetriesSerializableIntakeConflict(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	store, err := NewPostgresStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	input := storeInput(now)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO ascp_intents`).
+		WillReturnError(&pgconn.PgError{Code: "40001", Message: "concurrent idempotency insert"})
+	mock.ExpectRollback()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO ascp_intents`).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
+	mock.ExpectCommit()
+
+	created, replayed, err := store.Create(context.Background(), input)
+	if err != nil || replayed || created.OperationID != input.Operation.OperationID || created.CreatedAt != now.Unix() {
+		t.Fatalf("created=%+v replayed=%t err=%v", created, replayed, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresStoreResolvesConcurrentQuoteConflictByDurableScope(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	store, err := NewPostgresStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	input := storeInput(now)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO ascp_intents`).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_intents_quote_nonce_unique"})
+	mock.ExpectRollback()
+	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
+		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, input.IdempotencyKey).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash",
+			"quote_nonce", "directory_version", "directory_contract", "seller_signer",
+			"adaptation_grant_id", "created_at", "canonical_input_hash",
+		}).AddRow(
+			input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID,
+			input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce,
+			input.Operation.DirectoryVersion, input.Operation.DirectoryContract, input.Operation.SellerSigner,
+			"", now, input.CanonicalInputHash,
+		))
+
+	stored, replayed, err := store.Create(context.Background(), input)
+	if err != nil || !replayed || stored.OperationID != input.Operation.OperationID || stored.CreatedAt != now.Unix() {
+		t.Fatalf("stored=%+v replayed=%t err=%v", stored, replayed, err)
+	}
+
+	changed := input
+	changed.CanonicalInputHash = strings.Repeat("b", 64)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO ascp_intents`).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_intents_quote_nonce_unique"})
+	mock.ExpectRollback()
+	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
+		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, input.IdempotencyKey).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash",
+			"quote_nonce", "directory_version", "directory_contract", "seller_signer",
+			"adaptation_grant_id", "created_at", "canonical_input_hash",
+		}).AddRow(
+			input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID,
+			input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce,
+			input.Operation.DirectoryVersion, input.Operation.DirectoryContract, input.Operation.SellerSigner,
+			"", now, input.CanonicalInputHash,
+		))
+	if _, _, err := store.Create(context.Background(), changed); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("changed idempotency input error=%v", err)
+	}
+
+	secondEffect := input
+	secondEffect.IdempotencyKey = "intake_second_effect"
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO ascp_intents`).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_intents_quote_nonce_unique"})
+	mock.ExpectRollback()
+	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
+		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, secondEffect.IdempotencyKey).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash",
+			"quote_nonce", "directory_version", "directory_contract", "seller_signer",
+			"adaptation_grant_id", "created_at", "canonical_input_hash",
+		}))
+	if _, _, err := store.Create(context.Background(), secondEffect); !errors.Is(err, ErrQuoteNonceConsumed) {
+		t.Fatalf("second economic effect error=%v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPostgresConflictClassificationPreservesOperationalFailures(t *testing.T) {
 	duplicate := &pgconn.PgError{Code: "23505", ConstraintName: "ascp_intents_quote_nonce_unique"}
 	if err := classifyInsertError(duplicate); !errors.Is(err, ErrQuoteNonceConsumed) {
