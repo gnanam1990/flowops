@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
 )
 
 type Head struct {
@@ -83,13 +85,20 @@ type RemoteHeadReader interface {
 }
 
 type Publisher struct {
-	store      CheckpointStore
-	worm       WORMStore
-	remote     RemoteHead
-	keyID      string
-	privateKey ed25519.PrivateKey
-	writerKeys map[string][]byte
-	clock      func() time.Time
+	store           CheckpointStore
+	worm            WORMStore
+	remote          RemoteHead
+	keyID           string
+	privateKey      ed25519.PrivateKey
+	writerKeys      map[string][]byte
+	clock           func() time.Time
+	leadership      CheckpointLeadershipGate
+	organizationID  string
+	leadershipEpoch uint64
+}
+
+type CheckpointLeadershipGate interface {
+	FenceSink(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error
 }
 
 func NewPublisher(store CheckpointStore, worm WORMStore, remote RemoteHead, keyID string, privateKey ed25519.PrivateKey, writerKeys map[string][]byte, clocks ...func() time.Time) (*Publisher, error) {
@@ -114,7 +123,37 @@ func NewPublisher(store CheckpointStore, worm WORMStore, remote RemoteHead, keyI
 		privateKey: append(ed25519.PrivateKey(nil), privateKey...), writerKeys: keys, clock: clock}, nil
 }
 
+func NewFencedPublisher(store CheckpointStore, worm WORMStore, remote RemoteHead, keyID string,
+	privateKey ed25519.PrivateKey, writerKeys map[string][]byte, leadership CheckpointLeadershipGate,
+	organizationID string, leadershipEpoch uint64, clocks ...func() time.Time,
+) (*Publisher, error) {
+	if leadership == nil || organizationID == "" || leadershipEpoch == 0 {
+		return nil, ErrInvalidEvent
+	}
+	publisher, err := NewPublisher(store, worm, remote, keyID, privateKey, writerKeys, clocks...)
+	if err != nil {
+		return nil, err
+	}
+	publisher.leadership, publisher.organizationID, publisher.leadershipEpoch = leadership, organizationID, leadershipEpoch
+	return publisher, nil
+}
+
 func (p *Publisher) Publish(ctx context.Context, trialBalanceHash string) (Checkpoint, bool, error) {
+	if p.leadership == nil {
+		return p.publish(ctx, trialBalanceHash)
+	}
+	var checkpoint Checkpoint
+	var replayed bool
+	err := p.leadership.FenceSink(ctx, p.organizationID, p.leadershipEpoch, ascpleadership.SinkCheckpointWrite,
+		func(fencedContext context.Context) error {
+			var publishErr error
+			checkpoint, replayed, publishErr = p.publish(fencedContext, trialBalanceHash)
+			return publishErr
+		})
+	return checkpoint, replayed, err
+}
+
+func (p *Publisher) publish(ctx context.Context, trialBalanceHash string) (Checkpoint, bool, error) {
 	if !nonzeroHash(trialBalanceHash) {
 		return Checkpoint{}, false, ErrInvalidEvent
 	}

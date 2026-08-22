@@ -20,12 +20,13 @@ import (
 const maxLeadershipInputBytes = 32 * 1024
 
 type request struct {
-	OrganizationID string  `json:"organizationId"`
-	ExpectedEpoch  *uint64 `json:"expectedEpoch,omitempty"`
-	Actor          *string `json:"actor,omitempty"`
-	EvidenceDigest *string `json:"evidenceDigest,omitempty"`
-	EffectID       *string `json:"effectId,omitempty"`
-	fields         map[string]struct{}
+	OrganizationID        string  `json:"organizationId"`
+	ExpectedEpoch         *uint64 `json:"expectedEpoch,omitempty"`
+	Actor                 *string `json:"actor,omitempty"`
+	EvidenceDigest        *string `json:"evidenceDigest,omitempty"`
+	EffectID              *string `json:"effectId,omitempty"`
+	FinalityMarginSeconds *int    `json:"finalityMarginSeconds,omitempty"`
+	fields                map[string]struct{}
 }
 
 type response struct {
@@ -40,6 +41,22 @@ type response struct {
 	ResolutionActor          string               `json:"resolutionActor,omitempty"`
 	ResolutionEvidenceDigest string               `json:"resolutionEvidenceDigest,omitempty"`
 	InFlightEffectIDs        []string             `json:"inFlightEffectIds,omitempty"`
+	Promotion                *promotionResponse   `json:"promotion,omitempty"`
+}
+
+type promotionResponse struct {
+	RunID                    string                        `json:"runId"`
+	SourceEpoch              uint64                        `json:"sourceEpoch"`
+	TargetEpoch              uint64                        `json:"targetEpoch"`
+	State                    ascpleadership.PromotionState `json:"state"`
+	FinalityMarginSeconds    int64                         `json:"finalityMarginSeconds"`
+	DrainEvidenceDigest      string                        `json:"drainEvidenceDigest"`
+	ReadyEvidenceDigest      string                        `json:"readyEvidenceDigest,omitempty"`
+	CompletionEvidenceDigest string                        `json:"completionEvidenceDigest,omitempty"`
+	StartedAt                time.Time                     `json:"startedAt"`
+	ReadyAt                  time.Time                     `json:"readyAt,omitempty"`
+	CutoverAt                time.Time                     `json:"cutoverAt,omitempty"`
+	CompletedAt              time.Time                     `json:"completedAt,omitempty"`
 }
 
 func main() {
@@ -51,7 +68,7 @@ func main() {
 
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) != 1 || !validCommand(args[0]) {
-		return errors.New("use status, bootstrap, drain, advance, or abandon-effect")
+		return errors.New("use status, bootstrap, drain, ready, advance, complete, or abandon-effect")
 	}
 	var request request
 	if err := decodeStrict(input, &request); err != nil {
@@ -80,15 +97,44 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 		return err
 	}
 	var record ascpleadership.Record
+	var resultPromotion *ascpleadership.PromotionRun
 	switch args[0] {
 	case "status":
 		record, err = store.Get(operationCtx, request.OrganizationID)
 	case "bootstrap":
 		record, err = store.Bootstrap(operationCtx, request.OrganizationID, *request.Actor, *request.EvidenceDigest)
 	case "drain":
-		record, err = store.BeginDrain(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.Actor, *request.EvidenceDigest)
+		var promotion ascpleadership.PromotionRun
+		promotion, err = store.BeginPromotion(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.Actor,
+			*request.EvidenceDigest, time.Duration(*request.FinalityMarginSeconds)*time.Second)
+		if err == nil {
+			record, err = store.Get(operationCtx, request.OrganizationID)
+			resultPromotion = &promotion
+		}
+	case "ready":
+		var promotion ascpleadership.PromotionRun
+		promotion, err = store.MarkPromotionReady(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.EvidenceDigest)
+		if err == nil {
+			record, err = store.Get(operationCtx, request.OrganizationID)
+			resultPromotion = &promotion
+		}
 	case "advance":
 		record, err = store.Advance(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.Actor, *request.EvidenceDigest)
+		if err == nil {
+			promotion, promotionErr := store.Promotion(operationCtx, request.OrganizationID, *request.ExpectedEpoch)
+			if promotionErr != nil {
+				err = promotionErr
+			} else {
+				resultPromotion = &promotion
+			}
+		}
+	case "complete":
+		var promotion ascpleadership.PromotionRun
+		promotion, err = store.CompletePromotion(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.EvidenceDigest)
+		if err == nil {
+			record, err = store.Get(operationCtx, request.OrganizationID)
+			resultPromotion = &promotion
+		}
 	case "abandon-effect":
 		err = store.AbandonEffect(operationCtx, request.OrganizationID, *request.ExpectedEpoch, *request.EffectID, *request.Actor, *request.EvidenceDigest)
 		if err == nil {
@@ -101,6 +147,9 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 	result := response{
 		Status: "ok", OrganizationID: record.OrganizationID, Epoch: record.Epoch,
 		State: record.State, EvidenceDigest: record.EvidenceDigest, Actor: record.Actor, UpdatedAt: record.UpdatedAt,
+	}
+	if resultPromotion != nil {
+		result.Promotion = projectPromotion(*resultPromotion)
 	}
 	if args[0] == "abandon-effect" {
 		result.EffectID = *request.EffectID
@@ -122,23 +171,32 @@ func (r request) validateFor(command string) error {
 	}
 	switch command {
 	case "status":
-		if r.has("expectedEpoch") || r.has("actor") || r.has("evidenceDigest") || r.has("effectId") {
+		if r.has("expectedEpoch") || r.has("actor") || r.has("evidenceDigest") || r.has("effectId") || r.has("finalityMarginSeconds") {
 			return errors.New("status accepts only organizationId")
 		}
 	case "bootstrap":
-		if r.has("expectedEpoch") || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || r.has("effectId") {
+		if r.has("expectedEpoch") || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || r.has("effectId") || r.has("finalityMarginSeconds") {
 			return errors.New("bootstrap requires organizationId, actor, and evidenceDigest only")
 		}
-	case "drain", "advance":
-		if !r.positiveEpoch() || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || r.has("effectId") {
+	case "drain":
+		if !r.positiveEpoch() || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || r.has("effectId") ||
+			!r.has("finalityMarginSeconds") || r.FinalityMarginSeconds == nil || *r.FinalityMarginSeconds < 1 || *r.FinalityMarginSeconds > 3600 {
+			return errors.New("drain requires organizationId, expectedEpoch, actor, evidenceDigest, and finalityMarginSeconds from 1 through 3600")
+		}
+	case "advance":
+		if !r.positiveEpoch() || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || r.has("effectId") || r.has("finalityMarginSeconds") {
 			return errors.New(command + " requires organizationId, expectedEpoch, actor, and evidenceDigest")
 		}
+	case "ready", "complete":
+		if !r.positiveEpoch() || r.has("actor") || !r.present("evidenceDigest", r.EvidenceDigest) || r.has("effectId") || r.has("finalityMarginSeconds") {
+			return errors.New(command + " requires organizationId, expectedEpoch, and evidenceDigest only")
+		}
 	case "abandon-effect":
-		if !r.positiveEpoch() || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || !r.present("effectId", r.EffectID) {
+		if !r.positiveEpoch() || !r.present("actor", r.Actor) || !r.present("evidenceDigest", r.EvidenceDigest) || !r.present("effectId", r.EffectID) || r.has("finalityMarginSeconds") {
 			return errors.New("abandon-effect requires organizationId, expectedEpoch, effectId, actor, and evidenceDigest")
 		}
 	default:
-		return errors.New("use status, bootstrap, drain, advance, or abandon-effect")
+		return errors.New("use status, bootstrap, drain, ready, advance, complete, or abandon-effect")
 	}
 	return nil
 }
@@ -158,11 +216,19 @@ func (r request) positiveEpoch() bool {
 
 func validCommand(command string) bool {
 	switch command {
-	case "status", "bootstrap", "drain", "advance", "abandon-effect":
+	case "status", "bootstrap", "drain", "ready", "advance", "complete", "abandon-effect":
 		return true
 	default:
 		return false
 	}
+}
+
+func projectPromotion(run ascpleadership.PromotionRun) *promotionResponse {
+	return &promotionResponse{RunID: run.RunID, SourceEpoch: run.SourceEpoch, TargetEpoch: run.TargetEpoch,
+		State: run.State, FinalityMarginSeconds: int64(run.FinalityMargin / time.Second),
+		DrainEvidenceDigest: run.DrainEvidenceDigest, ReadyEvidenceDigest: run.ReadyEvidenceDigest,
+		CompletionEvidenceDigest: run.CompletionEvidenceDigest, StartedAt: run.StartedAt,
+		ReadyAt: run.ReadyAt, CutoverAt: run.CutoverAt, CompletedAt: run.CompletedAt}
 }
 
 func validateLeadershipURL(raw string) error {

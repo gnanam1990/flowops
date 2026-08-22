@@ -17,6 +17,8 @@ func validBearerEnvironment(t *testing.T) {
 	t.Setenv("FLOWOPS_BEARER_SIGNER_KEY_ID", "signer-key-1")
 	t.Setenv("FLOWOPS_BEARER_KEY_EPOCH", "1")
 	t.Setenv("FLOWOPS_BEARER_KEEPER_ID", "keeper-primary")
+	t.Setenv("FLOWOPS_BEARER_ORGANIZATION_ID", "org-pilot")
+	t.Setenv("FLOWOPS_BEARER_LEADERSHIP_EPOCH", "7")
 	t.Setenv("FLOWOPS_BEARER_SIGNER_SOCKET", "/run/flowops/bearer-signer.sock")
 	t.Setenv("FLOWOPS_BEARER_MIRROR_SOCKET", "/run/flowops/bearer-mirror.sock")
 }

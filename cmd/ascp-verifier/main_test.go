@@ -25,6 +25,8 @@ func TestLoadConfigPinsLoopbackChainEscrowAndSigner(t *testing.T) {
 	t.Setenv("FLOWOPS_VERIFIER_CHAIN_ID", "84532")
 	t.Setenv("FLOWOPS_VERIFIER_ESCROW_CONTRACT", "0x1111111111111111111111111111111111111111")
 	t.Setenv("FLOWOPS_VERIFIER_EPOCH", "7")
+	t.Setenv("FLOWOPS_VERIFIER_ORGANIZATION_ID", "org-pilot")
+	t.Setenv("FLOWOPS_VERIFIER_LEADERSHIP_EPOCH", "7")
 	t.Setenv("FLOWOPS_VERIFIER_SOFTWARE_HASH", "0x"+strings.Repeat("ab", 32))
 	t.Setenv("FLOWOPS_VERIFIER_INTAKE_KEYS_JSON", `{"delivery-key-1":"`+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32)))+`"}`)
 	t.Setenv("FLOWOPS_VERIFIER_SIGNER_KEY_FILE", keyPath)

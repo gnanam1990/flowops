@@ -6,7 +6,17 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
 )
+
+type runtimeLeadershipGateFunc func(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error
+
+func (f runtimeLeadershipGateFunc) FenceSink(ctx context.Context, organizationID string, epoch uint64,
+	sink ascpleadership.Sink, effect func(context.Context) error,
+) error {
+	return f(ctx, organizationID, epoch, sink, effect)
+}
 
 type runtimeMemoryStore struct {
 	mu          sync.Mutex
@@ -174,6 +184,23 @@ func TestRuntimeServiceContainsRetryableBoundaryFailure(t *testing.T) {
 	step, ok, err := runtimeServiceForTest(t, store, signer).AdvanceOnce(context.Background())
 	if err != nil || !ok || !step.Retried || store.retries != 1 || store.completions != 0 || store.request.State != SignRequested {
 		t.Fatalf("step=%+v ok=%t retries=%d completions=%d state=%s err=%v", step, ok, store.retries, store.completions, store.request.State, err)
+	}
+}
+
+func TestRuntimeServiceRejectsLeadershipOrganizationSubstitution(t *testing.T) {
+	store := &runtimeMemoryStore{request: runtimeRequest(time.Now().UTC())}
+	_, err := NewRuntimeService(store, &runtimeTestSigner{}, &coordinatorMirror{}, RuntimeConfig{
+		Claim: RuntimeClaim{
+			WorkerID: "bearer-worker-1", OrganizationID: "org_other", SignerKeyID: "signer-key-1", KeyEpoch: 1,
+			KeeperID: "keeper-primary", LeaseDuration: 10 * time.Second,
+		},
+		RetryDelay: time.Second, OrganizationID: "org_expected", LeadershipEpoch: 7,
+		Leadership: runtimeLeadershipGateFunc(func(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error {
+			return nil
+		}),
+	})
+	if !errors.Is(err, ErrActivationInput) {
+		t.Fatalf("error=%v", err)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/internal/ascpleadership"
 	"github.com/gnanam1990/flowops/pkg/executioncommitment"
 )
 
@@ -81,6 +82,20 @@ func (f decisionJournalFunc) Execute(ctx context.Context, callID, chainID, finge
 	return f(ctx, callID, chainID, fingerprint, compute)
 }
 
+type operationOrganizationReaderFunc func(context.Context, string) (string, error)
+
+func (f operationOrganizationReaderFunc) Organization(ctx context.Context, operationID string) (string, error) {
+	return f(ctx, operationID)
+}
+
+type leadershipGateFunc func(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error
+
+func (f leadershipGateFunc) FenceSink(ctx context.Context, organizationID string, epoch uint64,
+	sink ascpleadership.Sink, effect func(context.Context) error,
+) error {
+	return f(ctx, organizationID, epoch, sink, effect)
+}
+
 func (a *testNotesAuthorizer) Decide(_ context.Context, review NotesReview) (NotesDecision, error) {
 	a.review = review
 	return a.decision, a.err
@@ -120,6 +135,29 @@ func TestPassPreparesExactReleaseAttestationAndIdempotentRetry(t *testing.T) {
 	retry, err := service.VerifyAndSign(context.Background(), input)
 	if err != nil || retry.Signature != decision.Signature || engine.calls.Load() != 1 || signer.calls.Load() != 1 {
 		t.Fatalf("retry=%+v err=%v engine=%d signer=%d", retry, err, engine.calls.Load(), signer.calls.Load())
+	}
+}
+
+func TestVerifierLeadershipRejectsOperationOrganizationSubstitution(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	engine := &testEngine{result: EngineResult{Verdict: VerdictPass, Code: "pass"}}
+	service, signer := newTestService(t, now, engine, nil)
+	var fenceCalls atomic.Int32
+	service.config.Organizations = operationOrganizationReaderFunc(func(context.Context, string) (string, error) {
+		return "org_other", nil
+	})
+	service.config.Leadership = leadershipGateFunc(func(context.Context, string, uint64, ascpleadership.Sink, func(context.Context) error) error {
+		fenceCalls.Add(1)
+		return nil
+	})
+	service.config.LeadershipOrganizationID = "org_expected"
+	service.config.LeadershipEpoch = 7
+
+	if _, err := service.VerifyAndSign(context.Background(), testInput(t, now)); !errors.Is(err, ErrOrganizationMismatch) {
+		t.Fatalf("error=%v", err)
+	}
+	if fenceCalls.Load() != 0 || engine.calls.Load() != 0 || signer.calls.Load() != 0 {
+		t.Fatalf("substitution crossed boundary: fence=%d engine=%d signer=%d", fenceCalls.Load(), engine.calls.Load(), signer.calls.Load())
 	}
 }
 

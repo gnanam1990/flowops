@@ -63,11 +63,14 @@ func TestRequestValidationIsCommandSpecific(t *testing.T) {
 	actor := "operator"
 	digest := "digest"
 	effectID := "effect"
+	margin := 120
 	valid := map[string]request{
 		"status":         {OrganizationID: "org"},
 		"bootstrap":      withFields(request{OrganizationID: "org", Actor: &actor, EvidenceDigest: &digest}, "actor", "evidenceDigest"),
-		"drain":          withFields(request{OrganizationID: "org", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest"),
+		"drain":          withFields(request{OrganizationID: "org", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest, FinalityMarginSeconds: &margin}, "expectedEpoch", "actor", "evidenceDigest", "finalityMarginSeconds"),
+		"ready":          withFields(request{OrganizationID: "org", ExpectedEpoch: &one, EvidenceDigest: &digest}, "expectedEpoch", "evidenceDigest"),
 		"advance":        withFields(request{OrganizationID: "org", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest"),
+		"complete":       withFields(request{OrganizationID: "org", ExpectedEpoch: &one, EvidenceDigest: &digest}, "expectedEpoch", "evidenceDigest"),
 		"abandon-effect": withFields(request{OrganizationID: "org", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest, EffectID: &effectID}, "expectedEpoch", "actor", "evidenceDigest", "effectId"),
 	}
 	for command, payload := range valid {
@@ -81,7 +84,7 @@ func TestRequestValidationIsCommandSpecific(t *testing.T) {
 	if err := withFields(request{OrganizationID: "org", ExpectedEpoch: &zero, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest").validateFor("bootstrap"); err == nil {
 		t.Fatal("bootstrap accepted an ignored expected epoch")
 	}
-	if err := withFields(request{OrganizationID: "org", ExpectedEpoch: &zero, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest").validateFor("drain"); err == nil {
+	if err := withFields(request{OrganizationID: "org", ExpectedEpoch: &zero, Actor: &actor, EvidenceDigest: &digest, FinalityMarginSeconds: &margin}, "expectedEpoch", "actor", "evidenceDigest", "finalityMarginSeconds").validateFor("drain"); err == nil {
 		t.Fatal("drain accepted a missing expected epoch")
 	}
 	if err := withFields(request{OrganizationID: "", ExpectedEpoch: &one, Actor: &actor, EvidenceDigest: &digest}, "expectedEpoch", "actor", "evidenceDigest").validateFor("advance"); err == nil {

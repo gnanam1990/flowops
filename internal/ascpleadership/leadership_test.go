@@ -64,7 +64,7 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 	defer release()
 	drainDone := make(chan error, 1)
 	go func() {
-		_, drainErr := store.BeginDrain(context.Background(), "org-test", 1, "owner-safe", leadershipHash("2"))
+		_, drainErr := store.BeginPromotion(context.Background(), "org-test", 1, "owner-safe", leadershipHash("2"), 2*time.Minute)
 		drainDone <- drainErr
 	}()
 	if err := waitForLeadershipState(t.Context(), db, Draining); err != nil {
@@ -106,6 +106,9 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 	if err := store.Fence(t.Context(), "org-test", 1, func(context.Context) error { called = true; return nil }); !errors.Is(err, ErrEpochChanged) || called {
 		t.Fatalf("draining fence=%v called=%t", err, called)
 	}
+	if _, err := store.MarkPromotionReady(t.Context(), "org-test", 1, leadershipHash("a")); err != nil {
+		t.Fatalf("ready promotion=%v", err)
+	}
 	record, err = store.Advance(t.Context(), "org-test", 1, "owner-safe", leadershipHash("3"))
 	if err != nil || record.Epoch != 2 || record.State != Active {
 		t.Fatalf("advance=%+v err=%v", record, err)
@@ -115,6 +118,15 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 	}
 	if err := store.Fence(t.Context(), "org-test", 1, func(context.Context) error { return nil }); !errors.Is(err, ErrEpochChanged) {
 		t.Fatalf("stale fence=%v", err)
+	}
+	for _, sink := range []Sink{SinkSignerIssuance, SinkVerifierAttestation, SinkKeeperRelay, SinkSellerProxyEgress, SinkOutboxDispatch, SinkCheckpointWrite} {
+		called = false
+		if err := store.FenceSink(t.Context(), "org-test", 1, sink, func(context.Context) error { called = true; return nil }); !errors.Is(err, ErrEpochChanged) || called {
+			t.Fatalf("stale sink %s err=%v called=%t", sink, err, called)
+		}
+	}
+	if promotion, err := store.CompletePromotion(t.Context(), "org-test", 1, leadershipHash("b")); err != nil || promotion.State != PromotionComplete {
+		t.Fatalf("complete promotion=%+v err=%v", promotion, err)
 	}
 	if err := store.Fence(t.Context(), "org-test", 2, func(context.Context) error { effects.Add(1); return nil }); err != nil || effects.Load() != 2 {
 		t.Fatalf("new fence=%v effects=%d", err, effects.Load())

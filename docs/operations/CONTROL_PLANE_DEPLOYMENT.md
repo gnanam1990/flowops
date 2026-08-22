@@ -354,6 +354,8 @@ table, or surplus column authority.
 | `FLOWOPS_BEARER_SIGNER_KEY_ID` | Exact isolated signer key identifier assigned to this worker shard |
 | `FLOWOPS_BEARER_KEY_EPOCH` | Positive signer key epoch assigned to this worker shard |
 | `FLOWOPS_BEARER_KEEPER_ID` | Exact keeper allowed to release the resulting activated artifacts |
+| `FLOWOPS_BEARER_ORGANIZATION_ID` | Exact organization assigned to this single-organization worker shard |
+| `FLOWOPS_BEARER_LEADERSHIP_EPOCH` | Positive epoch pinned into this worker's short-lived deployment identity; restart with the target epoch only after promotion cutover |
 | `FLOWOPS_BEARER_SIGNER_SOCKET` | Absolute Unix socket for prepare, activation acknowledgment, and non-activation proof |
 | `FLOWOPS_BEARER_MIRROR_SOCKET` | Different absolute Unix socket for create-if-absent primary WORM writes |
 | `FLOWOPS_BEARER_BOUNDARY_TIMEOUT` | Optional per-sidecar timeout, default `3s`, range `1s` through `10s` |
@@ -563,6 +565,8 @@ Required runtime configuration:
 | `FLOWOPS_VERIFIER_CHAIN_ID` | `8453` or `84532` |
 | `FLOWOPS_VERIFIER_ESCROW_CONTRACT` | Exact lowercase nonzero escrow address |
 | `FLOWOPS_VERIFIER_EPOCH` | Positive finalized verifier epoch |
+| `FLOWOPS_VERIFIER_ORGANIZATION_ID` | Exact organization assigned to this single-organization verifier shard |
+| `FLOWOPS_VERIFIER_LEADERSHIP_EPOCH` | Positive leadership epoch pinned into this verifier deployment; stale instances cannot issue attestations after cutover |
 | `FLOWOPS_VERIFIER_SOFTWARE_HASH` | Nonzero lowercase `0x`-prefixed 32-byte digest |
 | `FLOWOPS_VERIFIER_INTAKE_KEYS_JSON` | Strict key-id to canonical base64 32-byte HMAC key map |
 | `FLOWOPS_VERIFIER_SIGNER_KEY_FILE` | Absolute, regular, non-symlink owner-private lowercase secp256k1 key file; local/test adapter only |

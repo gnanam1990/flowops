@@ -40,6 +40,43 @@ const (
 	Draining State = "DRAINING"
 )
 
+type Sink string
+
+const (
+	SinkLegacy              Sink = "LEGACY_CONTROLLED_EFFECT"
+	SinkSignerIssuance      Sink = "SIGNER_ISSUANCE"
+	SinkVerifierAttestation Sink = "VERIFIER_ATTESTATION"
+	SinkKeeperRelay         Sink = "KEEPER_RELAY"
+	SinkSellerProxyEgress   Sink = "SELLER_PROXY_EGRESS"
+	SinkOutboxDispatch      Sink = "OUTBOX_DISPATCH"
+	SinkCheckpointWrite     Sink = "CHECKPOINT_WRITE"
+)
+
+type PromotionState string
+
+const (
+	PromotionDraining PromotionState = "DRAINING"
+	PromotionReady    PromotionState = "READY"
+	PromotionCutover  PromotionState = "CUTOVER"
+	PromotionComplete PromotionState = "COMPLETE"
+)
+
+type PromotionRun struct {
+	RunID                    string
+	OrganizationID           string
+	SourceEpoch              uint64
+	TargetEpoch              uint64
+	State                    PromotionState
+	FinalityMargin           time.Duration
+	DrainEvidenceDigest      string
+	ReadyEvidenceDigest      string
+	CompletionEvidenceDigest string
+	StartedAt                time.Time
+	ReadyAt                  time.Time
+	CutoverAt                time.Time
+	CompletedAt              time.Time
+}
+
 // Record is the authoritative leadership state returned to services/operators.
 type Record struct {
 	OrganizationID string
@@ -52,12 +89,19 @@ type Record struct {
 
 // Postgres implements durable leadership admission, drain, and recovery.
 type Postgres struct {
-	db           *sql.DB
-	clock        func() time.Time
-	epochsTable  string
-	eventsTable  string
-	effectsTable string
-	newEffectID  func() (string, error)
+	db              *sql.DB
+	clock           func() time.Time
+	epochsTable     string
+	eventsTable     string
+	effectsTable    string
+	rejectionsTable string
+	promotionsTable string
+	schema          string
+	intentsTable    string
+	bearersTable    string
+	verdictsTable   string
+	paymentsTable   string
+	newEffectID     func() (string, error)
 }
 
 // NewPostgres binds the adapter to a validated, explicitly qualified schema.
@@ -70,12 +114,19 @@ func NewPostgres(db *sql.DB, schema string, clocks ...func() time.Time) (*Postgr
 		clock = clocks[0]
 	}
 	return &Postgres{
-		db:           db,
-		clock:        clock,
-		epochsTable:  `"` + schema + `".ascp_leadership_epochs`,
-		eventsTable:  `"` + schema + `".ascp_leadership_events`,
-		effectsTable: `"` + schema + `".ascp_leadership_effects`,
-		newEffectID:  randomEffectID,
+		db:              db,
+		clock:           clock,
+		epochsTable:     `"` + schema + `".ascp_leadership_epochs`,
+		eventsTable:     `"` + schema + `".ascp_leadership_events`,
+		effectsTable:    `"` + schema + `".ascp_leadership_effects`,
+		rejectionsTable: `"` + schema + `".ascp_leadership_rejections`,
+		promotionsTable: `"` + schema + `".ascp_promotion_runs`,
+		schema:          schema,
+		intentsTable:    `"` + schema + `".ascp_intents`,
+		bearersTable:    `"` + schema + `".ascp_bearer_registry`,
+		verdictsTable:   `"` + schema + `".ascp_verdict_decisions`,
+		paymentsTable:   `"` + schema + `".ascp_payment_operations`,
+		newEffectID:     randomEffectID,
 	}, nil
 }
 
@@ -102,7 +153,16 @@ func (p *Postgres) Current(ctx context.Context, organizationID string) (uint64, 
 // enter DRAINING while the callback runs but cannot return,
 // and the epoch cannot advance, until the durable effect is resolved.
 func (p *Postgres) Fence(ctx context.Context, organizationID string, expected uint64, effect func(context.Context) error) error {
+	return p.FenceSink(ctx, organizationID, expected, SinkLegacy, effect)
+}
+
+// FenceSink names the controlled side-effect boundary and durably records a
+// stale/draining rejection with both the presented and observed epoch.
+func (p *Postgres) FenceSink(ctx context.Context, organizationID string, expected uint64, sink Sink, effect func(context.Context) error) error {
 	if !validOrganization(organizationID) || expected == 0 || expected > maxEpoch || effect == nil {
+		return ErrInvalid
+	}
+	if !validSink(sink, true) {
 		return ErrInvalid
 	}
 	effectID, err := p.newEffectID()
@@ -123,11 +183,22 @@ func (p *Postgres) Fence(ctx context.Context, organizationID string, expected ui
 		return err
 	}
 	if record.State != Active || record.Epoch != expected {
+		if sink != SinkLegacy {
+			if _, insertErr := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s
+				(rejection_id,organization_id,sink,presented_epoch,observed_epoch,observed_state,rejected_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7)`, p.rejectionView(sink)), effectID, organizationID, sink,
+				expected, record.Epoch, record.State, startedAt); insertErr != nil {
+				return insertErr
+			}
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+		}
 		return ErrEpochChanged
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s
-		(effect_id,organization_id,epoch,state,started_at) VALUES ($1,$2,$3,'IN_FLIGHT',$4)`,
-		p.effectsTable), effectID, organizationID, expected, startedAt); err != nil {
+		(effect_id,organization_id,epoch,sink,state,started_at) VALUES ($1,$2,$3,$4,'IN_FLIGHT',$5)`,
+		p.effectView(sink)), effectID, organizationID, expected, sink, startedAt); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -137,11 +208,44 @@ func (p *Postgres) Fence(ctx context.Context, organizationID string, expected ui
 	effectErr := effect(ctx)
 	resolveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resolveTimeout)
 	defer cancel()
-	resolveErr := p.completeEffect(resolveCtx, effectID, p.clock().UTC())
+	resolveErr := p.completeEffect(resolveCtx, effectID, sink, p.clock().UTC())
 	if resolveErr != nil {
 		resolveErr = fmt.Errorf("resolve leadership effect %s: %w", effectID, resolveErr)
 	}
 	return errors.Join(effectErr, resolveErr)
+}
+
+func (p *Postgres) rejectionView(sink Sink) string {
+	name := map[Sink]string{
+		SinkSignerIssuance: "ascp_signer_issuance_rejections", SinkVerifierAttestation: "ascp_verifier_attestation_rejections",
+		SinkKeeperRelay: "ascp_keeper_relay_rejections", SinkSellerProxyEgress: "ascp_seller_proxy_egress_rejections",
+		SinkOutboxDispatch: "ascp_outbox_dispatch_rejections", SinkCheckpointWrite: "ascp_checkpoint_write_rejections",
+	}[sink]
+	return `"` + p.schema + `".` + name
+}
+
+func (p *Postgres) effectView(sink Sink) string {
+	if sink == SinkLegacy {
+		return p.effectsTable
+	}
+	name := map[Sink]string{
+		SinkSignerIssuance: "ascp_signer_issuance_effects", SinkVerifierAttestation: "ascp_verifier_attestation_effects",
+		SinkKeeperRelay: "ascp_keeper_relay_effects", SinkSellerProxyEgress: "ascp_seller_proxy_egress_effects",
+		SinkOutboxDispatch: "ascp_outbox_dispatch_effects", SinkCheckpointWrite: "ascp_checkpoint_write_effects",
+	}[sink]
+	return `"` + p.schema + `".` + name
+}
+
+func validSink(sink Sink, legacy bool) bool {
+	if legacy && sink == SinkLegacy {
+		return true
+	}
+	switch sink {
+	case SinkSignerIssuance, SinkVerifierAttestation, SinkKeeperRelay, SinkSellerProxyEgress, SinkOutboxDispatch, SinkCheckpointWrite:
+		return true
+	default:
+		return false
+	}
 }
 
 // Bootstrap creates epoch one or returns the exact idempotent replay.
@@ -199,6 +303,177 @@ func (p *Postgres) Advance(ctx context.Context, organizationID string, expected 
 		return Record{}, ErrInvalid
 	}
 	return p.transition(ctx, organizationID, expected, expected+1, Draining, Active, actor, evidence)
+}
+
+// BeginPromotion freezes issuance, waits for already-admitted controlled
+// effects, and opens the durable bearer/attestation drain record. An exact
+// retry after a process crash returns the existing run.
+func (p *Postgres) BeginPromotion(ctx context.Context, organizationID string, expected uint64, actor, evidence string, finalityMargin time.Duration) (PromotionRun, error) {
+	if finalityMargin < time.Second || finalityMargin > time.Hour || finalityMargin%time.Second != 0 || !validMutation(organizationID, actor, evidence) {
+		return PromotionRun{}, ErrInvalid
+	}
+	record, err := p.BeginDrain(ctx, organizationID, expected, actor, evidence)
+	if err != nil {
+		record, err = p.Get(ctx, organizationID)
+		if err != nil || record.Epoch != expected || record.State != Draining {
+			return PromotionRun{}, errors.Join(ErrStateConflict, err)
+		}
+	}
+	runID, err := p.newEffectID()
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	now := p.clock().UTC()
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := p.lockOrganization(ctx, tx, organizationID); err != nil {
+		return PromotionRun{}, err
+	}
+	current, err := get(ctx, tx, p.epochsTable, organizationID)
+	if err != nil || current.Epoch != expected || current.State != Draining {
+		return PromotionRun{}, errors.Join(ErrStateConflict, err)
+	}
+	result, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s
+		(run_id,organization_id,source_epoch,target_epoch,state,finality_margin_seconds,drain_evidence_digest,started_at)
+		VALUES ($1,$2,$3,$4,'DRAINING',$5,$6,$7) ON CONFLICT (organization_id,source_epoch) DO NOTHING`,
+		p.promotionsTable), runID, organizationID, expected, expected+1, int(finalityMargin/time.Second), evidence, now)
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	run, err := loadPromotion(ctx, tx, p.promotionsTable, organizationID, expected, true)
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	if changed == 0 && (run.DrainEvidenceDigest != evidence || run.FinalityMargin != finalityMargin) {
+		return PromotionRun{}, ErrStateConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return PromotionRun{}, err
+	}
+	return run, nil
+}
+
+// MarkPromotionReady rechecks the drain under the organization lock. A live
+// lock authorization needs a registry-proven terminal outcome; wall-clock
+// expiry alone is never accepted. Verifier attestations drain through their
+// bounded validity plus the declared finality margin.
+func (p *Postgres) MarkPromotionReady(ctx context.Context, organizationID string, sourceEpoch uint64, evidence string) (PromotionRun, error) {
+	if !validOrganization(organizationID) || sourceEpoch == 0 || sourceEpoch > maxEpoch || !hashPattern.MatchString(evidence) {
+		return PromotionRun{}, ErrInvalid
+	}
+	now := p.clock().UTC()
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := p.lockOrganization(ctx, tx, organizationID); err != nil {
+		return PromotionRun{}, err
+	}
+	current, err := get(ctx, tx, p.epochsTable, organizationID)
+	if err != nil || current.Epoch != sourceEpoch || current.State != Draining {
+		return PromotionRun{}, errors.Join(ErrStateConflict, err)
+	}
+	run, err := loadPromotion(ctx, tx, p.promotionsTable, organizationID, sourceEpoch, true)
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	if run.State == PromotionReady && run.ReadyEvidenceDigest == evidence {
+		if err := tx.Commit(); err != nil {
+			return PromotionRun{}, err
+		}
+		return run, nil
+	}
+	if run.State != PromotionDraining {
+		return PromotionRun{}, ErrStateConflict
+	}
+	var blocked bool
+	err = tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT
+		EXISTS(SELECT 1 FROM %s b JOIN %s i ON i.operation_id=b.operation_id
+		       WHERE i.organization_id=$1 AND b.outcome='LIVE') OR
+		EXISTS(SELECT 1 FROM %s v JOIN %s p ON p.call_id=v.call_id
+		       WHERE p.organization_id=$1 AND
+		       to_timestamp((v.decision_json #>> '{attestation,validUntil}')::bigint) + ($2 * interval '1 second') > $3)`,
+		p.bearersTable, p.intentsTable, p.verdictsTable, p.paymentsTable), organizationID,
+		int(run.FinalityMargin/time.Second), now).Scan(&blocked)
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	if blocked {
+		return PromotionRun{}, ErrStateConflict
+	}
+	result, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET state='READY',ready_evidence_digest=$3,ready_at=$4
+		WHERE organization_id=$1 AND source_epoch=$2 AND state='DRAINING'`, p.promotionsTable), organizationID, sourceEpoch, evidence, now)
+	if err != nil || rowsAffected(result) != 1 {
+		return PromotionRun{}, errors.Join(ErrStateConflict, err)
+	}
+	run, err = loadPromotion(ctx, tx, p.promotionsTable, organizationID, sourceEpoch, false)
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PromotionRun{}, err
+	}
+	return run, nil
+}
+
+// CompletePromotion succeeds only after post-cutover stale traffic has been
+// durably rejected at every controlled sink.
+func (p *Postgres) CompletePromotion(ctx context.Context, organizationID string, sourceEpoch uint64, evidence string) (PromotionRun, error) {
+	if !validOrganization(organizationID) || sourceEpoch == 0 || sourceEpoch >= maxEpoch || !hashPattern.MatchString(evidence) {
+		return PromotionRun{}, ErrInvalid
+	}
+	now := p.clock().UTC()
+	tx, err := p.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := p.lockOrganization(ctx, tx, organizationID); err != nil {
+		return PromotionRun{}, err
+	}
+	run, err := loadPromotion(ctx, tx, p.promotionsTable, organizationID, sourceEpoch, true)
+	if err != nil || run.State != PromotionCutover || run.CutoverAt.IsZero() {
+		return PromotionRun{}, errors.Join(ErrStateConflict, err)
+	}
+	var rejectedSinks int
+	err = tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT count(DISTINCT sink) FROM %s
+		WHERE organization_id=$1 AND presented_epoch=$2 AND observed_epoch=$3 AND observed_state='ACTIVE' AND rejected_at >= $4`,
+		p.rejectionsTable), organizationID, sourceEpoch, sourceEpoch+1, run.CutoverAt).Scan(&rejectedSinks)
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	if rejectedSinks != 6 {
+		return PromotionRun{}, ErrStateConflict
+	}
+	result, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s
+		SET state='COMPLETE',completion_evidence_digest=$3,completed_at=$4
+		WHERE organization_id=$1 AND source_epoch=$2 AND state='CUTOVER'`, p.promotionsTable), organizationID, sourceEpoch, evidence, now)
+	if err != nil || rowsAffected(result) != 1 {
+		return PromotionRun{}, errors.Join(ErrStateConflict, err)
+	}
+	run, err = loadPromotion(ctx, tx, p.promotionsTable, organizationID, sourceEpoch, false)
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PromotionRun{}, err
+	}
+	return run, nil
+}
+
+func (p *Postgres) Promotion(ctx context.Context, organizationID string, sourceEpoch uint64) (PromotionRun, error) {
+	if !validOrganization(organizationID) || sourceEpoch == 0 || sourceEpoch >= maxEpoch {
+		return PromotionRun{}, ErrInvalid
+	}
+	return loadPromotion(ctx, p.db, p.promotionsTable, organizationID, sourceEpoch, false)
 }
 
 // AbandonEffect is an explicit operator recovery after the organization is
@@ -327,15 +602,51 @@ func get(ctx context.Context, q queryer, epochsTable, organizationID string) (Re
 	return record, err
 }
 
+func loadPromotion(ctx context.Context, q queryer, table, organizationID string, sourceEpoch uint64, lock bool) (PromotionRun, error) {
+	query := fmt.Sprintf(`SELECT run_id,organization_id,source_epoch,target_epoch,state,finality_margin_seconds,
+		drain_evidence_digest,ready_evidence_digest,completion_evidence_digest,started_at,ready_at,cutover_at,completed_at
+		FROM %s WHERE organization_id=$1 AND source_epoch=$2`, table)
+	if lock {
+		query += ` FOR UPDATE`
+	}
+	var run PromotionRun
+	var marginSeconds int
+	var readyEvidence, completionEvidence sql.NullString
+	var readyAt, cutoverAt, completedAt sql.NullTime
+	err := q.QueryRowContext(ctx, query, organizationID, sourceEpoch).Scan(
+		&run.RunID, &run.OrganizationID, &run.SourceEpoch, &run.TargetEpoch, &run.State, &marginSeconds,
+		&run.DrainEvidenceDigest, &readyEvidence, &completionEvidence, &run.StartedAt, &readyAt, &cutoverAt, &completedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PromotionRun{}, ErrNotFound
+	}
+	if err != nil {
+		return PromotionRun{}, err
+	}
+	run.FinalityMargin = time.Duration(marginSeconds) * time.Second
+	run.ReadyEvidenceDigest, run.CompletionEvidenceDigest = readyEvidence.String, completionEvidence.String
+	run.StartedAt = run.StartedAt.UTC()
+	if readyAt.Valid {
+		run.ReadyAt = readyAt.Time.UTC()
+	}
+	if cutoverAt.Valid {
+		run.CutoverAt = cutoverAt.Time.UTC()
+	}
+	if completedAt.Valid {
+		run.CompletedAt = completedAt.Time.UTC()
+	}
+	return run, nil
+}
+
 func (p *Postgres) lockOrganization(ctx context.Context, tx *sql.Tx, organizationID string) error {
 	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,$2))`, organizationID, advisorySeed)
 	return err
 }
 
-func (p *Postgres) completeEffect(ctx context.Context, effectID string, resolvedAt time.Time) error {
+func (p *Postgres) completeEffect(ctx context.Context, effectID string, sink Sink, resolvedAt time.Time) error {
 	result, err := p.db.ExecContext(ctx, fmt.Sprintf(`UPDATE %s
 		SET state='COMPLETED',resolved_at=GREATEST($2,started_at)
-		WHERE effect_id=$1 AND state='IN_FLIGHT'`, p.effectsTable), effectID, resolvedAt)
+		WHERE effect_id=$1 AND state='IN_FLIGHT'`, p.effectView(sink)), effectID, resolvedAt)
 	if err != nil {
 		return err
 	}
