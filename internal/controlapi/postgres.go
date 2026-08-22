@@ -42,9 +42,10 @@ func (s *PostgresStore) Authenticate(ctx context.Context, token string) (Princip
 	var kind, role string
 	var agentID sql.NullString
 	var scopesJSON []byte
+	var stepUpAt sql.NullTime
 	var stepUpUntil sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT c.principal_id, c.organization_id, c.principal_kind, c.role, c.agent_id, c.scopes, c.step_up_until
+		SELECT c.principal_id, c.organization_id, c.principal_kind, c.role, c.agent_id, c.scopes, c.step_up_at, c.step_up_until
 		FROM credentials c
 		LEFT JOIN agents a
 		  ON c.organization_id = a.organization_id AND c.agent_id = a.id
@@ -52,7 +53,7 @@ func (s *PostgresStore) Authenticate(ctx context.Context, token string) (Princip
 		  AND c.revoked_at IS NULL
 		  AND c.expires_at > now()
 		  AND (c.principal_kind = 'HUMAN' OR a.status NOT IN ('REVOKED', 'ARCHIVED'))`, tokenDigest[:]).Scan(
-		&principal.ID, &principal.OrganizationID, &kind, &role, &agentID, &scopesJSON, &stepUpUntil,
+		&principal.ID, &principal.OrganizationID, &kind, &role, &agentID, &scopesJSON, &stepUpAt, &stepUpUntil,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Principal{}, ErrUnauthenticated
@@ -66,6 +67,9 @@ func (s *PostgresStore) Authenticate(ctx context.Context, token string) (Princip
 	}
 	if stepUpUntil.Valid {
 		principal.StepUpUntil = stepUpUntil.Time.UTC()
+	}
+	if stepUpAt.Valid {
+		principal.StepUpAt = stepUpAt.Time.UTC()
 	}
 	if err := json.Unmarshal(scopesJSON, &principal.Scopes); err != nil || !principal.Valid() {
 		return Principal{}, errors.New("stored credential claims are invalid")

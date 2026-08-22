@@ -6,6 +6,11 @@ infrastructure verification remains gated
 Packages: `internal/controlapi`, `internal/controlplane`
 Executable: `cmd/control-plane-api`
 
+Privileged ASCP governance changes use the durable dual-control endpoints under
+`/v1/workflows`; see [ASCP_PROPOSAL_WORKFLOWS.md](ASCP_PROPOSAL_WORKFLOWS.md).
+These routes accept human governance credentials only, require a fresh recorded
+step-up for mutations, and expose no chain-completion endpoint.
+
 ## Purpose
 
 This module is the authenticated write boundary between agents, human

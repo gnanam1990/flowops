@@ -35,9 +35,9 @@ func TestPostgresAuthenticationReturnsValidatedClaimsAndHidesMisses(t *testing.T
 	defer db.Close()
 	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
 	digest := TokenDigest("fo_sbx_test_000000000000000000000000")
-	columns := []string{"principal_id", "organization_id", "principal_kind", "role", "agent_id", "scopes", "step_up_until"}
+	columns := []string{"principal_id", "organization_id", "principal_kind", "role", "agent_id", "scopes", "step_up_at", "step_up_until"}
 	mock.ExpectQuery(`SELECT c.principal_id, c.organization_id, c.principal_kind`).WithArgs(digest[:]).WillReturnRows(
-		sqlmock.NewRows(columns).AddRow("credential_a", "org_a", "AGENT", "AGENT", "agent_a", []byte(`["intents:create"]`), nil),
+		sqlmock.NewRows(columns).AddRow("credential_a", "org_a", "AGENT", "AGENT", "agent_a", []byte(`["intents:create"]`), nil, nil),
 	)
 	principal, err := store.Authenticate(context.Background(), "fo_sbx_test_000000000000000000000000")
 	if err != nil || principal.AgentID != "agent_a" || !principal.Can(PermissionCreateIntent) {
@@ -67,8 +67,8 @@ func TestPostgresCredentialMayUseReservedSessionPrefix(t *testing.T) {
 	token := "fos_v1.legacy-static-credential-value"
 	digest := TokenDigest(token)
 	mock.ExpectQuery(`SELECT c.principal_id, c.organization_id, c.principal_kind`).WithArgs(digest[:]).WillReturnRows(
-		sqlmock.NewRows([]string{"principal_id", "organization_id", "principal_kind", "role", "agent_id", "scopes", "step_up_until"}).AddRow(
-			"viewer_a", "org_a", "HUMAN", "VIEWER", nil, []byte(`[]`), nil,
+		sqlmock.NewRows([]string{"principal_id", "organization_id", "principal_kind", "role", "agent_id", "scopes", "step_up_at", "step_up_until"}).AddRow(
+			"viewer_a", "org_a", "HUMAN", "VIEWER", nil, []byte(`[]`), nil, nil,
 		),
 	)
 	principal, err := store.Authenticate(context.Background(), token)

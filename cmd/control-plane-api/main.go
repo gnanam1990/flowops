@@ -31,6 +31,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpring6"
 	"github.com/gnanam1990/flowops/internal/ascpsettlement"
 	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
+	"github.com/gnanam1990/flowops/internal/ascpworkflow"
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/directoryreader"
@@ -114,6 +115,14 @@ func run(ctx context.Context) (returnErr error) {
 	signerBindingStore, err := ascpsignerbinding.NewStore(db, cfg.observerConfig.ChainID)
 	if err != nil {
 		return fmt.Errorf("create ASCP signer binding store: %w", err)
+	}
+	workflowStore, err := ascpworkflow.NewPostgresStore(db)
+	if err != nil {
+		return fmt.Errorf("create ASCP proposal workflow store: %w", err)
+	}
+	workflowService, err := ascpworkflow.New(workflowStore, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("create ASCP proposal workflow service: %w", err)
 	}
 	var ascpAgentService *ascpagent.Service
 	var ascpOrchestrationService *ascporchestration.Service
@@ -311,6 +320,7 @@ func run(ctx context.Context) (returnErr error) {
 		ASCPFlow:           ascpOrchestrationService,
 		ASCPActivation:     ascpActivationService,
 		ASCPSignerBindings: signerBindingStore,
+		ASCPWorkflows:      workflowService,
 		ASCPSettlement:     ascpSettlementRegistrar{store: ascpSettlementStore},
 	})
 	if err != nil {
