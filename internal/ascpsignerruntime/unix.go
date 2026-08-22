@@ -124,23 +124,43 @@ func cleanAbsoluteSocket(path string) bool {
 }
 
 func validateSocketParent(path string) error {
+	directory, err := openSocketParent(path)
+	if directory != nil {
+		_ = directory.Close()
+	}
+	return err
+}
+
+func openSocketParent(path string) (*os.File, error) {
 	directory, err := securefile.OpenDirectory(path)
 	if err != nil {
-		return errors.New("signer socket parent path must contain no symlinks")
+		return nil, fmt.Errorf("open secure signer socket parent: %w", err)
 	}
-	defer func() { _ = directory.Close() }()
 	info, err := directory.Stat()
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("signer socket parent must be an owner-only non-symlink directory")
+		_ = directory.Close()
+		return nil, errors.New("signer socket parent must be an owner-only non-symlink directory")
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {
-		return errors.New("signer socket parent must be owned by the runtime user or root")
+		_ = directory.Close()
+		return nil, errors.New("signer socket parent must be owned by the runtime user or root")
 	}
-	return nil
+	return directory, nil
 }
 
 func listenPrivateUnix(path string) (*net.UnixListener, error) {
+	// Hold the fully validated parent descriptor through bind. OpenDirectory
+	// rejects every replaceable ancestor, so another local principal cannot
+	// redirect this path between validation and socket creation.
+	parent, err := openSocketParent(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = parent.Close() }()
+	if _, err := os.Lstat(path); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("signer socket path must not already exist")
+	}
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		return nil, err

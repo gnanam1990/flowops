@@ -35,6 +35,21 @@ func TestReadCanonicalBase64SecretRejectsSymlinkedAncestor(t *testing.T) {
 	}
 }
 
+func TestOpenDirectoryRejectsReplaceableWritableAncestor(t *testing.T) {
+	base := canonicalTempDir(t)
+	if err := os.Chmod(base, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(base, "owner-only")
+	if err := os.Mkdir(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if directory, err := OpenDirectory(child); err == nil {
+		_ = directory.Close()
+		t.Fatal("directory below a non-sticky writable ancestor was accepted")
+	}
+}
+
 func canonicalTempDir(t *testing.T) string {
 	t.Helper()
 	base, err := filepath.EvalSymlinks(os.TempDir())

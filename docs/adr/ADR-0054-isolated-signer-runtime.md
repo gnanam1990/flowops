@@ -20,6 +20,9 @@ and allowed unrelated operations with the same action label to collide.
   not owner-only (`0700`) or unowned, shared paths, wrong protocol identities,
   oversized or non-strict JSON, and
   dependency redirects.
+- Require every socket-path ancestor to be root/runtime-controlled and either
+  non-writable by other principals or sticky; retain the validated parent
+  descriptor until bind completes.
 - Retain signature ciphertext only in the existing process-locked, fsynced,
   hash-chained signer ledger. Load its AES-GCM key only from a private regular
   file; never from an API request or command argument.

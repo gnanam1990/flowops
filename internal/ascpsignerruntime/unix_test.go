@@ -109,6 +109,21 @@ func TestServeUnixRefusesExistingPathAndInsecureParentWithoutRemovingEither(t *t
 	if err := service.ServeUnix(context.Background(), UnixConfig{SignerSocket: filepath.Join(linked, "one.sock"), ArtifactSocket: filepath.Join(linked, "two.sock"), RequestTimeout: time.Second}); err == nil {
 		t.Fatal("symlinked socket ancestor was accepted")
 	}
+	writableAncestor := shortTempDir(t)
+	if err := os.Chmod(writableAncestor, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	protectedChild := filepath.Join(writableAncestor, "protected")
+	if err := os.Mkdir(protectedChild, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ServeUnix(context.Background(), UnixConfig{SignerSocket: filepath.Join(protectedChild, "one.sock"), ArtifactSocket: filepath.Join(protectedChild, "two.sock"), RequestTimeout: time.Second}); err == nil {
+		t.Fatal("socket parent below a replaceable writable ancestor was accepted")
+	}
+	missingError := validateSocketParent(filepath.Join(shortTempDir(t), "missing"))
+	if missingError == nil || !strings.Contains(missingError.Error(), "open secure signer socket parent") || strings.Contains(missingError.Error(), "must contain no symlinks") {
+		t.Fatalf("missing socket parent error=%v", missingError)
+	}
 	tooLong := "/" + strings.Repeat("a", len(unix.RawSockaddrUnix{}.Path))
 	if cleanAbsoluteSocket(tooLong) {
 		t.Fatal("overlong Unix socket path was accepted")

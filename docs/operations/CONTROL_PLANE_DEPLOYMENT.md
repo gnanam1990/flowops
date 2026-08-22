@@ -379,8 +379,10 @@ Unix paths: two new listener paths and two existing dependency sockets.
 
 The process refuses an existing listener path instead of deleting it. Its
 socket parents must be non-symlink, owner-only (`0700`) directories owned by
-UID 10001 or root; the ledger volume must also be owner controlled and not
-writable by group or other users. Both dependency services must pass exact
+UID 10001 or root. Every ancestor must be root/runtime-owned and non-writable
+by other principals unless it is a sticky directory; the validated parent is
+held open through socket bind. The ledger volume must also be owner controlled
+and not writable by group or other users. Both dependency services pass exact
 health identity before ledger replay; active records then revalidate their
 activation proof. A running process proves local protocol and ledger startup,
 not HSM custody, independent Ring 6 RPC reads, activation-authority correctness,

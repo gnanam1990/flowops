@@ -19,8 +19,9 @@ import (
 )
 
 // OpenDirectory walks an absolute directory one descriptor at a time. Every
-// component is opened with O_NOFOLLOW so an ancestor cannot redirect the
-// caller outside the intended secured volume.
+// component is opened with O_NOFOLLOW and must be controlled by root or this
+// runtime. Writable ancestors are accepted only when sticky, so another local
+// user cannot replace a validated descendant before a later path operation.
 func OpenDirectory(path string) (*os.File, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
 		return nil, errors.New("directory path must be a clean absolute non-root path")
@@ -37,7 +38,19 @@ func OpenDirectory(path string) (*os.File, error) {
 		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		_ = unix.Close(fd)
 		if openErr != nil {
-			return nil, openErr
+			return nil, fmt.Errorf("open directory component %q without following symlinks: %w", component, openErr)
+		}
+		var stat unix.Stat_t
+		if statErr := unix.Fstat(next, &stat); statErr != nil {
+			_ = unix.Close(next)
+			return nil, fmt.Errorf("inspect directory component %q: %w", component, statErr)
+		}
+		owned := stat.Uid == uint32(os.Geteuid()) || stat.Uid == 0
+		writable := stat.Mode&(unix.S_IWGRP|unix.S_IWOTH) != 0
+		sticky := stat.Mode&unix.S_ISVTX != 0
+		if !owned || writable && !sticky {
+			_ = unix.Close(next)
+			return nil, fmt.Errorf("directory component %q is not root/runtime-controlled against replacement", component)
 		}
 		fd = next
 	}
