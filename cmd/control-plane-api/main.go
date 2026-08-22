@@ -22,11 +22,13 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gnanam1990/flowops/internal/ascpactivation"
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpagent"
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
+	"github.com/gnanam1990/flowops/internal/ascpring6"
 	"github.com/gnanam1990/flowops/internal/ascpsettlement"
 	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
 	"github.com/gnanam1990/flowops/internal/controlapi"
@@ -64,6 +66,11 @@ type startupConfig struct {
 	pilotLimits            *pilotlimits.Limits
 	ascpDirectoryContract  string
 	ascpDirectoryMaxAge    time.Duration
+	ascpAdaptationSigner   string
+	ascpAdaptationKeyID    string
+	ascpAdaptationKeyEpoch uint64
+	ascpAdaptationHSM      string
+	ascpAdaptationTimeout  time.Duration
 }
 
 func main() {
@@ -73,7 +80,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context) error {
+func run(ctx context.Context) (returnErr error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -124,10 +131,42 @@ func run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("create ASCP directory resolver: %w", err)
 		}
+		adaptationStore, err := ascpadaptation.NewPostgresStore(db)
+		if err != nil {
+			return fmt.Errorf("create ASCP adaptation store: %w", err)
+		}
+		var adaptationService *ascpadaptation.Service
+		if cfg.ascpAdaptationSigner != "" {
+			adaptationBoundary, err := ascpring6.NewComponentBoundary("hsm", cfg.ascpAdaptationHSM, cfg.ascpAdaptationTimeout)
+			if err != nil {
+				return fmt.Errorf("create adaptation HSM boundary: %w", err)
+			}
+			defer func() { returnErr = errors.Join(returnErr, adaptationBoundary.Close()) }()
+			if err := adaptationBoundary.Check(startupCtx); err != nil {
+				return fmt.Errorf("check adaptation HSM boundary: %w", err)
+			}
+			hsm, err := ascpring6.NewUnixHSM(adaptationBoundary)
+			if err != nil {
+				return err
+			}
+			digestSigner, err := ascpadaptation.NewHSMSigner(hsm, cfg.ascpAdaptationKeyID, cfg.ascpAdaptationKeyEpoch, cfg.ascpAdaptationSigner)
+			if err != nil {
+				return err
+			}
+			issuer, err := ascpadaptation.NewIssuer(digestSigner, nil)
+			if err != nil {
+				return err
+			}
+			adaptationService, err = ascpadaptation.NewService(issuer, adaptationStore)
+			if err != nil {
+				return err
+			}
+		}
 		ascpAgentService, err = ascpagent.New(ascpagent.Config{
 			Intake: intakeService, Reader: intakeStore, Directory: directoryResolver,
 			DirectoryContract: cfg.ascpDirectoryContract, ChainID: cfg.observerConfig.ChainID,
 			Asset: cfg.observerConfig.EscrowAsset, SchemeVersion: 1,
+			AdaptationSigner: cfg.ascpAdaptationSigner, Adaptations: adaptationStore,
 		})
 		if err != nil {
 			return fmt.Errorf("create ASCP agent service: %w", err)
@@ -148,6 +187,7 @@ func run(ctx context.Context) error {
 			DatabaseStore: orchestrationStore, Authorization: executionStore,
 			EscrowContract: cfg.observerConfig.EscrowContract,
 			SettleWindow:   time.Duration(cfg.observerConfig.EscrowReleaseWindow) * time.Second,
+			Adaptations:    adaptationService,
 		})
 		if err != nil {
 			return fmt.Errorf("create ASCP orchestration service: %w", err)
@@ -375,6 +415,9 @@ func loadConfig() (startupConfig, error) {
 		reconciliation:        strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
 		mcpAllowedOrigins:     splitMCPOrigins(os.Getenv("FLOWOPS_MCP_ALLOWED_ORIGINS")),
 		ascpDirectoryContract: strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT"))),
+		ascpAdaptationSigner:  strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS"))),
+		ascpAdaptationKeyID:   strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_KEY_ID")),
+		ascpAdaptationHSM:     strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET")),
 	}
 	ascpDirectoryMaxAge, err := parseDurationEnv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE", os.Getenv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE"), time.Minute)
 	if err != nil {
@@ -384,6 +427,12 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_MAX_AGE cannot exceed 5m")
 	}
 	cfg.ascpDirectoryMaxAge = ascpDirectoryMaxAge
+	adaptationTimeoutRaw := os.Getenv("FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT")
+	ascpAdaptationTimeout, err := parseDurationEnv("FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT", adaptationTimeoutRaw, 3*time.Second)
+	if err != nil {
+		return startupConfig{}, err
+	}
+	cfg.ascpAdaptationTimeout = ascpAdaptationTimeout
 	operatorKey, err := decodeSymmetricKey("FLOWOPS_OPERATOR_CONTROL_KEY_B64", os.Getenv("FLOWOPS_OPERATOR_CONTROL_KEY_B64"))
 	if err != nil {
 		return startupConfig{}, err
@@ -427,6 +476,21 @@ func loadConfig() (startupConfig, error) {
 		if cfg.observerConfig.EscrowAsset == "" {
 			return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_CONTRACT requires the reviewed escrow deployment tuple")
 		}
+	}
+	if cfg.ascpAdaptationSigner != "" && (len(cfg.ascpAdaptationSigner) != 42 || !common.IsHexAddress(cfg.ascpAdaptationSigner) || common.HexToAddress(cfg.ascpAdaptationSigner) == (common.Address{})) {
+		return startupConfig{}, errors.New("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS must be a non-zero canonical address")
+	}
+	adaptationEpochRaw := strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH"))
+	adaptationConfigured := cfg.ascpAdaptationSigner != "" || cfg.ascpAdaptationKeyID != "" || adaptationEpochRaw != "" || cfg.ascpAdaptationHSM != "" || strings.TrimSpace(adaptationTimeoutRaw) != ""
+	if adaptationConfigured {
+		if cfg.ascpDirectoryContract == "" || cfg.ascpAdaptationSigner == "" || !ascpring6.ValidIdentifier(cfg.ascpAdaptationKeyID) || !ascpring6.ValidSocketPath(cfg.ascpAdaptationHSM) || cfg.ascpAdaptationTimeout < time.Second || cfg.ascpAdaptationTimeout > 10*time.Second {
+			return startupConfig{}, errors.New("adaptation signing requires the directory, signer, key ID, epoch, secure HSM socket, and a 1s through 10s timeout")
+		}
+		epoch, err := strconv.ParseUint(adaptationEpochRaw, 10, 64)
+		if err != nil || epoch == 0 || strconv.FormatUint(epoch, 10) != adaptationEpochRaw {
+			return startupConfig{}, errors.New("FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH must be a positive canonical integer")
+		}
+		cfg.ascpAdaptationKeyEpoch = epoch
 	}
 	if cfg.observerConfig.ChainID == 8453 {
 		if err := cfg.pilotLimits.RequireInitialBaseMainnetProfile(); err != nil {

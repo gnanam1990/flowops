@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/policy"
@@ -53,6 +54,7 @@ type Config struct {
 	SettleWindow   time.Duration
 	Clock          func() time.Time
 	Random         io.Reader
+	Adaptations    *ascpadaptation.Service
 }
 
 type Decision struct {
@@ -71,6 +73,7 @@ type Decision struct {
 	Approval           *ascpapproval.Approval         `json:"approval,omitempty"`
 	EvaluatedAt        int64                          `json:"evaluatedAt"`
 	Replayed           bool                           `json:"replayed,omitempty"`
+	AdaptationGrantID  string                         `json:"adaptationGrantId,omitempty"`
 }
 
 type Authorization struct {
@@ -91,6 +94,7 @@ type Store interface {
 	DecideApproval(context.Context, string, string, string, bool, string, time.Time) (ascpapproval.Approval, error)
 	AuthorizationInput(context.Context, Identity, string, string, string, time.Time) (ascpexecauth.Input, error)
 	Authorization(context.Context, Identity, string) (Authorization, error)
+	AdaptationRequest(context.Context, Identity, string) (ascpadaptation.IssueRequest, error)
 }
 
 type AuthorizationStore interface {
@@ -114,6 +118,7 @@ type Service struct {
 	settleWindow   time.Duration
 	clock          func() time.Time
 	newID          func() (string, error)
+	adaptations    *ascpadaptation.Service
 }
 
 func New(cfg Config) (*Service, error) {
@@ -138,7 +143,7 @@ func New(cfg Config) (*Service, error) {
 	return &Service{
 		store: cfg.DatabaseStore, authorization: cfg.Authorization, escrowContract: cfg.EscrowContract,
 		acceptWindow: cfg.AcceptWindow, settleWindow: cfg.SettleWindow, clock: cfg.Clock,
-		newID: idSource(cfg.Random),
+		newID: idSource(cfg.Random), adaptations: cfg.Adaptations,
 	}, nil
 }
 
@@ -154,17 +159,44 @@ func (s *Service) Evaluate(ctx context.Context, identity Identity, operationID s
 	if err != nil {
 		return Decision{}, err
 	}
-	return s.store.Evaluate(ctx, identity, operationID, EvaluationConfig{
+	decision, err := s.store.Evaluate(ctx, identity, operationID, EvaluationConfig{
 		EscrowContract: s.escrowContract, AcceptWindow: s.acceptWindow, SettleWindow: s.settleWindow,
 		Now: s.clock().UTC(), DecisionID: decisionID, ApprovalID: approvalID,
 	})
+	if err != nil {
+		return Decision{}, err
+	}
+	return s.attachAdaptation(ctx, identity, decision)
 }
 
 func (s *Service) Decision(ctx context.Context, identity Identity, operationID string) (Decision, error) {
 	if !validIdentity(identity) || !validHash(operationID) {
 		return Decision{}, ErrInvalidScope
 	}
-	return s.store.Decision(ctx, identity, operationID)
+	decision, err := s.store.Decision(ctx, identity, operationID)
+	if err != nil {
+		return Decision{}, err
+	}
+	return s.attachAdaptation(ctx, identity, decision)
+}
+
+func (s *Service) attachAdaptation(ctx context.Context, identity Identity, decision Decision) (Decision, error) {
+	request, err := s.store.AdaptationRequest(ctx, identity, decision.OperationID)
+	if errors.Is(err, ascpadaptation.ErrReasonIneligible) {
+		return decision, nil
+	}
+	if err != nil {
+		return Decision{}, err
+	}
+	if s.adaptations == nil {
+		return Decision{}, ascpadaptation.ErrSignerUnavailable
+	}
+	record, err := s.adaptations.Issue(ctx, request)
+	if err != nil {
+		return Decision{}, err
+	}
+	decision.AdaptationGrantID = record.Artifact.Grant.GrantID
+	return decision, nil
 }
 
 func (s *Service) Approval(ctx context.Context, organizationID, approvalID string) (ascpapproval.Approval, error) {

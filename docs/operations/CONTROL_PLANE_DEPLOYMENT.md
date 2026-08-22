@@ -66,6 +66,11 @@ The API service requires:
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
 | `FLOWOPS_ASCP_DIRECTORY_CONTRACT` | Optional canonical lowercase ServiceDirectory address. When unset, durable agent intake remains mounted but returns a fail-closed 503 |
 | `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |
+| `FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS` | Canonical recovered address of the dedicated platform adaptation key; enables signed grants only with the complete tuple below |
+| `FLOWOPS_ASCP_ADAPTATION_KEY_ID` | Canonical HSM key identifier dedicated to adaptation grants |
+| `FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH` | Positive canonical HSM key epoch |
+| `FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET` | Absolute owner-controlled Unix socket for an idempotent `ASCP_RING6_COMPONENT_V1` HSM boundary |
+| `FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT` | Optional HSM stage timeout, default `3s`, range `1s` through `10s` |
 | `FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `1000000` |
 | `FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `10000000` |
 
@@ -81,6 +86,14 @@ write timestamp or caller-provided proof as a freshness substitute. Missing,
 stale, wrong-version, and unknown-leaf cases fail before operation creation.
 The existing `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` also bounds small positive
 observer/API host clock skew; larger future observations fail closed.
+
+The five adaptation variables are an all-or-nothing tuple and require durable
+ASCP intake. The HSM must use a platform key distinct from customer signer,
+Safe-owner, verifier, directory, and keeper keys, and must durably replay by
+the supplied digest idempotency key. The control plane verifies the response
+digest and recovered address and never receives private-key material. Retain
+HSM custody, key-rotation, socket-ownership, response-loss, and recovery-drill
+evidence before enabling this tuple in production.
 
 The same directory switch enables durable ASCP policy/approval/authorization
 orchestration. `FLOWOPS_ESCROW_CONTRACT` supplies the immutable commitment

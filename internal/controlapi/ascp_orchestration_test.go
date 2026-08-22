@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
@@ -52,6 +53,15 @@ func TestASCPOrchestrationRoutesDeriveAgentAndHumanScope(t *testing.T) {
 	if recorder.Code != http.StatusOK || flow.evaluateIdentity != (ascporchestration.Identity{OrganizationID: "org_a", AgentID: "agent_a"}) || flow.operationID != operationID || recorder.Header().Get("X-Correlation-ID") != "corr_orch" {
 		t.Fatalf("evaluate status=%d identity=%+v operation=%s headers=%v body=%s", recorder.Code, flow.evaluateIdentity, flow.operationID, recorder.Header(), recorder.Body.String())
 	}
+	flow.evaluateErr = ascpadaptation.ErrSignerUnavailable
+	request = httptest.NewRequest(http.MethodPost, "/agent/v1/intents/"+operationID+"/evaluate", nil)
+	request.Header.Set("Authorization", "Bearer "+agentToken)
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable || !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"ADAPTATION_GRANT_UNAVAILABLE"`)) || !bytes.Contains(recorder.Body.Bytes(), []byte(`"retriable":true`)) {
+		t.Fatalf("adaptation signer failure status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	flow.evaluateErr = nil
 
 	request = httptest.NewRequest(http.MethodPost, "/agent/v1/intents/"+operationID+"/authorization", nil)
 	request.Header.Set("Authorization", "Bearer "+agentToken)
@@ -91,11 +101,12 @@ type stubASCPFlow struct {
 	approved           bool
 	approvalCalls      int
 	authorizeCalls     int
+	evaluateErr        error
 }
 
 func (s *stubASCPFlow) Evaluate(_ context.Context, identity ascporchestration.Identity, operationID string) (ascporchestration.Decision, error) {
 	s.evaluateIdentity, s.operationID = identity, operationID
-	return s.decision, nil
+	return s.decision, s.evaluateErr
 }
 func (s *stubASCPFlow) Decision(context.Context, ascporchestration.Identity, string) (ascporchestration.Decision, error) {
 	return s.decision, nil

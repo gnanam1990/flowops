@@ -14,6 +14,8 @@ for required in \
     'GRANT SELECT, INSERT, UPDATE ON commands' \
     'GRANT SELECT, INSERT ON audit_events, control_events' \
     'GRANT SELECT, INSERT ON ascp_intents, ascp_policy_decisions, ascp_execution_authorizations' \
+	'GRANT SELECT, INSERT ON ascp_adaptation_grants' \
+	'GRANT UPDATE (state, remaining_attempts, consumed_operation_id, consumed_at)' \
 	'GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations' \
 	'GRANT SELECT ON ascp_bearer_handles, ascp_bearer_registry' \
 	'GRANT SELECT, INSERT ON ascp_sign_requests, ascp_signer_outbox' \

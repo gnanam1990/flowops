@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -26,22 +27,42 @@ func (s *PostgresStore) Create(ctx context.Context, input StoreInput) (Operation
 	if err != nil {
 		return Operation{}, false, fmt.Errorf("begin ASCP intake transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	operation := input.Operation
 	var createdAt time.Time
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO ascp_intents
 			(operation_id, organization_id, actor_id, endpoint, idempotency_key, canonical_input_hash,
 			 quote_hash, purchase_spec_hash, quote_nonce, directory_version, directory_contract, seller_signer,
-			 quote_json, purchase_spec_json, purchase_spec_bytes, request_body, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,to_timestamp($17))
+			 quote_json, purchase_spec_json, purchase_spec_bytes, request_body, adaptation_grant_id, adaptation_grant_digest, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULLIF($17,''),NULLIF($18,''),to_timestamp($19))
 		ON CONFLICT (organization_id, actor_id, endpoint, idempotency_key) DO NOTHING
 		RETURNING created_at`,
 		operation.OperationID, operation.OrganizationID, operation.ActorID, Endpoint, input.IdempotencyKey, input.CanonicalInputHash,
 		operation.QuoteHash, operation.PurchaseSpecHash, operation.QuoteNonce, int64(operation.DirectoryVersion), operation.DirectoryContract, operation.SellerSigner,
-		input.QuoteJSON, input.PurchaseSpecJSON, input.PurchaseSpecJSON, input.RequestBody, operation.CreatedAt,
+		input.QuoteJSON, input.PurchaseSpecJSON, input.PurchaseSpecJSON, input.RequestBody, input.AdaptationGrantID, input.AdaptationDigest, operation.CreatedAt,
 	).Scan(&createdAt)
 	if err == nil {
+		if input.AdaptationGrantID != "" {
+			result, consumeErr := tx.ExecContext(ctx, `
+				UPDATE ascp_adaptation_grants
+				SET state='CONSUMED', remaining_attempts=0, consumed_operation_id=$3, consumed_at=statement_timestamp()
+				WHERE grant_id=$1 AND grant_digest=$2 AND organization_id=$4 AND agent_id=$5
+				  AND state='ISSUED' AND remaining_attempts=1
+				  AND issued_at <= statement_timestamp() + interval '60 seconds'
+				  AND expires_at > statement_timestamp()`,
+				input.AdaptationGrantID, input.AdaptationDigest, operation.OperationID, operation.OrganizationID, operation.ActorID)
+			if consumeErr != nil {
+				return Operation{}, false, fmt.Errorf("consume adaptation grant: %w", consumeErr)
+			}
+			rows, rowsErr := result.RowsAffected()
+			if rowsErr != nil {
+				return Operation{}, false, rowsErr
+			}
+			if rows != 1 {
+				return Operation{}, false, ascpadaptation.ErrGrantConsumed
+			}
+		}
 		if err := tx.Commit(); err != nil {
 			return Operation{}, false, fmt.Errorf("commit ASCP intake transaction: %w", err)
 		}
@@ -55,12 +76,12 @@ func (s *PostgresStore) Create(ctx context.Context, input StoreInput) (Operation
 	var storedHash string
 	err = tx.QueryRowContext(ctx, `
 		SELECT operation_id, organization_id, actor_id, quote_hash, purchase_spec_hash, quote_nonce,
-		       directory_version, directory_contract, seller_signer, created_at, canonical_input_hash
+		       directory_version, directory_contract, seller_signer, COALESCE(adaptation_grant_id,''), created_at, canonical_input_hash
 		FROM ascp_intents
 		WHERE organization_id = $1 AND actor_id = $2 AND endpoint = $3 AND idempotency_key = $4`,
 		operation.OrganizationID, operation.ActorID, Endpoint, input.IdempotencyKey,
 	).Scan(&existing.OperationID, &existing.OrganizationID, &existing.ActorID, &existing.QuoteHash, &existing.PurchaseSpecHash, &existing.QuoteNonce,
-		&existing.DirectoryVersion, &existing.DirectoryContract, &existing.SellerSigner, &createdAt, &storedHash)
+		&existing.DirectoryVersion, &existing.DirectoryContract, &existing.SellerSigner, &existing.AdaptationGrantID, &createdAt, &storedHash)
 	if err != nil {
 		return Operation{}, false, fmt.Errorf("read ASCP idempotency result: %w", err)
 	}
@@ -80,13 +101,13 @@ func (s *PostgresStore) Lookup(ctx context.Context, organizationID, actorID, ide
 	var createdAt time.Time
 	err := s.db.QueryRowContext(ctx, `
 		SELECT operation_id, organization_id, actor_id, quote_hash, purchase_spec_hash, quote_nonce,
-		       directory_version, directory_contract, seller_signer, created_at, canonical_input_hash
+		       directory_version, directory_contract, seller_signer, COALESCE(adaptation_grant_id,''), created_at, canonical_input_hash
 		FROM ascp_intents
 		WHERE organization_id=$1 AND actor_id=$2 AND endpoint=$3 AND idempotency_key=$4`,
 		organizationID, actorID, Endpoint, idempotencyKey).Scan(
 		&operation.OperationID, &operation.OrganizationID, &operation.ActorID, &operation.QuoteHash,
 		&operation.PurchaseSpecHash, &operation.QuoteNonce, &operation.DirectoryVersion,
-		&operation.DirectoryContract, &operation.SellerSigner, &createdAt, &canonicalInputHash,
+		&operation.DirectoryContract, &operation.SellerSigner, &operation.AdaptationGrantID, &createdAt, &canonicalInputHash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, "", false, nil
@@ -103,12 +124,12 @@ func (s *PostgresStore) Get(ctx context.Context, organizationID, actorID, operat
 	var createdAt time.Time
 	err := s.db.QueryRowContext(ctx, `
 		SELECT operation_id, organization_id, actor_id, quote_hash, purchase_spec_hash, quote_nonce,
-		       directory_version, directory_contract, seller_signer, created_at
+		       directory_version, directory_contract, seller_signer, COALESCE(adaptation_grant_id,''), created_at
 		FROM ascp_intents
 		WHERE operation_id=$1 AND organization_id=$2 AND actor_id=$3`, operationID, organizationID, actorID).Scan(
 		&operation.OperationID, &operation.OrganizationID, &operation.ActorID, &operation.QuoteHash,
 		&operation.PurchaseSpecHash, &operation.QuoteNonce, &operation.DirectoryVersion,
-		&operation.DirectoryContract, &operation.SellerSigner, &createdAt,
+		&operation.DirectoryContract, &operation.SellerSigner, &operation.AdaptationGrantID, &createdAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, ErrNotFound

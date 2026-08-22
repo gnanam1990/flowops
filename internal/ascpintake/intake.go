@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/pkg/envelope"
 	"github.com/gnanam1990/flowops/pkg/purchasespec"
 	"github.com/gnanam1990/flowops/pkg/sellerquote"
@@ -39,6 +40,8 @@ type Request struct {
 	Evidence              sellerquote.DirectoryEvidence
 	CanonicalPurchaseSpec []byte
 	RequestBody           []byte
+	Adaptation            *ascpadaptation.SignedGrant
+	AdaptationSigner      string
 }
 
 type Operation struct {
@@ -51,6 +54,7 @@ type Operation struct {
 	DirectoryVersion  uint64 `json:"directoryVersion"`
 	DirectoryContract string `json:"directoryContract"`
 	SellerSigner      string `json:"sellerSigner"`
+	AdaptationGrantID string `json:"adaptationGrantId,omitempty"`
 	CreatedAt         int64  `json:"createdAt"`
 	Replayed          bool   `json:"replayed"`
 }
@@ -62,6 +66,8 @@ type StoreInput struct {
 	QuoteJSON          json.RawMessage
 	PurchaseSpecJSON   []byte
 	RequestBody        []byte
+	AdaptationGrantID  string
+	AdaptationDigest   string
 }
 
 // Store must create the operation and claim its quote nonce in the same durable
@@ -107,11 +113,16 @@ func (s *Service) Create(ctx context.Context, request Request) (Operation, error
 	if replayed, found, err := s.Replay(ctx, request); err != nil || found {
 		return replayed, err
 	}
-	if _, err := purchasespec.ValidatePersisted(request.CanonicalPurchaseSpec, request.RequestBody); err != nil {
+	spec, err := purchasespec.ValidatePersisted(request.CanonicalPurchaseSpec, request.RequestBody)
+	if err != nil {
 		return Operation{}, fmt.Errorf("purchase specification: %w", err)
 	}
 	if purchasespec.Hash(request.CanonicalPurchaseSpec) != request.Quote.PurchaseSpecHash {
 		return Operation{}, ErrPurchaseSpecBinding
+	}
+	adaptationDigest, err := validateAdaptation(request, spec, s.clock(), true)
+	if err != nil {
+		return Operation{}, err
 	}
 	quoteHash, signer, err := request.Quote.ValidateForIntake(s.clock(), request.DirectoryContract, request.Expected, request.Evidence, request.Signature)
 	if err != nil {
@@ -121,7 +132,7 @@ func (s *Service) Create(ctx context.Context, request Request) (Operation, error
 	if err != nil {
 		return Operation{}, fmt.Errorf("encode seller quote: %w", err)
 	}
-	inputHash := canonicalInputHash(request, quoteHash.Hex(), strings.ToLower(signer.Hex()))
+	inputHash := canonicalInputHash(request, quoteHash.Hex(), strings.ToLower(signer.Hex()), adaptationDigest)
 	operationID, err := s.newID()
 	if err != nil {
 		return Operation{}, err
@@ -131,9 +142,9 @@ func (s *Service) Create(ctx context.Context, request Request) (Operation, error
 		OperationID: operationID, OrganizationID: request.OrganizationID, ActorID: request.ActorID,
 		QuoteHash: quoteHash.Hex(), PurchaseSpecHash: request.Quote.PurchaseSpecHash, QuoteNonce: request.Quote.QuoteNonce,
 		DirectoryVersion: request.Quote.DirectoryVersion, DirectoryContract: request.DirectoryContract,
-		SellerSigner: strings.ToLower(signer.Hex()), CreatedAt: now.Unix(),
+		SellerSigner: strings.ToLower(signer.Hex()), AdaptationGrantID: adaptationGrantID(request.Adaptation), CreatedAt: now.Unix(),
 	}
-	stored, replayed, err := s.store.Create(ctx, StoreInput{Operation: operation, IdempotencyKey: request.IdempotencyKey, CanonicalInputHash: inputHash, QuoteJSON: quoteJSON, PurchaseSpecJSON: request.CanonicalPurchaseSpec, RequestBody: request.RequestBody})
+	stored, replayed, err := s.store.Create(ctx, StoreInput{Operation: operation, IdempotencyKey: request.IdempotencyKey, CanonicalInputHash: inputHash, QuoteJSON: quoteJSON, PurchaseSpecJSON: request.CanonicalPurchaseSpec, RequestBody: request.RequestBody, AdaptationGrantID: operation.AdaptationGrantID, AdaptationDigest: adaptationDigest})
 	if err != nil {
 		return Operation{}, err
 	}
@@ -153,7 +164,8 @@ func (s *Service) Replay(ctx context.Context, request Request) (Operation, bool,
 	if err != nil || !found {
 		return Operation{}, false, err
 	}
-	if _, err := purchasespec.ValidatePersisted(request.CanonicalPurchaseSpec, request.RequestBody); err != nil {
+	spec, err := purchasespec.ValidatePersisted(request.CanonicalPurchaseSpec, request.RequestBody)
+	if err != nil {
 		return Operation{}, false, fmt.Errorf("purchase specification: %w", err)
 	}
 	if purchasespec.Hash(request.CanonicalPurchaseSpec) != request.Quote.PurchaseSpecHash {
@@ -170,7 +182,11 @@ func (s *Service) Replay(ctx context.Context, request Request) (Operation, bool,
 	if err != nil {
 		return Operation{}, false, err
 	}
-	inputHash := canonicalInputHash(request, quoteHash.Hex(), strings.ToLower(signer.Hex()))
+	adaptationDigest, err := validateAdaptation(request, spec, time.Time{}, false)
+	if err != nil {
+		return Operation{}, false, err
+	}
+	inputHash := canonicalInputHash(request, quoteHash.Hex(), strings.ToLower(signer.Hex()), adaptationDigest)
 	if storedHash != inputHash {
 		return Operation{}, false, ErrIdempotencyConflict
 	}
@@ -190,7 +206,7 @@ func validateScope(request Request) error {
 	return nil
 }
 
-func canonicalInputHash(request Request, quoteHash, signer string) string {
+func canonicalInputHash(request Request, quoteHash, signer, adaptationDigest string) string {
 	input := struct {
 		Version           string `json:"version"`
 		OrganizationID    string `json:"organizationId"`
@@ -200,10 +216,38 @@ func canonicalInputHash(request Request, quoteHash, signer string) string {
 		DirectoryContract string `json:"directoryContract"`
 		QuoteHash         string `json:"quoteHash"`
 		SellerSigner      string `json:"sellerSigner"`
-	}{"ASCP_INTAKE_V1", request.OrganizationID, request.ActorID, Endpoint, request.IdempotencyKey, request.DirectoryContract, quoteHash, signer}
+		AdaptationDigest  string `json:"adaptationDigest,omitempty"`
+	}{"ASCP_INTAKE_V1", request.OrganizationID, request.ActorID, Endpoint, request.IdempotencyKey, request.DirectoryContract, quoteHash, signer, adaptationDigest}
 	encoded, _ := json.Marshal(input)
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
+}
+
+func validateAdaptation(request Request, spec purchasespec.Spec, now time.Time, enforceTime bool) (string, error) {
+	if request.Adaptation == nil {
+		return "", nil
+	}
+	use := ascpadaptation.Use{
+		OrganizationID: request.OrganizationID, AgentID: request.ActorID, TaskID: spec.TaskID,
+		Category: spec.Category, AmountAtomic: request.Quote.AmountBaseUnits, SellerID: request.Quote.SellerID,
+	}
+	var err error
+	if enforceTime {
+		err = ascpadaptation.Verify(*request.Adaptation, request.AdaptationSigner, now, use)
+	} else {
+		err = ascpadaptation.VerifyReplay(*request.Adaptation, request.AdaptationSigner, use)
+	}
+	if err != nil {
+		return "", err
+	}
+	return ascpadaptation.DigestHex(request.Adaptation.Grant)
+}
+
+func adaptationGrantID(grant *ascpadaptation.SignedGrant) string {
+	if grant == nil {
+		return ""
+	}
+	return grant.Grant.GrantID
 }
 
 func operationIDSource(random io.Reader) func() (string, error) {
@@ -226,9 +270,11 @@ func operationIDSource(random io.Reader) func() (string, error) {
 // MemoryStore models the required serializable transaction for focused tests.
 // It is not durable and must never be selected by a production runtime.
 type MemoryStore struct {
-	mu      sync.Mutex
-	byScope map[string]memoryRecord
-	byNonce map[string]string
+	mu               sync.Mutex
+	byScope          map[string]memoryRecord
+	byNonce          map[string]string
+	grants           map[string]ascpadaptation.Record
+	byOriginalIntent map[string]string
 }
 
 type memoryRecord struct {
@@ -237,7 +283,7 @@ type memoryRecord struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{byScope: make(map[string]memoryRecord), byNonce: make(map[string]string)}
+	return &MemoryStore{byScope: make(map[string]memoryRecord), byNonce: make(map[string]string), grants: make(map[string]ascpadaptation.Record), byOriginalIntent: make(map[string]string)}
 }
 
 func (s *MemoryStore) Create(ctx context.Context, input StoreInput) (Operation, bool, error) {
@@ -256,10 +302,70 @@ func (s *MemoryStore) Create(ctx context.Context, input StoreInput) (Operation, 
 	if _, claimed := s.byNonce[input.Operation.QuoteNonce]; claimed {
 		return Operation{}, false, ErrQuoteNonceConsumed
 	}
+	if input.AdaptationGrantID != "" {
+		grant, exists := s.grants[input.AdaptationGrantID]
+		if !exists || grant.Digest != input.AdaptationDigest {
+			return Operation{}, false, ascpadaptation.ErrInvalidGrant
+		}
+		if grant.ConsumedOperationID != "" {
+			return Operation{}, false, ascpadaptation.ErrGrantConsumed
+		}
+		grant.ConsumedOperationID = input.Operation.OperationID
+		s.grants[input.AdaptationGrantID] = grant
+	}
 	stored := input.Operation
 	s.byScope[scope] = memoryRecord{hash: input.CanonicalInputHash, operation: stored}
 	s.byNonce[input.Operation.QuoteNonce] = input.Operation.OperationID
 	return stored, false, nil
+}
+
+func (s *MemoryStore) Issue(ctx context.Context, record ascpadaptation.Record) (ascpadaptation.Record, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ascpadaptation.Record{}, false, err
+	}
+	if err := ascpadaptation.ValidateRecord(record); err != nil {
+		return ascpadaptation.Record{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	original := record.Artifact.Grant.OriginalIntentID
+	if grantID, exists := s.byOriginalIntent[original]; exists {
+		existing := s.grants[grantID]
+		if existing.CanonicalRequestHash != record.CanonicalRequestHash || existing.ReasonClass != record.ReasonClass {
+			return ascpadaptation.Record{}, false, ascpadaptation.ErrIssueConflict
+		}
+		return existing, true, nil
+	}
+	s.grants[record.Artifact.Grant.GrantID] = record
+	s.byOriginalIntent[original] = record.Artifact.Grant.GrantID
+	return record, false, nil
+}
+
+func (s *MemoryStore) GetGrant(ctx context.Context, organizationID, agentID, grantID string) (ascpadaptation.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return ascpadaptation.Record{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, exists := s.grants[grantID]
+	if !exists || record.Artifact.Grant.OrganizationID != organizationID || record.Artifact.Grant.AgentID != agentID {
+		return ascpadaptation.Record{}, ascpadaptation.ErrGrantNotFound
+	}
+	return record, nil
+}
+
+func (s *MemoryStore) GetByOriginalIntent(ctx context.Context, organizationID, agentID, originalIntentID string) (ascpadaptation.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return ascpadaptation.Record{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	grantID, exists := s.byOriginalIntent[originalIntentID]
+	record := s.grants[grantID]
+	if !exists || record.Artifact.Grant.OrganizationID != organizationID || record.Artifact.Grant.AgentID != agentID {
+		return ascpadaptation.Record{}, ascpadaptation.ErrGrantNotFound
+	}
+	return record, nil
 }
 
 func (s *MemoryStore) Lookup(ctx context.Context, organizationID, actorID, idempotencyKey string) (Operation, string, bool, error) {

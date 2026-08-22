@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpactivation"
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpagent"
 	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
@@ -930,15 +931,22 @@ func (s *Server) writeASCPError(w http.ResponseWriter, err error, correlationID 
 		writeCorrelatedError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", err, false, correlationID)
 	case errors.Is(err, ascpintake.ErrQuoteNonceConsumed):
 		writeCorrelatedError(w, http.StatusConflict, "QUOTE_NONCE_CONSUMED", err, false, correlationID)
+	case errors.Is(err, ascpadaptation.ErrGrantConsumed):
+		writeCorrelatedError(w, http.StatusConflict, "ADAPTATION_GRANT_CONSUMED", err, false, correlationID)
+	case errors.Is(err, ascpadaptation.ErrIssueConflict):
+		writeCorrelatedError(w, http.StatusConflict, "ADAPTATION_GRANT_CONFLICT", err, false, correlationID)
 	case errors.Is(err, directoryreader.ErrCurrentVersionMismatch):
 		writeCorrelatedError(w, http.StatusConflict, "DIRECTORY_VERSION_STALE", err, false, correlationID)
 	case errors.Is(err, directoryreader.ErrCurrentSnapshotUnavailable), errors.Is(err, directoryreader.ErrCurrentSnapshotStale):
 		writeCorrelatedError(w, http.StatusServiceUnavailable, "DIRECTORY_EVIDENCE_UNAVAILABLE", err, true, correlationID)
+	case errors.Is(err, ascpagent.ErrAdaptationUnavailable):
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ADAPTATION_GRANT_UNAVAILABLE", err, true, correlationID)
 	case errors.Is(err, directoryreader.ErrQuoteEvidenceUnavailable),
 		errors.Is(err, ascpagent.ErrInvalidRequest), errors.Is(err, ascpagent.ErrUnsupportedTerms),
 		errors.Is(err, sellerquote.ErrInvalidQuote), errors.Is(err, sellerquote.ErrInvalidSignature),
 		errors.Is(err, sellerquote.ErrQuoteExpired), errors.Is(err, sellerquote.ErrDirectoryEvidence),
-		errors.Is(err, ascpintake.ErrPurchaseSpecBinding):
+		errors.Is(err, ascpintake.ErrPurchaseSpecBinding), errors.Is(err, ascpadaptation.ErrInvalidGrant), errors.Is(err, ascpadaptation.ErrGrantNotFound),
+		errors.Is(err, ascpadaptation.ErrGrantScope), errors.Is(err, ascpadaptation.ErrReasonIneligible):
 		writeCorrelatedError(w, http.StatusBadRequest, "INVALID_ASCP_INTENT", err, false, correlationID)
 	default:
 		writeCorrelatedError(w, http.StatusServiceUnavailable, "ASCP_INTAKE_FAILED", err, true, correlationID)
@@ -955,6 +963,8 @@ func (s *Server) writeASCPFlowError(w http.ResponseWriter, err error, correlatio
 		writeCorrelatedError(w, http.StatusConflict, "POLICY_DENIED", err, false, correlationID)
 	case errors.Is(err, ascporchestration.ErrApprovalPending):
 		writeCorrelatedError(w, http.StatusConflict, "APPROVAL_PENDING", err, true, correlationID)
+	case errors.Is(err, ascpadaptation.ErrSignerUnavailable):
+		writeCorrelatedError(w, http.StatusServiceUnavailable, "ADAPTATION_GRANT_UNAVAILABLE", err, true, correlationID)
 	case errors.Is(err, ascporchestration.ErrApprovalUnavailable), errors.Is(err, ascporchestration.ErrStateConflict),
 		errors.Is(err, ascpapproval.ErrSnapshotMismatch), errors.Is(err, ascpapproval.ErrNotRequested):
 		writeCorrelatedError(w, http.StatusConflict, "ORCHESTRATION_STATE_CONFLICT", err, false, correlationID)

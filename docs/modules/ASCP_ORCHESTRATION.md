@@ -27,6 +27,13 @@ inputs from tenant- and actor-scoped SQL:
 5. immutable escrow deadlines constrained by the deployed contract; and
 6. the exact human review snapshot or a distinct automatic-decision reference.
 
+Eligible immutable denials also derive an adaptation request from the same
+stored operation and policy version. Amount scope is capped by current task and
+daily availability; wrong-seller scope comes from current active directory
+evidence for policy-allowed payouts. The external adaptation signature occurs
+after the decision transaction and is safely replayable; it is not described
+as part of the SQL atomic boundary. See `ASCP_ADAPTATION_GRANTS.md`.
+
 One serializable transaction locks the intent and inserts the append-only policy
 decision plus any required approval. Replays return that original decision even
 if the active policy is later removed. Decisions cannot be updated or deleted.
@@ -40,7 +47,9 @@ the same serializable transaction as the reservation.
 
 ## Outcomes and failures
 
-- `DENY`: immutable reason, no approval, authorization, or reservation.
+- `DENY`: immutable reason, no approval, authorization, or reservation. An
+  eligible first rejection carries one signed `adaptationGrantId`; prohibited
+  reasons carry none.
 - `REQUIRE_APPROVAL`: one expiring `REQUESTED` approval; authorization remains
   unavailable until the exact snapshot is approved.
 - `AUTO_APPROVE`: no human approval row; the execution row references the
@@ -63,4 +72,5 @@ PostgreSQL test applies every migration and proves human and automatic paths,
 parallel evaluation/authorization collapse to one durable result, replay after
 policy removal, cross-tenant and cross-agent concealment, expired-pending
 approval rejection, exact approval resume, append-only decisions, atomic
-reservation, and authorization replay.
+reservation, authorization replay, automatic amount/seller adaptation, no
+blocked-category grant, signer-free replay, and second-rejection escalation.

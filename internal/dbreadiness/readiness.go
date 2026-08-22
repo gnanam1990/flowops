@@ -46,6 +46,7 @@ var runtimeTables = []tableContract{
 	{name: "sites_memberships", allowed: set("SELECT")},
 	{name: "flowops_schema_migrations", allowed: set("SELECT")},
 	{name: "ascp_intents", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_adaptation_grants", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_policy_decisions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_approvals", allowed: set("SELECT", "INSERT", "UPDATE")},
 	{name: "ascp_budget_reservations", allowed: set("SELECT", "INSERT", "UPDATE")},
@@ -82,6 +83,7 @@ type columnUpdateContract struct {
 }
 
 var runtimeColumnUpdates = []columnUpdateContract{
+	{table: "ascp_adaptation_grants", columns: set("state", "remaining_attempts", "consumed_operation_id", "consumed_at")},
 	{table: "ascp_bearer_handles", columns: set("state")},
 	{table: "ascp_bearer_registry", columns: set("outcome")},
 	{table: "ascp_payment_operations", columns: set("state", "locked_transaction_hash", "locked_block_number", "locked_block_hash", "terminal_action", "terminal_transaction_hash", "terminal_block_number", "terminal_block_hash", "updated_at")},
