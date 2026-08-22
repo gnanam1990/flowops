@@ -92,9 +92,16 @@ contract ServiceDirectoryTest is Test {
         ServiceDirectory.AdminActionAuthorization memory authorization = _proposalAuthorization(proposal, 11);
         bytes memory signature = _sign(PUBLISHER_KEY, authorization);
 
-        ServiceDirectory.DirectoryProposal memory substituted = proposal;
+        ServiceDirectory.DirectoryProposal memory substituted =
+            abi.decode(abi.encode(proposal), (ServiceDirectory.DirectoryProposal));
         substituted.newRoot = keccak256("substituted-root");
         vm.expectRevert(ServiceDirectory.InvalidWorkflowBinding.selector);
+        vm.prank(relayer);
+        directory.proposeVersion(substituted, authorization, signature);
+
+        substituted = abi.decode(abi.encode(proposal), (ServiceDirectory.DirectoryProposal));
+        substituted.proposerNonce = proposal.proposerNonce + 1;
+        vm.expectRevert(ServiceDirectory.InvalidAuthorization.selector);
         vm.prank(relayer);
         directory.proposeVersion(substituted, authorization, signature);
 

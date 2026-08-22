@@ -112,6 +112,15 @@ func TestGovernancePayloadRejectsDomainAndValueSubstitution(t *testing.T) {
 		t.Fatalf("zero workflow error=%v", err)
 	}
 	for name, build := range map[string]func() (common.Hash, error){
+		"unsupported chain": func() (common.Hash, error) {
+			return CallEscrowPause(1, vectorContract, vectorWorkflow)
+		},
+		"mixed-case contract": func() (common.Hash, error) {
+			return CallEscrowPause(8453, "0x11111111111111111111111111111111111111Aa", vectorWorkflow)
+		},
+		"zero contract": func() (common.Hash, error) {
+			return CallEscrowPause(8453, "0x0000000000000000000000000000000000000000", vectorWorkflow)
+		},
 		"unchanged allowlist": func() (common.Hash, error) {
 			return SpendAllowlist(8453, vectorContract, vectorWorkflow, "0x3333333333333333333333333333333333333333", hashValue(1), hashValue(1))
 		},

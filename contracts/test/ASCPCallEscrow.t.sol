@@ -484,6 +484,10 @@ contract ASCPCallEscrowTest is Test {
         vm.prank(address(settlementGovernor));
         escrow.addVerifier(verifier, 9, keccak256("wrong-workflow"), payloadHash);
 
+        vm.expectRevert(ASCPCallEscrow.InvalidWorkflowBinding.selector);
+        vm.prank(address(settlementGovernor));
+        escrow.addVerifier(verifier, 9, bytes32(0), payloadHash);
+
         vm.expectEmit(true, true, true, true);
         emit ASCPCallEscrow.GovernanceWorkflowBound(workflowId, payloadHash, escrow.addVerifier.selector);
         vm.prank(address(settlementGovernor));

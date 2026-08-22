@@ -394,17 +394,13 @@ contract ASCPSpendModuleTest is Test {
             keccak256(abi.encode(module.spendAuthorizer(), module.authorizerEpoch(), next))
         );
 
-        vm.expectRevert("OWNER_CALL_FAILED");
-        _ownerCall(
-            address(module),
-            abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (vm.addr(0xC0FFEE), workflowId, payloadHash))
-        );
+        vm.expectRevert(ASCPSpendModule.InvalidWorkflowBinding.selector);
+        vm.prank(address(safe));
+        module.setSpendAuthorizer(vm.addr(0xC0FFEE), workflowId, payloadHash);
 
-        vm.expectRevert("OWNER_CALL_FAILED");
-        _ownerCall(
-            address(module),
-            abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (next, keccak256("wrong-workflow"), payloadHash))
-        );
+        vm.expectRevert(ASCPSpendModule.InvalidWorkflowBinding.selector);
+        vm.prank(address(safe));
+        module.setSpendAuthorizer(next, keccak256("wrong-workflow"), payloadHash);
 
         vm.expectEmit(true, true, true, true);
         emit ASCPSpendModule.GovernanceWorkflowBound(workflowId, payloadHash, module.setSpendAuthorizer.selector);

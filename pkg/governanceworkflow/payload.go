@@ -19,6 +19,8 @@ const (
 	CallEscrowDomain       = "ASCP_CALL_ESCROW_GOVERNANCE_V1"
 	SpendModuleDomain      = "ASCP_SPEND_MODULE_GOVERNANCE_V1"
 	ServiceDirectoryDomain = "SERVICE_DIRECTORY_GOVERNANCE_V1"
+	// MaxGovernanceNonceInvalidations mirrors ASCPSpendModule.MAX_GOVERNANCE_NONCE_INVALIDATIONS.
+	MaxGovernanceNonceInvalidations = 100
 )
 
 var (
@@ -135,7 +137,7 @@ func SpendPause(chainID uint64, contractAddress, workflowID string, current, nex
 }
 
 func SpendInvalidateNonces(chainID uint64, contractAddress, workflowID string, nonces []string) (common.Hash, error) {
-	if len(nonces) == 0 || len(nonces) > 100 {
+	if len(nonces) == 0 || len(nonces) > MaxGovernanceNonceInvalidations {
 		return common.Hash{}, ErrInvalidPayload
 	}
 	values := make([][32]byte, len(nonces))

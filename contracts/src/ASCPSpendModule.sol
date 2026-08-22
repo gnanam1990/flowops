@@ -22,6 +22,7 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
 
     uint64 public constant MAX_AUTHORIZATION_WINDOW = 10 minutes;
     uint64 public constant CAP_ACTIVATION_DELAY = 1 hours;
+    // Keep synchronized with governanceworkflow.MaxGovernanceNonceInvalidations.
     uint256 public constant MAX_GOVERNANCE_NONCE_INVALIDATIONS = 100;
     uint8 private constant SAFE_OPERATION_CALL = 0;
     bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("ASCP_SPEND_MODULE_GOVERNANCE_V1");
