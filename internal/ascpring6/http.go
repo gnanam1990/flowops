@@ -145,7 +145,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		writeFailure(w, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE")
 	default:
-		writeFailure(w, http.StatusServiceUnavailable, "VERIFICATION_REFUSED")
+		writeFailure(w, http.StatusServiceUnavailable, "SIGNER_UNAVAILABLE")
 	}
 }
 

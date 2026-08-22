@@ -111,6 +111,30 @@ func TestComponentBoundaryRejectsSocketReplacementAfterPinning(t *testing.T) {
 	}
 }
 
+func TestValidateComponentSocketsRejectsDistinctPathsToSameSocket(t *testing.T) {
+	directory := ringTempDir(t)
+	verifierPath := filepath.Join(directory, "verifier.sock")
+	hsmPath := filepath.Join(directory, "hsm.sock")
+	stop := serveComponent(t, verifierPath, "verifier", func(*http.ServeMux) {})
+	defer stop()
+	if err := os.Link(verifierPath, hsmPath); err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := NewComponentBoundary("verifier", verifierPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = verifier.Close() }()
+	hsm, err := NewComponentBoundary("hsm", hsmPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = hsm.Close() }()
+	if err := ValidateComponentSockets(verifier, hsm); err == nil {
+		t.Fatal("distinct component paths to one socket were accepted")
+	}
+}
+
 func TestComponentBoundaryRejectsReplacementBetweenCheckAndDial(t *testing.T) {
 	path := filepath.Join(ringTempDir(t), "verifier.sock")
 	stopFirst := serveComponent(t, path, "verifier", func(*http.ServeMux) {})

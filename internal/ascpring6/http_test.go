@@ -74,6 +74,14 @@ func TestHandlerMapsPermanentRefusalWithoutLeakingSignature(t *testing.T) {
 	}
 }
 
+func TestHandlerMapsUnknownSignerFaultToNeutralUnavailableCode(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeServiceError(response, errors.New("durable journal failed"))
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != "{\"code\":\"SIGNER_UNAVAILABLE\"}\n" {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	key, _ := crypto.GenerateKey()
@@ -155,6 +163,9 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 }
 
 func TestServeUnixAllowsSequentialDependencyBudgets(t *testing.T) {
+	if budget := ring6ResponseWriteTimeout(time.Second); budget != 5*time.Second {
+		t.Fatalf("five-stage response budget=%s", budget)
+	}
 	now := time.Unix(1_800_000_000, 0).UTC()
 	key, _ := crypto.GenerateKey()
 	directory := ringTempDir(t)
@@ -163,7 +174,9 @@ func TestServeUnixAllowsSequentialDependencyBudgets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = journal.Close() }()
-	delay := 600 * time.Millisecond
+	// The two calls together exceed two stage budgets, so this catches a
+	// regression to a dependency-only response timeout.
+	delay := 1050 * time.Millisecond
 	verifier := delayedVerifier{delay: delay, delegate: &testVerifier{}}
 	hsm := delayedHSM{delay: delay, delegate: &deterministicHSM{
 		key: crypto.FromECDSA(key), operations: map[string]HSMResult{},

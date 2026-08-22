@@ -25,6 +25,15 @@ type UnixConfig struct {
 	RequestTimeout time.Duration
 }
 
+const (
+	ring6DependencyResponseStages = 2 // verifier and HSM
+	ring6DurableResponseStages    = 3 // BOUND, HSM_REQUESTED, and SIGNED
+)
+
+func ring6ResponseWriteTimeout(stageBudget time.Duration) time.Duration {
+	return time.Duration(ring6DependencyResponseStages+ring6DurableResponseStages) * stageBudget
+}
+
 type privateUnixListener struct {
 	*net.UnixListener
 	path     string
@@ -51,9 +60,10 @@ func (s *Service) ServeUnix(ctx context.Context, config UnixConfig) (returnErr e
 	defer func() { returnErr = errors.Join(returnErr, listener.Close()) }()
 	server := &http.Server{
 		Handler: s.Handler(), ReadHeaderTimeout: config.RequestTimeout, ReadTimeout: config.RequestTimeout,
-		// A signing request performs sequential verifier and HSM calls plus
-		// durable journal fsyncs. Each dependency may consume its full budget.
-		WriteTimeout: 3 * config.RequestTimeout, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+		// A fresh signing request performs two sequential dependency calls and
+		// three durable append+fsync transitions. Reserve one configured stage
+		// budget for each before the HTTP server may terminate the response.
+		WriteTimeout: ring6ResponseWriteTimeout(config.RequestTimeout), IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 	result := make(chan error, 1)
 	go func() { result <- server.Serve(listener) }()
