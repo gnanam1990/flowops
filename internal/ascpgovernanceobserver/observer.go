@@ -84,7 +84,7 @@ func New(config Config) (*Observer, error) {
 }
 
 func (o *Observer) ObserveWorkflowCompletion(ctx context.Context, workflow ascpworkflow.Workflow) (ascpworkflow.CompletionReceipt, error) {
-	if (workflow.State != ascpworkflow.ApprovedPendingChain && workflow.State != ascpworkflow.Submitted && workflow.State != ascpworkflow.Confirmed) || workflow.ApprovedAt <= 0 {
+	if !observableWorkflow(workflow) || workflow.ApprovedAt <= 0 {
 		return ascpworkflow.CompletionReceipt{}, ErrReceiptRejected
 	}
 	rules, err := o.rulesForWorkflow(workflow)
@@ -148,6 +148,20 @@ func (o *Observer) ObserveWorkflowCompletion(ctx context.Context, workflow ascpw
 	}
 	receipt.EvidenceDigest = evidenceDigest(receipt)
 	return receipt, nil
+}
+
+func observableWorkflow(workflow ascpworkflow.Workflow) bool {
+	switch workflow.State {
+	case ascpworkflow.ApprovedPendingChain, ascpworkflow.Submitted, ascpworkflow.Confirmed,
+		ascpworkflow.Reverted, ascpworkflow.Reorged, ascpworkflow.TimedOut, ascpworkflow.RequiresReapproval:
+		if workflow.State != ascpworkflow.ApprovedPendingChain && workflow.State != ascpworkflow.Submitted &&
+			workflow.State != ascpworkflow.Confirmed && workflow.SubmissionTxHash == "" {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func (o *Observer) rulesForWorkflow(workflow ascpworkflow.Workflow) ([]reconciliation.GovernanceRule, error) {

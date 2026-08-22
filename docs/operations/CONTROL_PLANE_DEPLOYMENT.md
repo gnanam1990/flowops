@@ -591,3 +591,77 @@ replay prune routine in addition to its table/sequence allowlist. Intake replay 
 are immutable for 24 hours and pruned at startup and hourly; alert on prune
 failure and database growth. Verdict decisions and finalized key observations
 are never pruned. Do not run the file signer for production funds.
+
+## Governance Safe relayer
+
+Apply migration `0030_ascp_governance_safe_relayer.sql`, create a dedicated
+LOGIN role with no memberships or owned objects, and apply:
+
+```sh
+psql "$MIGRATION_OWNER_DATABASE_URL" \
+  --set=governance_relayer_role="$FLOWOPS_GOVERNANCE_RELAY_DATABASE_ROLE" \
+  --file=deploy/control-plane/configure-governance-relayer-role.sql
+```
+
+Run `/flowops/ascp-governance-relayer run` as a separately supervised process.
+It opens no listener. Required configuration is:
+
+| Variable | Contract |
+| --- | --- |
+| `FLOWOPS_GOVERNANCE_RELAY_DATABASE_URL` | Dedicated capped role; PostgreSQL URL with exactly `sslmode=verify-full` |
+| `FLOWOPS_GOVERNANCE_RELAY_WORKER_ID` | Stable deployment worker identifier; daemon mode only |
+| `FLOWOPS_GOVERNANCE_RELAY_DIRECTORY_SOCKET` | Private Unix socket for authoritative organization Safe binding |
+| `FLOWOPS_GOVERNANCE_RELAY_CHAIN_SOCKET` | Private read-only quorum snapshot/outcome Unix socket |
+| `FLOWOPS_GOVERNANCE_RELAY_VAULT_SOCKET` | Private authenticated Safe-artifact vault Unix socket |
+| `FLOWOPS_GOVERNANCE_RELAY_BROADCAST_SOCKET` | Private outer transaction prepare/broadcast Unix socket |
+| `FLOWOPS_GOVERNANCE_RELAY_VAULT_TOKEN_FILE` | Canonical base64 32-byte vault capability in an owner-private file |
+| `FLOWOPS_GOVERNANCE_RELAY_QUORUM` | `2` to `5`; default `2` |
+| `FLOWOPS_GOVERNANCE_RELAY_INTERVAL` | Optional cycle interval; default `1m`, maximum `5m` |
+| `FLOWOPS_GOVERNANCE_RELAY_LEASE_DURATION` | Optional fenced lease; default `55s`, maximum `1m` |
+| `FLOWOPS_GOVERNANCE_RELAY_BOUNDARY_TIMEOUT` | Optional sidecar timeout; default `3s`, maximum `10s` |
+| `FLOWOPS_GOVERNANCE_RELAY_BATCH_SIZE` | Optional phase bound; default `20`, maximum `100` |
+
+The runtime verifies the database role's exact effective privilege set before
+processing work. The pure observer-array constraint validator is the sole
+executable routine. Surplus PUBLIC, membership, table, column, routine,
+sequence, schema, temporary-table, or ownership authority is a startup failure.
+
+All four sockets must be non-symlinks with distinct filesystem identities and
+secure ownership. Sidecars must return the exact
+`ASCP_GOVERNANCE_RELAY_BOUNDARY_V1` identity. The chain boundary is read-only;
+the broadcast boundary cannot access the vault; the vault receives an
+authenticated capability but cannot broadcast.
+
+Before requesting signatures, set `FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_ORG` and
+`FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_WORKFLOW`, then run:
+
+```sh
+/flowops/ascp-governance-relayer inspect
+```
+
+The JSON output is the signing ceremony input. Owners must independently check
+the organization workflow, exact target and calldata, current Safe nonce,
+sorted owner set, threshold, Safe transaction hash, payload hash, and quorum
+evidence. Inspect mode does not require worker, vault, or broadcast
+configuration and does not connect to those boundaries. If any field changes, discard all collected signatures and
+inspect again.
+
+After the customer Safe owners sign that exact Safe transaction hash, place
+only the canonical base64 signature bundle in a runtime-user-owned `0600`
+non-symlink file and run `/flowops/ascp-governance-relayer authorize` with:
+
+- the same `FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_ORG`;
+- the same `FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_WORKFLOW`;
+- `FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_KEY`; and
+- `FLOWOPS_GOVERNANCE_RELAY_SIGNATURE_FILE`.
+
+Authorize mode does not require a daemon worker ID or broadcast socket and
+cannot prepare or broadcast an outer transaction.
+
+Remove the signature file through the approved secret-retention procedure
+after the command succeeds. Alert on awaiting signatures, lease stalls,
+reapproval-required jobs, stale/quorum failures, repeated outer preparation,
+and the lag between `FINALIZED_OBSERVED` and independently finalized workflow
+state. A signed Safe transaction is limited to ten submitted outer attempts;
+attempt ten exhausts automatic relay and pages for a fresh approval and owner
+ceremony. Never repair a retry or reset the cap by editing relay or proof rows.

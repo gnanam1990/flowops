@@ -70,6 +70,80 @@ func TestKindRoleMatrixDualControlAndReceiptGate(t *testing.T) {
 	}
 }
 
+func TestFinalizedReceiptRecoversSideStateAndEarlierSafeAttempt(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	observer := &completionObserverStub{}
+	service, err := New(NewMemoryStore(), observer, func() time.Time { return now }, workflowRandom(32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	createApproved := func(id uint64) Workflow {
+		workflow, err := service.Create(t.Context(), actor("proposer", SignerOperator, now),
+			fmt.Sprintf("create_%d", id), testCreateRequest(SignerCaps, id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		workflow, err = service.Approve(t.Context(), actor("approver", OrgAdmin, now), workflow.WorkflowID,
+			fmt.Sprintf("approve_%d", id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return workflow
+	}
+
+	workflow := createApproved(901)
+	firstHash := testHash(911)
+	if _, err := service.RecordSubmission(t.Context(), workflow.OrganizationID, workflow.WorkflowID, firstHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RecordChainFailure(t.Context(), workflow.OrganizationID, workflow.WorkflowID,
+		TimedOut, SubmissionTimeout); err != nil {
+		t.Fatal(err)
+	}
+	observer.transactionHash = firstHash
+	completed, err := service.ObserveAndComplete(t.Context(), workflow.OrganizationID, workflow.WorkflowID)
+	if err != nil || completed.State != Finalized || completed.CompletionReceipt == nil {
+		t.Fatalf("side-state completion=%+v err=%v", completed, err)
+	}
+
+	workflow = createApproved(902)
+	oldHash, replacementHash := testHash(912), testHash(913)
+	if _, err := service.RecordSubmission(t.Context(), workflow.OrganizationID, workflow.WorkflowID, oldHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RecordChainFailure(t.Context(), workflow.OrganizationID, workflow.WorkflowID,
+		TimedOut, SubmissionTimeout); err != nil {
+		t.Fatal(err)
+	}
+	proof := SafeRetryProof{
+		WorkflowID: workflow.WorkflowID, PreviousTransactionHash: oldHash, RetryTransactionHash: replacementHash,
+		Outcome: "DROPPED", PreviousCanonical: false, SafeAddress: "0x1111111111111111111111111111111111111111",
+		SafeNonce: 7, SafeTxHash: testHash(914), ExecCalldataHash: testHash(915),
+		VerifiedPayloadHash: workflow.PayloadHash, Observers: []string{"rpc_a", "rpc_b"},
+		EvidenceDigest: testHash(916), ObservedAt: now.Unix(),
+	}
+	if _, err := service.RecordProvenRetry(t.Context(), workflow.OrganizationID, workflow.WorkflowID, replacementHash, proof); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := service.RecordProvenRetry(t.Context(), workflow.OrganizationID, workflow.WorkflowID, replacementHash, proof)
+	if err != nil || !replay.Replayed {
+		t.Fatalf("exact retry replay=%+v err=%v", replay, err)
+	}
+	mutatedProof := proof
+	mutatedProof.EvidenceDigest = testHash(917)
+	if _, err := service.RecordProvenRetry(t.Context(), workflow.OrganizationID, workflow.WorkflowID, replacementHash, mutatedProof); !errors.Is(err, ErrStateConflict) {
+		t.Fatalf("mutated retry replay error=%v", err)
+	}
+	// The first authorized outer can still win after the replacement is
+	// submitted. The independent finalized action event is authoritative.
+	observer.transactionHash = oldHash
+	completed, err = service.ObserveAndComplete(t.Context(), workflow.OrganizationID, workflow.WorkflowID)
+	if err != nil || completed.State != Finalized || completed.SubmissionTxHash != oldHash ||
+		completed.CompletionReceipt == nil {
+		t.Fatalf("earlier-attempt completion=%+v err=%v", completed, err)
+	}
+}
+
 func TestChainCreateRequiresAndPersistsPayloadBoundWorkflowID(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	service, err := New(NewMemoryStore(), nil, func() time.Time { return now }, workflowRandom(1), WithGovernanceActionGate(testActionGate{}))

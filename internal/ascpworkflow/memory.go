@@ -10,10 +10,11 @@ import (
 )
 
 type MemoryStore struct {
-	mu        sync.Mutex
-	workflows map[string]Workflow
-	actions   map[string]memoryAction
-	receipts  map[string]memoryReceiptOwner
+	mu          sync.Mutex
+	workflows   map[string]Workflow
+	actions     map[string]memoryAction
+	receipts    map[string]memoryReceiptOwner
+	retryProofs map[string][]SafeRetryProof
 }
 
 type memoryAction struct {
@@ -29,6 +30,7 @@ type memoryReceiptOwner struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		workflows: make(map[string]Workflow), actions: make(map[string]memoryAction), receipts: make(map[string]memoryReceiptOwner),
+		retryProofs: make(map[string][]SafeRetryProof),
 	}
 }
 
@@ -101,7 +103,7 @@ func (s *MemoryStore) Pending(ctx context.Context, limit int, afterWorkflowID st
 	}
 	result := make([]Workflow, 0, limit)
 	for _, workflow := range s.workflows {
-		if activeChainState(workflow.State) && (afterWorkflowID == "" || workflow.ApprovedAt > cursor.ApprovedAt ||
+		if completionCandidate(workflow) && (afterWorkflowID == "" || workflow.ApprovedAt > cursor.ApprovedAt ||
 			(workflow.ApprovedAt == cursor.ApprovedAt && workflow.WorkflowID > afterWorkflowID)) {
 			result = append(result, cloneWorkflow(workflow))
 		}
@@ -225,6 +227,35 @@ func (s *MemoryStore) Submit(ctx context.Context, organizationID, workflowID, tr
 	return cloneWorkflow(workflow), false, nil
 }
 
+func (s *MemoryStore) RetrySubmission(ctx context.Context, organizationID, workflowID, transactionHash string, proof SafeRetryProof, now time.Time) (Workflow, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Workflow{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workflow, exists := s.workflows[workflowID]
+	if !exists || workflow.OrganizationID != organizationID {
+		return Workflow{}, false, ErrNotFound
+	}
+	if workflow.State == Submitted && workflow.SubmissionTxHash == transactionHash {
+		for _, recorded := range s.retryProofs[workflowID] {
+			if recorded.RetryTransactionHash == transactionHash && sameSafeRetryProof(recorded, proof) {
+				return cloneWorkflow(workflow), true, nil
+			}
+		}
+		return Workflow{}, false, ErrStateConflict
+	}
+	if (workflow.State != TimedOut && workflow.State != Reorged) || proof.PreviousTransactionHash != workflow.SubmissionTxHash ||
+		proof.VerifiedPayloadHash != workflow.PayloadHash || !validSafeRetryProof(workflowID, transactionHash, proof, now) {
+		return Workflow{}, false, ErrStateConflict
+	}
+	workflow.State, workflow.SubmissionTxHash, workflow.SubmittedAt = Submitted, transactionHash, now.Unix()
+	workflow.ConfirmedAt, workflow.TerminalReason, workflow.TerminalAt = 0, "", 0
+	s.retryProofs[workflowID] = append(s.retryProofs[workflowID], cloneRetryProof(proof))
+	s.workflows[workflowID] = cloneWorkflow(workflow)
+	return cloneWorkflow(workflow), false, nil
+}
+
 func (s *MemoryStore) Confirm(ctx context.Context, organizationID, workflowID, transactionHash string, now time.Time) (Workflow, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return Workflow{}, false, err
@@ -262,8 +293,8 @@ func (s *MemoryStore) Complete(ctx context.Context, organizationID, workflowID s
 	if workflow.State == Finalized && workflow.CompletionDigest == digest {
 		return cloneWorkflow(workflow), true, nil
 	}
-	if !activeChainState(workflow.State) || workflow.PayloadHash != receipt.PayloadHash ||
-		(workflow.SubmissionTxHash != "" && workflow.SubmissionTxHash != receipt.TransactionHash) {
+	if !completionCandidateState(workflow.State) || workflow.PayloadHash != receipt.PayloadHash ||
+		!s.authorizedReceiptAttempt(workflow, receipt.TransactionHash) {
 		return Workflow{}, false, ErrStateConflict
 	}
 	if now.Unix() < workflow.ApprovedAt || now.Unix() < workflow.SubmittedAt || now.Unix() < workflow.ConfirmedAt {
@@ -278,9 +309,15 @@ func (s *MemoryStore) Complete(ctx context.Context, organizationID, workflowID s
 			return Workflow{}, false, ErrStateConflict
 		}
 	}
-	if workflow.State == ApprovedPendingChain {
+	// The finalized action event identifies the canonical winning attempt. A
+	// replacement may be locally SUBMITTED/CONFIRMED while an earlier proven
+	// Safe attempt wins, so the workflow's primary transaction hash must
+	// converge to the receipt rather than retain the losing replacement.
+	workflow.SubmissionTxHash = receipt.TransactionHash
+	if workflow.State == ApprovedPendingChain || chainSideState(workflow.State) {
 		workflow.State = Submitted
-		workflow.SubmissionTxHash, workflow.SubmittedAt = receipt.TransactionHash, now.Unix()
+		workflow.SubmittedAt = now.Unix()
+		workflow.ConfirmedAt, workflow.TerminalReason, workflow.TerminalAt = 0, "", 0
 	}
 	if workflow.State == Submitted {
 		workflow.State, workflow.ConfirmedAt = Confirmed, now.Unix()
@@ -325,8 +362,40 @@ func cloneWorkflow(workflow Workflow) Workflow {
 	return workflow
 }
 
+func cloneRetryProof(proof SafeRetryProof) SafeRetryProof {
+	proof.Observers = append([]string(nil), proof.Observers...)
+	return proof
+}
+
+func (s *MemoryStore) authorizedReceiptAttempt(workflow Workflow, transactionHash string) bool {
+	if workflow.SubmissionTxHash == "" {
+		return workflow.State == ApprovedPendingChain
+	}
+	if workflow.SubmissionTxHash == transactionHash {
+		return true
+	}
+	for _, proof := range s.retryProofs[workflow.WorkflowID] {
+		if proof.PreviousTransactionHash == transactionHash || proof.RetryTransactionHash == transactionHash {
+			return true
+		}
+	}
+	return false
+}
+
 func activeChainState(state State) bool {
 	return state == ApprovedPendingChain || state == Submitted || state == Confirmed
+}
+
+func chainSideState(state State) bool {
+	return state == Reverted || state == Reorged || state == TimedOut || state == RequiresReapproval
+}
+
+func completionCandidateState(state State) bool {
+	return activeChainState(state) || chainSideState(state)
+}
+
+func completionCandidate(workflow Workflow) bool {
+	return activeChainState(workflow.State) || chainSideState(workflow.State) && workflow.SubmissionTxHash != ""
 }
 
 func validFailureTransition(from, to State) bool {

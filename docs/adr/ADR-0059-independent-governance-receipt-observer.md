@@ -35,6 +35,6 @@ does not.
   later bounded batches. A keyset cursor rotates across deferred rows, so a full
   oldest batch cannot permanently hide newer finalized receipts.
 - Durable `SUBMITTED`, `CONFIRMED`, and `FINALIZED` transitions are implemented,
-  including atomic recovery of missing intermediate transitions. Automated
-  Safe fee-bump/resubmission and post-finalization reorg recovery remain later
-  execution/reconciliation work.
+  including atomic recovery of missing intermediate transitions. Safe
+  resubmission is owned by ADR-0060 and may use only its exact proof-bound
+  path. Post-finalization reorg recovery remains later reconciliation work.

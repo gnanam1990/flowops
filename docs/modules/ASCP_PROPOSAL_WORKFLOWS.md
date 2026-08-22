@@ -68,10 +68,12 @@ offline, final receipt recovery reconstructs any missing intermediate events in
 the same transaction. `REVERTED`, `REORGED`, `TIMED_OUT`, and
 `REQUIRES_REAPPROVAL` are explicit side states with closed reason codes. There
 is no public completion route or caller-supplied receipt path. The current
-lifecycle rejects submission directly from `REORGED` or `TIMED_OUT`: an outer
-transaction hash alone cannot prove a byte-identical Safe retry. A later
-relayer may open that transition only with exact approved Safe bytes, Safe nonce,
-and retry-classification evidence required by AC-83.
+lifecycle rejects generic submission directly from `REORGED` or `TIMED_OUT`:
+an outer transaction hash alone cannot prove an unchanged Safe retry. The
+governance Safe relayer opens only its dedicated proven-retry transition after
+persisting exact approved Safe bytes, Safe nonce, current precondition, and
+independent retry-classification evidence required by AC-83. The database
+trigger joins that proof to the durable relay job before accepting `SUBMITTED`.
 
 Chain governance contracts now recompute the exact approved payload and emit a
 shared workflow-binding event with the action event. See
@@ -83,11 +85,13 @@ atomic one-time receipt ownership checks pass.
 
 Migrations `0027_ascp_proposal_workflows.sql`,
 `0028_ascp_governance_receipt_ownership.sql`, and
-`0029_ascp_governance_action_lifecycle.sql` add the authoritative workflow,
+`0029_ascp_governance_action_lifecycle.sql`, and
+`0030_ascp_governance_safe_relayer.sql` add the authoritative workflow,
 idempotent action, immutable event, and immutable outbox tables. A database
 trigger rejects payload or identity changes, deletion, and illegal transitions.
 Runtime role setup grants column-level updates only for the reviewed transition
-fields. PostgreSQL readiness verifies these exact grants and all five tables.
+fields. The separately capped governance-relayer role owns only relay and
+proof-bound workflow transitions.
 Migration 0029 fails old untyped live chain rows closed: unapproved rows become
 `EXPIRED`, approved rows become `REQUIRES_REAPPROVAL/PRECONDITION_CHANGED`, and
 both receive migration action/event/outbox records. Existing finalized history

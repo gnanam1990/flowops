@@ -141,6 +141,11 @@ func TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence(t *testing.T) {
 		len(receipt.Observers) != 2 || receipt.EvidenceDigest == "" {
 		t.Fatalf("receipt=%+v", receipt)
 	}
+	late := workflow
+	late.State, late.SubmissionTxHash = ascpworkflow.TimedOut, transport.txHash
+	if recovered, err := observer.ObserveWorkflowCompletion(t.Context(), late); err != nil || recovered.TransactionHash != transport.txHash {
+		t.Fatalf("late finalized receipt=%+v err=%v", recovered, err)
+	}
 
 	transport.mu.Lock()
 	transport.head = 105

@@ -3,6 +3,7 @@
 package ascpworkflow
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -155,6 +156,45 @@ type GovernanceExecutionCommand struct {
 	ApprovalActionHash string          `json:"approvalActionHash"`
 }
 
+// ValidateExecutionCommand rebinds an immutable outbox command to the same
+// closed action schema used at proposal approval. Consumers must call this
+// instead of treating persisted JSON as trusted merely because it came from a
+// database row.
+func ValidateExecutionCommand(command GovernanceExecutionCommand) error {
+	workflow := Workflow{
+		WorkflowID: command.WorkflowID, OrganizationID: command.OrganizationID, Kind: command.Kind,
+		PayloadHash: command.PayloadHash, ChainID: command.ChainID, ContractAddress: command.ContractAddress,
+		FunctionSelector: command.FunctionSelector, Calldata: command.Calldata,
+		GovernanceAction: append(json.RawMessage(nil), command.GovernanceAction...), ApprovedBy: command.ApprovedBy,
+		ApprovedAt: command.ApprovedAt, State: ApprovedPendingChain,
+	}
+	expected, err := buildExecutionCommand(workflow, command.ApprovalActionHash)
+	if err != nil || command.Version != expected.Version || command.WorkflowID != expected.WorkflowID ||
+		command.OrganizationID != expected.OrganizationID || command.Kind != expected.Kind ||
+		command.PayloadHash != expected.PayloadHash || command.ChainID != expected.ChainID ||
+		command.ContractAddress != expected.ContractAddress || command.FunctionSelector != expected.FunctionSelector ||
+		command.Calldata != expected.Calldata || command.Value != expected.Value || command.Operation != expected.Operation ||
+		command.ApprovedBy != expected.ApprovedBy || command.ApprovedAt != expected.ApprovedAt ||
+		command.ExecuteAfter != expected.ExecuteAfter || command.ApprovalActionHash != expected.ApprovalActionHash ||
+		!jsonEqual(command.GovernanceAction, expected.GovernanceAction) {
+		return ErrInvalidWorkflow
+	}
+	return nil
+}
+
+func jsonEqual(left, right json.RawMessage) bool {
+	var leftValue, rightValue any
+	leftDecoder, rightDecoder := json.NewDecoder(bytes.NewReader(left)), json.NewDecoder(bytes.NewReader(right))
+	leftDecoder.UseNumber()
+	rightDecoder.UseNumber()
+	if leftDecoder.Decode(&leftValue) != nil || rightDecoder.Decode(&rightValue) != nil {
+		return false
+	}
+	leftCanonical, leftErr := json.Marshal(leftValue)
+	rightCanonical, rightErr := json.Marshal(rightValue)
+	return leftErr == nil && rightErr == nil && string(leftCanonical) == string(rightCanonical)
+}
+
 type CreateRequest struct {
 	Kind        Kind                       `json:"kind"`
 	WorkflowID  string                     `json:"workflowId,omitempty"`
@@ -181,6 +221,22 @@ type CompletionReceipt struct {
 	Observers            []string `json:"observers"`
 	EvidenceDigest       string   `json:"evidenceDigest"`
 	Finality             string   `json:"finality"`
+}
+
+type SafeRetryProof struct {
+	WorkflowID              string   `json:"workflowId"`
+	PreviousTransactionHash string   `json:"previousTransactionHash"`
+	RetryTransactionHash    string   `json:"retryTransactionHash"`
+	Outcome                 string   `json:"outcome"`
+	PreviousCanonical       bool     `json:"previousCanonical"`
+	SafeAddress             string   `json:"safeAddress"`
+	SafeNonce               uint64   `json:"safeNonce"`
+	SafeTxHash              string   `json:"safeTxHash"`
+	ExecCalldataHash        string   `json:"execCalldataHash"`
+	VerifiedPayloadHash     string   `json:"verifiedPayloadHash"`
+	Observers               []string `json:"observers"`
+	EvidenceDigest          string   `json:"evidenceDigest"`
+	ObservedAt              int64    `json:"observedAt"`
 }
 
 type CompletionObserver interface {
@@ -218,6 +274,7 @@ type Store interface {
 	Cancel(context.Context, Actor, string, string, string, time.Time) (Workflow, bool, error)
 	Expire(context.Context, string, string, time.Time) (Workflow, bool, error)
 	Submit(context.Context, string, string, string, time.Time) (Workflow, bool, error)
+	RetrySubmission(context.Context, string, string, string, SafeRetryProof, time.Time) (Workflow, bool, error)
 	Confirm(context.Context, string, string, string, time.Time) (Workflow, bool, error)
 	Complete(context.Context, string, string, CompletionReceipt, string, []byte, time.Time) (Workflow, bool, error)
 	FailChain(context.Context, string, string, State, TerminalReason, time.Time) (Workflow, bool, error)
@@ -425,6 +482,23 @@ func (s *Service) RecordSubmission(ctx context.Context, organizationID, workflow
 	return workflow, nil
 }
 
+// RecordProvenRetry is the sole path from a dropped/reorged side state back to
+// SUBMITTED. The proof binds the unchanged Safe transaction and current Safe
+// nonce/preconditions; the generic submission boundary remains closed.
+func (s *Service) RecordProvenRetry(ctx context.Context, organizationID, workflowID, transactionHash string, proof SafeRetryProof) (Workflow, error) {
+	now := s.clock().UTC().Truncate(time.Second)
+	if !identifier(organizationID) || !hash(workflowID) || !hash(transactionHash) ||
+		!validSafeRetryProof(workflowID, transactionHash, proof, now) {
+		return Workflow{}, ErrInvalidWorkflow
+	}
+	workflow, replayed, err := s.store.RetrySubmission(ctx, organizationID, workflowID, transactionHash, proof, now)
+	if err != nil {
+		return Workflow{}, err
+	}
+	workflow.Replayed = replayed
+	return workflow, nil
+}
+
 // RecordConfirmation is an internal reconciler boundary. Finalization still
 // requires the independent canonical receipt observer.
 func (s *Service) RecordConfirmation(ctx context.Context, organizationID, workflowID, transactionHash string) (Workflow, error) {
@@ -457,7 +531,7 @@ func (s *Service) ObserveAndComplete(ctx context.Context, organizationID, workfl
 		workflow.Replayed = true
 		return workflow, nil
 	}
-	if workflow.State != ApprovedPendingChain && workflow.State != Submitted && workflow.State != Confirmed {
+	if !completionCandidateState(workflow.State) {
 		return Workflow{}, ErrStateConflict
 	}
 	receipt, err := s.observer.ObserveWorkflowCompletion(ctx, workflow)
@@ -516,6 +590,46 @@ func validChainFailure(state State, reason TerminalReason) bool {
 	default:
 		return false
 	}
+}
+
+func validSafeRetryProof(workflowID, transactionHash string, proof SafeRetryProof, now time.Time) bool {
+	if proof.WorkflowID != workflowID || proof.RetryTransactionHash != transactionHash || !hash(proof.PreviousTransactionHash) ||
+		!hash(proof.RetryTransactionHash) || proof.PreviousCanonical ||
+		(proof.Outcome != "DROPPED" && proof.Outcome != "REORGED") || !canonicalAddress(proof.SafeAddress) ||
+		!hash(proof.SafeTxHash) || !hash(proof.ExecCalldataHash) || !hash(proof.VerifiedPayloadHash) ||
+		!hash(proof.EvidenceDigest) || proof.ObservedAt <= 0 || time.Unix(proof.ObservedAt, 0).After(now.Add(time.Minute)) ||
+		now.Sub(time.Unix(proof.ObservedAt, 0)) > time.Minute || len(proof.Observers) < 2 || len(proof.Observers) > 5 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(proof.Observers))
+	for _, observer := range proof.Observers {
+		if !identifier(observer) {
+			return false
+		}
+		if _, duplicate := seen[observer]; duplicate {
+			return false
+		}
+		seen[observer] = struct{}{}
+	}
+	return true
+}
+
+func sameSafeRetryProof(left, right SafeRetryProof) bool {
+	if left.WorkflowID != right.WorkflowID || left.PreviousTransactionHash != right.PreviousTransactionHash ||
+		left.RetryTransactionHash != right.RetryTransactionHash || left.Outcome != right.Outcome ||
+		left.PreviousCanonical != right.PreviousCanonical || left.SafeAddress != right.SafeAddress ||
+		left.SafeNonce != right.SafeNonce || left.SafeTxHash != right.SafeTxHash ||
+		left.ExecCalldataHash != right.ExecCalldataHash || left.VerifiedPayloadHash != right.VerifiedPayloadHash ||
+		left.EvidenceDigest != right.EvidenceDigest || left.ObservedAt != right.ObservedAt ||
+		len(left.Observers) != len(right.Observers) {
+		return false
+	}
+	for index := range left.Observers {
+		if left.Observers[index] != right.Observers[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func validateActor(actor Actor, now time.Time, requireStepUp bool) error {
