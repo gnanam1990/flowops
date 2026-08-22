@@ -9,7 +9,7 @@ The operational Safe must execute routine escrow locks without collecting Safe-o
 
 ## Decision
 
-Deploy one immutable `ASCPSpendModule` per operational Safe. The module binds EIP-712 authorizations to its own address, chain, Safe, action, nonce, authorizer epoch, and a contract-enforced validity window of at most ten minutes.
+Deploy one immutable `ASCPSpendModule` per operational Safe. The module binds ASCP v4 EIP-712 authorizations to its own address, chain, Safe, action, `uint256` nonce, leadership epoch, authorizer epoch, and a contract-enforced half-open validity window of at most ten minutes.
 
 The module exposes only two execution paths:
 

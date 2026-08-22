@@ -36,6 +36,8 @@ contract ASCPCallEscrow is ReentrancyGuard {
     bytes32 private constant NAME_HASH = keccak256("ASCP");
     bytes32 private constant VERSION_HASH = keccak256("4");
     bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("ASCP_CALL_ESCROW_GOVERNANCE_V1");
+    bytes32 public constant TYPED_DATA_MANIFEST_SHA256 =
+        0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5;
 
     uint8 public constant RAIL_ESCROW = 1;
     uint16 public constant SCHEME_VERSION_V1 = 1;

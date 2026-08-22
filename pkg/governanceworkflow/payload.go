@@ -32,7 +32,7 @@ var (
 	uint8Type         = mustType("uint8")
 	boolType          = mustType("bool")
 	bytes32Type       = mustType("bytes32")
-	bytes32ArrayType  = mustType("bytes32[]")
+	uint256ArrayType  = mustType("uint256[]")
 )
 
 type Caps struct {
@@ -144,20 +144,21 @@ func SpendInvalidateNonces(chainID uint64, contractAddress, workflowID string, n
 	if len(nonces) == 0 || len(nonces) > MaxGovernanceNonceInvalidations {
 		return common.Hash{}, ErrInvalidPayload
 	}
-	values := make([][32]byte, len(nonces))
+	values := make([]*big.Int, len(nonces))
 	seen := make(map[string]struct{}, len(nonces))
 	for index, nonce := range nonces {
-		if !hash(nonce, false) {
+		value, err := decimal(nonce)
+		if err != nil || value.Sign() == 0 {
 			return common.Hash{}, ErrInvalidPayload
 		}
 		if _, duplicate := seen[nonce]; duplicate {
 			return common.Hash{}, ErrInvalidPayload
 		}
 		seen[nonce] = struct{}{}
-		values[index] = common.HexToHash(nonce)
+		values[index] = value
 	}
-	return bind(SpendModuleDomain, chainID, contractAddress, workflowID, selector("invalidateNonces(bytes32[],bytes32,bytes32)"),
-		[]abi.Argument{{Type: bytes32ArrayType}}, values)
+	return bind(SpendModuleDomain, chainID, contractAddress, workflowID, selector("invalidateNonces(uint256[],bytes32,bytes32)"),
+		[]abi.Argument{{Type: uint256ArrayType}}, values)
 }
 
 func DirectoryPublish(chainID uint64, contractAddress, workflowID string, proposal DirectoryProposal) (common.Hash, error) {

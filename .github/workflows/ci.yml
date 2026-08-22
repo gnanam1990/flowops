@@ -40,6 +40,10 @@ jobs:
         run: forge build --sizes
       - name: Test Solidity contracts
         run: forge test
+      - name: Install typed-data SDK development dependencies
+        run: npm ci --prefix sdk/typescript
+      - name: Typecheck and test ASCP typed-data SDK
+        run: npm run typecheck --prefix sdk/typescript && npm test --prefix sdk/typescript
       - name: Validate Base Sepolia deployment evidence
         run: make test-deployment-evidence
       - name: Validate Base mainnet readiness remains blocked

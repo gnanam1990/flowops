@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowops.dev/schemas/allowance-authorization-v1.json",
+  "title": "ASCP v4 AllowanceAuthorization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["orgDomain", "safe", "module", "adminOperationId", "token", "spender", "expectedAllowance", "newAllowance", "nonce", "validAfter", "validBefore", "leadershipEpoch", "authorizerEpoch"],
+  "properties": {
+    "orgDomain": {"$ref": "#/$defs/hash"},
+    "safe": {"$ref": "#/$defs/address"},
+    "module": {"$ref": "#/$defs/address"},
+    "adminOperationId": {"$ref": "#/$defs/hash"},
+    "token": {"$ref": "#/$defs/address"},
+    "spender": {"$ref": "#/$defs/address"},
+    "expectedAllowance": {"$ref": "#/$defs/uint256"},
+    "newAllowance": {"$ref": "#/$defs/uint256"},
+    "nonce": {"$ref": "#/$defs/positiveUint256"},
+    "validAfter": {"$ref": "#/$defs/positiveUint64"},
+    "validBefore": {"$ref": "#/$defs/positiveUint64"},
+    "leadershipEpoch": {"$ref": "#/$defs/positiveUint64"},
+    "authorizerEpoch": {"$ref": "#/$defs/positiveUint64"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^0x[0-9a-f]{64}$", "not": {"const": "0x0000000000000000000000000000000000000000000000000000000000000000"}},
+    "address": {"type": "string", "pattern": "^0x[0-9a-f]{40}$", "not": {"const": "0x0000000000000000000000000000000000000000"}},
+    "uint256": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+    "positiveUint256": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+    "positiveUint64": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
+  }
+}

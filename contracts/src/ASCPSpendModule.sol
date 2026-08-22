@@ -26,25 +26,28 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     uint256 public constant MAX_GOVERNANCE_NONCE_INVALIDATIONS = 100;
     uint8 private constant SAFE_OPERATION_CALL = 0;
     bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("ASCP_SPEND_MODULE_GOVERNANCE_V1");
+    bytes32 public constant TYPED_DATA_MANIFEST_SHA256 =
+        0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5;
 
     bytes32 public constant LOCK_AUTHORIZATION_TYPEHASH = keccak256(
-        "LockAuthorization(bytes32 orgDomain,address safe,bytes32 operationId,bytes32 commitmentHash,bytes32 calldataHash,address escrow,uint256 amount,uint64 validAfter,uint64 validBefore,bytes32 nonce,uint64 leadershipEpoch,uint64 authorizerEpoch)"
+        "LockAuthorization(bytes32 orgDomain,address safe,address module,bytes32 operationId,bytes32 commitmentHash,bytes32 calldataHash,address escrow,uint256 amount,uint256 nonce,uint64 validAfter,uint64 validBefore,uint64 leadershipEpoch,uint64 authorizerEpoch)"
     );
     bytes32 public constant ALLOWANCE_AUTHORIZATION_TYPEHASH = keccak256(
-        "AllowanceAuthorization(bytes32 orgDomain,address safe,bytes32 adminOperationId,address token,address spender,uint256 expectedCurrentAllowance,uint256 newAllowance,uint64 validAfter,uint64 validBefore,bytes32 nonce,uint64 authorizerEpoch)"
+        "AllowanceAuthorization(bytes32 orgDomain,address safe,address module,bytes32 adminOperationId,address token,address spender,uint256 expectedAllowance,uint256 newAllowance,uint256 nonce,uint64 validAfter,uint64 validBefore,uint64 leadershipEpoch,uint64 authorizerEpoch)"
     );
 
     struct LockAuthorization {
         bytes32 orgDomain;
         address safe;
+        address module;
         bytes32 operationId;
         bytes32 commitmentHash;
         bytes32 calldataHash;
         address escrow;
         uint256 amount;
+        uint256 nonce;
         uint64 validAfter;
         uint64 validBefore;
-        bytes32 nonce;
         uint64 leadershipEpoch;
         uint64 authorizerEpoch;
     }
@@ -52,14 +55,16 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     struct AllowanceAuthorization {
         bytes32 orgDomain;
         address safe;
+        address module;
         bytes32 adminOperationId;
         address token;
         address spender;
-        uint256 expectedCurrentAllowance;
+        uint256 expectedAllowance;
         uint256 newAllowance;
+        uint256 nonce;
         uint64 validAfter;
         uint64 validBefore;
-        bytes32 nonce;
+        uint64 leadershipEpoch;
         uint64 authorizerEpoch;
     }
 
@@ -84,12 +89,12 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     uint256 public executedPrincipal;
 
     mapping(address escrow => bytes32 runtimeCodeHash) public escrowAllowlist;
-    mapping(bytes32 nonce => bool consumed) public usedNonces;
+    mapping(uint256 nonce => bool consumed) public usedNonces;
     mapping(uint256 utcDay => uint256 amount) public dayExecutedPrincipal;
 
     event LockExecuted(
         bytes32 indexed operationId,
-        bytes32 indexed nonce,
+        uint256 indexed nonce,
         address indexed escrow,
         bytes32 commitmentHash,
         uint256 amount,
@@ -97,7 +102,7 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     );
     event AllowanceExecuted(
         bytes32 indexed adminOperationId,
-        bytes32 indexed nonce,
+        uint256 indexed nonce,
         address indexed spender,
         uint256 previousAllowance,
         uint256 newAllowance
@@ -107,7 +112,7 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     event CapsScheduled(uint256 perTransaction, uint256 perDay, uint256 allowanceCeiling, uint64 activatesAt);
     event CapsActivated(uint256 perTransaction, uint256 perDay, uint256 allowanceCeiling);
     event EmergencyPauseSet(bool paused);
-    event NonceInvalidated(bytes32 indexed nonce);
+    event NonceInvalidated(uint256 indexed nonce);
     event GovernanceWorkflowBound(
         bytes32 indexed workflowId, bytes32 indexed workflowPayloadHash, bytes4 indexed functionSelector
     );
@@ -118,7 +123,7 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     error EmergencyPaused();
     error InvalidAuthorization();
     error AuthorizationWindowInvalid();
-    error NonceAlreadyUsed(bytes32 nonce);
+    error NonceAlreadyUsed(uint256 nonce);
     error InvalidSignature(address recovered);
     error CalldataMismatch();
     error EscrowNotAllowlisted(address escrow);
@@ -144,7 +149,7 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
         _;
     }
 
-    constructor(address safe_, IERC20 token_, address spendAuthorizer_, Caps memory initialCaps) EIP712("ASCP", "3") {
+    constructor(address safe_, IERC20 token_, address spendAuthorizer_, Caps memory initialCaps) EIP712("ASCP", "4") {
         if (safe_.code.length == 0) revert InvalidContract(safe_);
         if (address(token_).code.length == 0) revert InvalidContract(address(token_));
         if (spendAuthorizer_ == address(0)) revert InvalidAuthorizer();
@@ -164,11 +169,13 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     {
         _requireActiveAuthorization(
             authorization.safe,
+            authorization.module,
             authorization.orgDomain,
             authorization.operationId,
             authorization.nonce,
             authorization.validAfter,
             authorization.validBefore,
+            authorization.leadershipEpoch,
             authorization.authorizerEpoch
         );
         if (keccak256(payload) != authorization.calldataHash) revert CalldataMismatch();
@@ -201,11 +208,13 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     ) external nonReentrant {
         _requireActiveAuthorization(
             authorization.safe,
+            authorization.module,
             authorization.orgDomain,
             authorization.adminOperationId,
             authorization.nonce,
             authorization.validAfter,
             authorization.validBefore,
+            authorization.leadershipEpoch,
             authorization.authorizerEpoch
         );
         if (authorization.token != address(token)) revert InvalidAuthorization();
@@ -219,8 +228,8 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
         address recovered = allowanceAuthorizationDigest(authorization).recover(signature);
         if (recovered != spendAuthorizer) revert InvalidSignature(recovered);
         uint256 currentAllowance = token.allowance(safe, authorization.spender);
-        if (currentAllowance != authorization.expectedCurrentAllowance) {
-            revert AllowanceMismatch(authorization.expectedCurrentAllowance, currentAllowance);
+        if (currentAllowance != authorization.expectedAllowance) {
+            revert AllowanceMismatch(authorization.expectedAllowance, currentAllowance);
         }
         if (authorization.newAllowance > caps.allowanceCeiling) {
             revert AllowanceCeilingExceeded(authorization.newAllowance, caps.allowanceCeiling);
@@ -245,14 +254,15 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
                     LOCK_AUTHORIZATION_TYPEHASH,
                     authorization.orgDomain,
                     authorization.safe,
+                    authorization.module,
                     authorization.operationId,
                     authorization.commitmentHash,
                     authorization.calldataHash,
                     authorization.escrow,
                     authorization.amount,
+                    authorization.nonce,
                     authorization.validAfter,
                     authorization.validBefore,
-                    authorization.nonce,
                     authorization.leadershipEpoch,
                     authorization.authorizerEpoch
                 )
@@ -267,14 +277,16 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
                     ALLOWANCE_AUTHORIZATION_TYPEHASH,
                     authorization.orgDomain,
                     authorization.safe,
+                    authorization.module,
                     authorization.adminOperationId,
                     authorization.token,
                     authorization.spender,
-                    authorization.expectedCurrentAllowance,
+                    authorization.expectedAllowance,
                     authorization.newAllowance,
+                    authorization.nonce,
                     authorization.validAfter,
                     authorization.validBefore,
-                    authorization.nonce,
+                    authorization.leadershipEpoch,
                     authorization.authorizerEpoch
                 )
             )
@@ -373,7 +385,7 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
         emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setEmergencyPause.selector);
     }
 
-    function invalidateNonces(bytes32[] calldata nonces, bytes32 workflowId, bytes32 workflowPayloadHash)
+    function invalidateNonces(uint256[] calldata nonces, bytes32 workflowId, bytes32 workflowPayloadHash)
         external
         onlySafe
     {
@@ -385,8 +397,8 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
             this.invalidateNonces.selector, keccak256(abi.encode(nonces)), workflowId, workflowPayloadHash
         );
         for (uint256 i; i < length; ++i) {
-            bytes32 nonce = nonces[i];
-            if (nonce == bytes32(0) || usedNonces[nonce]) revert NonceAlreadyUsed(nonce);
+            uint256 nonce = nonces[i];
+            if (nonce == 0 || usedNonces[nonce]) revert NonceAlreadyUsed(nonce);
             usedNonces[nonce] = true;
             emit NonceInvalidated(nonce);
         }
@@ -419,21 +431,24 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
 
     function _requireActiveAuthorization(
         address authorizedSafe,
+        address authorizedModule,
         bytes32 orgDomain,
         bytes32 actionId,
-        bytes32 nonce,
+        uint256 nonce,
         uint64 validAfter,
         uint64 validBefore,
+        uint64 signedLeadershipEpoch,
         uint64 signedAuthorizerEpoch
     ) private view {
         if (emergencyPaused) revert EmergencyPaused();
         if (
-            authorizedSafe != safe || orgDomain == bytes32(0) || actionId == bytes32(0) || nonce == bytes32(0)
+            authorizedSafe != safe || authorizedModule != address(this) || orgDomain == bytes32(0)
+                || actionId == bytes32(0) || nonce == 0 || signedLeadershipEpoch == 0
                 || signedAuthorizerEpoch != authorizerEpoch
         ) revert InvalidAuthorization();
         if (
             validBefore <= validAfter || validBefore - validAfter > MAX_AUTHORIZATION_WINDOW
-                || block.timestamp < validAfter || block.timestamp > validBefore
+                || block.timestamp < validAfter || block.timestamp >= validBefore
         ) revert AuthorizationWindowInvalid();
         if (usedNonces[nonce]) revert NonceAlreadyUsed(nonce);
     }
