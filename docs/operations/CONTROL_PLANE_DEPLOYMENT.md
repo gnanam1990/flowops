@@ -388,6 +388,15 @@ activation proof. A running process proves local protocol and ledger startup,
 not HSM custody, independent Ring 6 RPC reads, activation-authority correctness,
 or WORM retention.
 
+Run `/flowops/ascp-ring6-runtime` on a separate Unix boundary between the
+isolated signer and separately deployed verifier/HSM components. Configure its
+key ID, epoch, keeper ID, and signer address identically to the signer shard.
+Give it one owner-only journal volume, one new listener path, and two existing,
+distinct component sockets. The complete variables, refusal semantics, and
+recovery contract are in `docs/modules/ASCP_RING6_RUNTIME.md`. Successful
+startup proves strict local wiring and journal replay only; production readiness
+still requires evidence of independent RPC reads and hardware key custody.
+
 Signer receipt keys are public material but remain tenant-scoped security
 configuration. Each JSON item must contain exactly `organizationId`,
 `customerId`, `keyId`, and a base64-encoded 32-byte Ed25519 `publicKeyB64`.
