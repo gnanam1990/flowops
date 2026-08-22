@@ -36,10 +36,11 @@ outbox payload fields are not updateable through either runtime role.
 Unix-socket clients for an isolated signer and primary WORM writer.
 `cmd/ascp-signer-runtime` supplies the signer-side RPC server, encrypted
 crash-safe ledger, activation acknowledgment, negative activation proof, and
-keeper-only artifact release boundary. The actual Ring 6/HSM service,
-activation-authority service, and WORM-provider sidecar remain explicit
-integration gates; this document does not claim those production services are
-deployed.
+keeper-only artifact release boundary. `cmd/ascp-ring6-runtime` supplies the
+durable Ring 6 orchestration kernel and strict verifier/HSM adapters described
+in `ASCP_RING6_RUNTIME.md`. Actual verifier and HSM provider deployments, the
+activation-authority service, and the WORM-provider sidecar remain explicit
+integration gates; this document does not claim they are deployed.
 
 ## Authenticated intake contract
 
@@ -189,8 +190,8 @@ rotation ceremony rather than silently reinterpreted.
 ## Verification
 
 ```sh
-go test -race ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker ./cmd/ascp-keeper ./cmd/ascp-signer-runtime
-go vet ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker ./cmd/ascp-keeper ./cmd/ascp-signer-runtime
+go test -race ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/ascpring6 ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker ./cmd/ascp-keeper ./cmd/ascp-signer-runtime ./cmd/ascp-ring6-runtime
+go vet ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/ascpring6 ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker ./cmd/ascp-keeper ./cmd/ascp-signer-runtime ./cmd/ascp-ring6-runtime
 FLOWOPS_TEST_DATABASE_URL=... go test -race ./internal/controlapi \
   -run 'TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically|TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveAtomically|TestASCPSignerBindingRealPostgresIdempotencyTenantAndVersionRaces|TestASCPSignerBindingRotationCannotRaceOldBindingIntoSignRequested' -count=1
 ```

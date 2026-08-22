@@ -650,6 +650,13 @@ func validateActivationInput(input ActivationInput, now time.Time) error {
 	return nil
 }
 
+// ValidateActivationInput exposes the signer-side structural validation so
+// independently deployed trust rings can reject malformed activation inputs
+// before consulting verifier or HSM dependencies.
+func ValidateActivationInput(input ActivationInput, now time.Time) error {
+	return validateActivationInput(input, now.UTC())
+}
+
 // CanonicalPayloadHash is the module-facing calldataHash:
 // keccak256(exact canonical payload bytes).
 func CanonicalPayloadHash(payload []byte) string {
