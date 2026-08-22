@@ -212,7 +212,7 @@ func TestServeUnixAllowsSequentialDependencyBudgets(t *testing.T) {
 	}
 	request.Header.Set("Content-Type", "application/json")
 	client := unixHTTPClient(socket)
-	client.Timeout = 4 * time.Second
+	client.Timeout = ring6ResponseWriteTimeout(time.Second) + time.Second
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("sequential verifier and HSM budgets lost the response: %v", err)

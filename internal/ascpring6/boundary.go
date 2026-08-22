@@ -244,7 +244,7 @@ func (b *ComponentBoundary) inspectPinned() (socketIdentity, error) {
 	if err != nil {
 		return socketIdentity{}, err
 	}
-	if pinIdentity.device != b.identity.device || pinIdentity.inode != b.identity.inode {
+	if pinIdentity != b.identity {
 		return socketIdentity{}, errors.New("Ring 6 component pin identity changed")
 	}
 	identity, err := inspectSocket(b.path)
@@ -261,7 +261,10 @@ func (b *ComponentBoundary) dialPinned(ctx context.Context, dial func(context.Co
 	if _, err := b.inspectPinned(); err != nil {
 		return nil, fmt.Errorf("validate Ring 6 %s component before dial: %w", b.name, err)
 	}
-	connection, err := dial(ctx, "unix", b.path)
+	// Connect through the retained hard link, not the mutable configured name.
+	// A source-path replacement therefore cannot become the connection peer,
+	// even if a filesystem's timestamp resolution misses a rapid ABA restore.
+	connection, err := dial(ctx, "unix", b.pinPath)
 	if err != nil {
 		return nil, err
 	}

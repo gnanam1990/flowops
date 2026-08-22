@@ -34,7 +34,8 @@ on one provider operation.
 - Pin each component socket's startup device/inode/change-time identity for its
   process lifetime with a hidden hard link that prevents immediate inode reuse.
   Validate the source against that pin before a call and after establishing
-  every new connection, closing the check-before-connect replacement race.
+  every new connection, and dial the immutable pin path itself. This closes
+  check-before-connect and rapid source-path ABA replacement races.
   Remove only the pinned inode on graceful shutdown; preserve a stale or
   substituted pin for operator inspection.
 - Reapply intake freshness while an action is new or merely `BOUND`. Exact

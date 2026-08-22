@@ -242,7 +242,7 @@ func unlinkPinnedSocket(path string, identity socketIdentity) error {
 		return err
 	}
 	current, ok := identityFromFileInfo(info)
-	if !ok || info.Mode()&os.ModeSocket == 0 || current.device != identity.device || current.inode != identity.inode {
+	if !ok || info.Mode()&os.ModeSocket == 0 || current != identity {
 		return errors.New("Ring 6 component pin no longer identifies the pinned socket")
 	}
 	if err := unix.Unlinkat(int(parent.Fd()), filepath.Base(path), 0); err != nil {

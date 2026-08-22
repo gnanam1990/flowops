@@ -44,7 +44,9 @@ The runtime pins each component socket's startup device/inode/change-time
 identity with a same-directory hidden hard link. Keeping that link prevents an
 unlinked component inode from being freed and immediately reused. The source
 path must still match the pin before every call and again after every new
-connection is established, closing the check-before-connect race. Graceful
+connection is established. New connections target the immutable pin path
+itself, so a replacement or rapid ABA cycle on the configured source path
+cannot become the connection peer. Graceful
 shutdown removes only the pinned inode; an existing pin blocks startup for
 operator inspection. Replacing a component requires an explicit runtime
 restart.

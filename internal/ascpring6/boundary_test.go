@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -154,6 +155,51 @@ func TestComponentBoundaryRejectsReplacementBetweenCheckAndDial(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("component replacement between validation and dial was accepted")
+	}
+}
+
+func TestComponentBoundaryDialsPinDuringSourcePathABARestore(t *testing.T) {
+	path := filepath.Join(ringTempDir(t), "verifier.sock")
+	stopFirst := serveComponent(t, path, "verifier", func(*http.ServeMux) {})
+	defer stopFirst()
+	boundary, err := NewComponentBoundary("verifier", path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = boundary.Close() }()
+	var stopReplacement func()
+	var dialAddress string
+	connection, err := boundary.dialPinned(context.Background(), func(ctx context.Context, network, address string) (net.Conn, error) {
+		if removeErr := os.Remove(path); removeErr != nil {
+			return nil, removeErr
+		}
+		stopReplacement = serveComponent(t, path, "verifier", func(*http.ServeMux) {})
+		dialAddress = address
+		connection, dialErr := (&net.Dialer{}).DialContext(ctx, network, address)
+		if dialErr != nil {
+			return nil, dialErr
+		}
+		if removeErr := os.Remove(path); removeErr != nil {
+			_ = connection.Close()
+			return nil, removeErr
+		}
+		if linkErr := os.Link(boundary.pinPath, path); linkErr != nil {
+			_ = connection.Close()
+			return nil, linkErr
+		}
+		return connection, nil
+	})
+	if stopReplacement != nil {
+		defer stopReplacement()
+	}
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if dialAddress != boundary.pinPath {
+		t.Fatalf("ABA dial targeted %q instead of immutable pin %q", dialAddress, boundary.pinPath)
+	}
+	if err != nil && !strings.Contains(err.Error(), "component after dial") {
+		t.Fatalf("ABA dial failed outside the allowed post-dial identity check: %v", err)
 	}
 }
 

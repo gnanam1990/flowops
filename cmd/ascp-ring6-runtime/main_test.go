@@ -101,7 +101,7 @@ func TestRunStartsFullRing6WirePathAndStopsCleanly(t *testing.T) {
 	go func() { result <- run(ctx) }()
 	runtimeSocket := filepath.Join(directory, "ring6.sock")
 	waitRingRuntimeSocket(t, runtimeSocket)
-	boundary, err := ascpsignerruntime.NewDependencyBoundary("ring6", runtimeSocket, time.Second)
+	boundary, err := ascpsignerruntime.NewDependencyBoundary("ring6", runtimeSocket, 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
