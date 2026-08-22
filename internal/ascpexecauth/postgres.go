@@ -31,6 +31,19 @@ func (f TransactionRevalidatorFunc) Revalidate(ctx context.Context, tx *sql.Tx, 
 	return f(ctx, tx, input, now)
 }
 
+// CapacityGate acquires one durable active-operation permit in the same
+// transaction as the budget reservation. Capacity refusal is transient and
+// must roll the whole transaction back without invalidating the approval.
+type CapacityGate interface {
+	Acquire(context.Context, *sql.Tx, string, string, time.Time) error
+}
+
+type CapacityGateFunc func(context.Context, *sql.Tx, string, string, time.Time) error
+
+func (f CapacityGateFunc) Acquire(ctx context.Context, tx *sql.Tx, operationID, reservationID string, now time.Time) error {
+	return f(ctx, tx, operationID, reservationID, now)
+}
+
 // PostgresStore is the authoritative execution-authorization boundary. It
 // locks the exact approval, reruns local checks, computes every budget
 // dimension, creates the reservation, and records the authorization in one
@@ -38,18 +51,19 @@ func (f TransactionRevalidatorFunc) Revalidate(ctx context.Context, tx *sql.Tx, 
 type PostgresStore struct {
 	db          *sql.DB
 	revalidator TransactionRevalidator
+	capacity    CapacityGate
 	clock       func() time.Time
 }
 
-func NewPostgresStore(db *sql.DB, revalidator TransactionRevalidator, clocks ...func() time.Time) (*PostgresStore, error) {
-	if db == nil || revalidator == nil || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
-		return nil, errors.New("database and transaction revalidator are required")
+func NewPostgresStore(db *sql.DB, revalidator TransactionRevalidator, capacity CapacityGate, clocks ...func() time.Time) (*PostgresStore, error) {
+	if db == nil || revalidator == nil || capacity == nil || len(clocks) > 1 || len(clocks) == 1 && clocks[0] == nil {
+		return nil, errors.New("database, transaction revalidator, and capacity gate are required")
 	}
 	clock := time.Now
 	if len(clocks) == 1 {
 		clock = clocks[0]
 	}
-	return &PostgresStore{db: db, revalidator: revalidator, clock: clock}, nil
+	return &PostgresStore{db: db, revalidator: revalidator, capacity: capacity, clock: clock}, nil
 }
 
 func (s *PostgresStore) ValidateAndReserve(ctx context.Context, input Input) (Authorization, error) {
@@ -156,6 +170,9 @@ func (s *PostgresStore) validateAndReserveOnce(ctx context.Context, input Input,
 			return s.persistInvalid(ctx, tx, output, now, err)
 		}
 		return Authorization{}, err
+	}
+	if err := s.capacity.Acquire(ctx, tx, input.IntentID, reservationID(input), now); err != nil {
+		return Authorization{}, fmt.Errorf("acquire execution capacity: %w", err)
 	}
 
 	output.State = ValidatedAndReserved

@@ -38,7 +38,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.address != defaultAddress || cfg.trustProxy || !cfg.applyMigrations || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 || cfg.ascpDirectoryMaxAge != time.Minute {
+	if cfg.address != defaultAddress || cfg.trustProxy || !cfg.applyMigrations || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 || cfg.ascpDirectoryMaxAge != time.Minute || cfg.ascpMaxActiveOperations != 1000 {
 		t.Fatalf("configuration was not normalized: %+v", cfg)
 	}
 	t.Setenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT", "0x0000000000000000000000000000000000000000")
@@ -66,6 +66,15 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	if cfg.ascpAdaptationKeyEpoch != 2 || cfg.ascpAdaptationTimeout != 2*time.Second || cfg.ascpAdaptationKeyID != "adaptation_key_1" {
 		t.Fatalf("adaptation config=%+v", cfg)
 	}
+	t.Setenv("FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS", "250")
+	if cfg, err = loadConfig(); err != nil || cfg.ascpMaxActiveOperations != 250 {
+		t.Fatalf("custom capacity config=%+v err=%v", cfg, err)
+	}
+	t.Setenv("FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS", "0250")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("noncanonical ASCP capacity was accepted")
+	}
+	t.Setenv("FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS", "")
 	t.Setenv("FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "02")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("noncanonical adaptation key epoch was accepted")

@@ -212,6 +212,33 @@ func TestPostgresReservationWriteFailureRollsBackWithoutAuthorization(t *testing
 	expectationsMet(t, mock)
 }
 
+func TestPostgresCapacityExhaustionRollsBackReservationWithoutAuthorization(t *testing.T) {
+	db, mock := postgresMock(t)
+	store, err := NewPostgresStore(db, successfulRevalidator(), CapacityGateFunc(func(context.Context, *sql.Tx, string, string, time.Time) error {
+		return errors.New("capacity exhausted")
+	}), func() time.Time { return authorizationNow })
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := postgresInput()
+	expectBeginAndNoExisting(mock, input)
+	expectApproved(mock, input, authorizationNow.Add(time.Hour))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT rd.dimension_id, r.amount_base_units, r.state, rd.refundable")).
+		WithArgs(authorizationOrganizationID, sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"dimension_id", "amount_base_units", "state", "refundable"}))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO ascp_budget_reservations")).
+		WithArgs(input.Reservation.ReservationID, input.IntentID, input.Reservation.Amount, sqlmock.AnyArg(), authorizationNow, input.Reservation.ExpiresAt.UTC()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO ascp_budget_reservation_dimensions")).
+		WithArgs(input.Reservation.ReservationID, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectRollback()
+
+	if _, err := store.ValidateAndReserve(context.Background(), input); err == nil {
+		t.Fatal("expected capacity error")
+	}
+	expectationsMet(t, mock)
+}
+
 func TestPostgresExistingAuthorizationIsReturnedWithoutReevaluation(t *testing.T) {
 	db, mock := postgresMock(t)
 	store := postgresStore(t, db, successfulRevalidator())
@@ -274,11 +301,15 @@ func postgresMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 
 func postgresStore(t *testing.T, db *sql.DB, revalidator TransactionRevalidator) *PostgresStore {
 	t.Helper()
-	store, err := NewPostgresStore(db, revalidator, func() time.Time { return authorizationNow })
+	store, err := NewPostgresStore(db, revalidator, allowCapacityGate(), func() time.Time { return authorizationNow })
 	if err != nil {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func allowCapacityGate() CapacityGate {
+	return CapacityGateFunc(func(context.Context, *sql.Tx, string, string, time.Time) error { return nil })
 }
 
 func expectBeginAndNoExisting(mock sqlmock.Sqlmock, input Input) {

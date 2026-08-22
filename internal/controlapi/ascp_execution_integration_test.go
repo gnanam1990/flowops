@@ -87,7 +87,7 @@ func TestASCPExecutionAuthorizationRealPostgresBudgetRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := ascpexecauth.NewPostgresStore(db, revalidator, func() time.Time { return now })
+	store, err := ascpexecauth.NewPostgresStore(db, revalidator, integrationCapacityGate(), func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,3 +727,7 @@ func ascpRawIntegrationDatabase(t *testing.T) *sql.DB {
 }
 
 func ascpIntegrationHash(value uint64) string { return fmt.Sprintf("0x%064x", value) }
+
+func integrationCapacityGate() ascpexecauth.CapacityGate {
+	return ascpexecauth.CapacityGateFunc(func(context.Context, *sql.Tx, string, string, time.Time) error { return nil })
+}

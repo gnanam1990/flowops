@@ -26,6 +26,8 @@ for required in \
 	'GRANT UPDATE (state) ON ascp_bearer_handles' \
 	'GRANT UPDATE (outcome)' \
 	'GRANT SELECT ON ascp_payment_operations' \
+	'GRANT SELECT ON ascp_capacity_counters, ascp_capacity_admissions' \
+	'GRANT EXECUTE ON FUNCTION public.ascp_acquire_capacity(text,text,integer,timestamptz)' \
 	'GRANT SELECT, INSERT ON ascp_payment_attempts, ascp_chain_observations' \
 	'GRANT SELECT, INSERT ON ascp_keeper_jobs' \
 	'GRANT SELECT ON ascp_seller_jobs, ascp_seller_responses' \

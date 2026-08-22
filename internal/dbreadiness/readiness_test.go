@@ -158,6 +158,8 @@ func readinessDB(t *testing.T, tls bool, overrides map[string]map[string]bool, c
 		"ascp_intents":                       {"SELECT": true, "INSERT": true},
 		"ascp_financial_tombstones":          {"SELECT": true, "INSERT": true},
 		"ascp_asset_health":                  {"SELECT": true},
+		"ascp_capacity_counters":             {"SELECT": true},
+		"ascp_capacity_admissions":           {"SELECT": true},
 		"ascp_adaptation_grants":             {"SELECT": true, "INSERT": true},
 		"ascp_proposal_workflows":            {"SELECT": true, "INSERT": true},
 		"ascp_workflow_actions":              {"SELECT": true, "INSERT": true},

@@ -23,7 +23,8 @@ The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`,
 `/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`,
 `/flowops/ascp-bearer-worker`, `/flowops/ascp-signer-runtime`,
-`/flowops/ascp-asset-health`, and `/flowops/postgres-readiness`. `railway.json`
+`/flowops/ascp-asset-health`, `/flowops/ascp-capacity-audit`, and
+`/flowops/postgres-readiness`. `railway.json`
 selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
@@ -67,6 +68,7 @@ The API service requires:
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
 | `FLOWOPS_ASCP_DIRECTORY_CONTRACT` | Optional canonical lowercase ServiceDirectory address. When unset, durable agent intake remains mounted but returns a fail-closed 503 |
 | `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |
+| `FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS` | Canonical global in-flight operation limit, default `1000`; must exactly match `ascp_capacity_counters.max_active_operations` configured by the migration owner |
 | `FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS` | Canonical recovered address of the dedicated platform adaptation key; enables signed grants only with the complete tuple below |
 | `FLOWOPS_ASCP_ADAPTATION_KEY_ID` | Canonical HSM key identifier dedicated to adaptation grants |
 | `FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH` | Positive canonical HSM key epoch |
