@@ -191,6 +191,18 @@ contract ASCPSpendModuleTest is Test {
         signature = _signLock(changed, AUTHOR_KEY);
         vm.expectRevert(ASCPSpendModule.InvalidAuthorization.selector);
         module.executeLock(payload, changed, signature);
+
+        (, changed) = _lockAuthorization(400, 3);
+        changed.module = address(0xBEEF);
+        signature = _signLock(changed, AUTHOR_KEY);
+        vm.expectRevert(ASCPSpendModule.InvalidAuthorization.selector);
+        module.executeLock(payload, changed, signature);
+
+        (, changed) = _lockAuthorization(400, 3);
+        changed.leadershipEpoch = 0;
+        signature = _signLock(changed, AUTHOR_KEY);
+        vm.expectRevert(ASCPSpendModule.InvalidAuthorization.selector);
+        module.executeLock(payload, changed, signature);
     }
 
     function testWrongSelectorAndUnallowlistedTargetFailClosed() public {
@@ -239,7 +251,7 @@ contract ASCPSpendModuleTest is Test {
         assertFalse(module.usedNonces(authorization.nonce));
 
         _setPause(false, 6);
-        bytes32[] memory nonces = new bytes32[](1);
+        uint256[] memory nonces = new uint256[](1);
         nonces[0] = authorization.nonce;
         _invalidateNonces(nonces, 7);
         vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.NonceAlreadyUsed.selector, authorization.nonce));
@@ -328,7 +340,7 @@ contract ASCPSpendModuleTest is Test {
     function testExpiredWrongSignerAndMutatedPayeeFailClosed() public {
         (bytes memory payload, ASCPSpendModule.LockAuthorization memory authorization) = _lockAuthorization(400, 17);
         bytes memory signature = _signLock(authorization, AUTHOR_KEY);
-        vm.warp(authorization.validBefore + 1);
+        vm.warp(authorization.validBefore);
         vm.expectRevert(ASCPSpendModule.AuthorizationWindowInvalid.selector);
         module.executeLock(payload, authorization, signature);
 
@@ -379,6 +391,18 @@ contract ASCPSpendModuleTest is Test {
         vm.expectRevert(ASCPSpendModule.InvalidAllowancePayload.selector);
         module.executeAllowance(payload, authorization, signature);
 
+        (payload, authorization) = _allowanceAuthorization(0, 800, 25);
+        authorization.module = address(0xBEEF);
+        signature = _signAllowance(authorization, AUTHOR_KEY);
+        vm.expectRevert(ASCPSpendModule.InvalidAuthorization.selector);
+        module.executeAllowance(payload, authorization, signature);
+
+        (payload, authorization) = _allowanceAuthorization(0, 800, 26);
+        authorization.leadershipEpoch = 0;
+        signature = _signAllowance(authorization, AUTHOR_KEY);
+        vm.expectRevert(ASCPSpendModule.InvalidAuthorization.selector);
+        module.executeAllowance(payload, authorization, signature);
+
         vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.NotSafe.selector, address(this)));
         module.setEmergencyPause(true, bytes32(uint256(1)), bytes32(uint256(2)));
         vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.NotSafe.selector, address(this)));
@@ -422,14 +446,14 @@ contract ASCPSpendModuleTest is Test {
         vm.prank(address(safe));
         module.setEscrowAllowlist(target, currentCodeHash, workflowId, payloadHash);
 
-        bytes32[] memory empty = new bytes32[](0);
+        uint256[] memory empty = new uint256[](0);
         payloadHash =
             module.governancePayloadHash(workflowId, module.invalidateNonces.selector, keccak256(abi.encode(empty)));
         vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.InvalidNonceInvalidationCount.selector, 0));
         vm.prank(address(safe));
         module.invalidateNonces(empty, workflowId, payloadHash);
 
-        bytes32[] memory oversized = new bytes32[](module.MAX_GOVERNANCE_NONCE_INVALIDATIONS() + 1);
+        uint256[] memory oversized = new uint256[](module.MAX_GOVERNANCE_NONCE_INVALIDATIONS() + 1);
         payloadHash = module.governancePayloadHash(
             workflowId, module.invalidateNonces.selector, keccak256(abi.encode(oversized))
         );
@@ -494,22 +518,26 @@ contract ASCPSpendModuleTest is Test {
             ),
             0x92c84c2ef61ba58353d2bbf13cec02f789e014c8a076923dc2b22011c106e890
         );
-        bytes32[] memory nonces = new bytes32[](2);
-        nonces[0] = bytes32(uint256(3));
-        nonces[1] = bytes32(uint256(4));
+        uint256[] memory nonces = new uint256[](2);
+        nonces[0] = 3;
+        nonces[1] = 4;
         assertEq(
             target.governancePayloadHash(workflowId, target.invalidateNonces.selector, keccak256(abi.encode(nonces))),
-            0xc3b8f091400426a9302ded1fb80763d7bffe24744781106fa9a70af9487be863
+            0x9401eab51918e1bfd4c27edcded7ddcd71080d4d959796c42f0d8d730c6d24ac
         );
     }
 
     function testGoAndSolidityAuthorizationGoldenVectors() public {
+        assertEq(
+            module.TYPED_DATA_MANIFEST_SHA256(), 0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5
+        );
         address fixedModule = 0x1111111111111111111111111111111111111111;
         vm.etch(fixedModule, address(module).code);
         vm.chainId(8453);
         ASCPSpendModule.LockAuthorization memory lockAuthorization = ASCPSpendModule.LockAuthorization({
             orgDomain: bytes32(uint256(1)),
             safe: 0x2222222222222222222222222222222222222222,
+            module: fixedModule,
             operationId: bytes32(uint256(2)),
             commitmentHash: bytes32(uint256(3)),
             calldataHash: bytes32(uint256(4)),
@@ -517,30 +545,46 @@ contract ASCPSpendModuleTest is Test {
             amount: 400,
             validAfter: 1_800_000_000,
             validBefore: 1_800_000_600,
-            nonce: bytes32(uint256(5)),
+            nonce: 5,
             leadershipEpoch: 7,
             authorizerEpoch: 9
         });
+        bytes32 lockDigest = ASCPSpendModule(fixedModule).lockAuthorizationDigest(lockAuthorization);
+        assertEq(lockDigest, 0xba4ea42568fd8e82f9586900a88e4ede6bde0a7c8b3f3293c51e75fad1d7f37e);
         assertEq(
-            ASCPSpendModule(fixedModule).lockAuthorizationDigest(lockAuthorization),
-            0xef53c6a44868fb0c6e0935448a36d14eb37215e352ccc8b90b5c7e934ed6abd8
+            ecrecover(
+                lockDigest,
+                28,
+                0xed1fe8f5ddfbff8e97023b53c23afb74c703012de97f1e3b3a41fb1405ceee0c,
+                0x4310815481eff607c2d5d0064dfe9a47672a2084ddfeab30dabdd8531893bb5c
+            ),
+            0xe05fcC23807536bEe418f142D19fa0d21BB0cfF7
         );
         ASCPSpendModule.AllowanceAuthorization memory allowanceAuthorization = ASCPSpendModule.AllowanceAuthorization({
             orgDomain: bytes32(uint256(1)),
             safe: 0x2222222222222222222222222222222222222222,
+            module: fixedModule,
             adminOperationId: bytes32(uint256(6)),
             token: 0x4444444444444444444444444444444444444444,
             spender: 0x5555555555555555555555555555555555555555,
-            expectedCurrentAllowance: 400,
+            expectedAllowance: 400,
             newAllowance: 800,
+            nonce: 7,
             validAfter: 1_800_000_000,
             validBefore: 1_800_000_600,
-            nonce: bytes32(uint256(7)),
+            leadershipEpoch: 7,
             authorizerEpoch: 9
         });
+        bytes32 allowanceDigest = ASCPSpendModule(fixedModule).allowanceAuthorizationDigest(allowanceAuthorization);
+        assertEq(allowanceDigest, 0x5f174440bb7236f3922420bd1142502b22cee71975c211b44f888249a7eeaf30);
         assertEq(
-            ASCPSpendModule(fixedModule).allowanceAuthorizationDigest(allowanceAuthorization),
-            0x78e52fd73032cf8cd46a5d8e77a205f655719d2edb7c7d58e3586df41f35c17c
+            ecrecover(
+                allowanceDigest,
+                28,
+                0x9f649d3e714619743a4cd7cde10e7d1540f3864338a4cdba37481030bdc62183,
+                0x5bd6f636c50f45cf22b381ff867258660d2256a08ce63f2028d81f01af12b545
+            ),
+            0xe05fcC23807536bEe418f142D19fa0d21BB0cfF7
         );
     }
 
@@ -554,14 +598,15 @@ contract ASCPSpendModuleTest is Test {
         authorization = ASCPSpendModule.LockAuthorization({
             orgDomain: ORG_DOMAIN,
             safe: address(safe),
+            module: address(module),
             operationId: commitment.operationId,
             commitmentHash: escrow.executionCommitmentDigest(commitment, address(escrow), block.chainid),
             calldataHash: keccak256(payload),
             escrow: address(escrow),
             amount: amount,
+            nonce: sequence,
             validAfter: uint64(block.timestamp),
             validBefore: uint64(block.timestamp + 10 minutes),
-            nonce: bytes32(sequence),
             leadershipEpoch: 1,
             authorizerEpoch: module.authorizerEpoch()
         });
@@ -620,14 +665,16 @@ contract ASCPSpendModuleTest is Test {
         authorization = ASCPSpendModule.AllowanceAuthorization({
             orgDomain: ORG_DOMAIN,
             safe: address(safe),
+            module: address(module),
             adminOperationId: keccak256(abi.encode("allowance", sequence)),
             token: address(usdc),
             spender: address(allowanceSpender),
-            expectedCurrentAllowance: expected,
+            expectedAllowance: expected,
             newAllowance: next,
+            nonce: sequence,
             validAfter: uint64(block.timestamp),
             validBefore: uint64(block.timestamp + 10 minutes),
-            nonce: bytes32(sequence),
+            leadershipEpoch: 1,
             authorizerEpoch: module.authorizerEpoch()
         });
     }
@@ -701,7 +748,7 @@ contract ASCPSpendModuleTest is Test {
         );
     }
 
-    function _invalidateNonces(bytes32[] memory nonces, uint256 sequence) internal {
+    function _invalidateNonces(uint256[] memory nonces, uint256 sequence) internal {
         bytes32 workflowId = keccak256(abi.encode("invalidate-workflow", sequence));
         bytes32 payloadHash =
             module.governancePayloadHash(workflowId, module.invalidateNonces.selector, keccak256(abi.encode(nonces)));
@@ -750,7 +797,7 @@ contract ASCPSpendModuleInvariantHandler is Test {
     function executeBoundedLock(uint96 rawAmount, bytes32 seed) external {
         attempts += 1;
         uint256 amount = (uint256(rawAmount) % 1_000) + 1;
-        bytes32 nonce = keccak256(abi.encode("invariant-nonce", attempts, seed));
+        uint256 nonce = uint256(keccak256(abi.encode("invariant-nonce", attempts, seed)));
         ASCPCallEscrow.ExecutionCommitment memory commitment = ASCPCallEscrow.ExecutionCommitment({
             orgDomain: keccak256("org-domain"),
             operationId: keccak256(abi.encode("invariant-operation", attempts, seed)),
@@ -784,14 +831,15 @@ contract ASCPSpendModuleInvariantHandler is Test {
         ASCPSpendModule.LockAuthorization memory authorization = ASCPSpendModule.LockAuthorization({
             orgDomain: keccak256("org-domain"),
             safe: address(safe),
+            module: address(module),
             operationId: commitment.operationId,
             commitmentHash: escrow.executionCommitmentDigest(commitment, address(escrow), block.chainid),
             calldataHash: keccak256(payload),
             escrow: address(escrow),
             amount: amount,
+            nonce: nonce,
             validAfter: uint64(block.timestamp),
             validBefore: uint64(block.timestamp + 10 minutes),
-            nonce: nonce,
             leadershipEpoch: 1,
             authorizerEpoch: module.authorizerEpoch()
         });

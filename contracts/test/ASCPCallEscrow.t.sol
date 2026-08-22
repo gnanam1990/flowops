@@ -169,6 +169,9 @@ contract ASCPCallEscrowTest is Test {
     }
 
     function testExecutionCommitmentMatchesPublishedGoGoldenVector() public view {
+        assertEq(
+            escrow.TYPED_DATA_MANIFEST_SHA256(), 0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5
+        );
         ASCPCallEscrow.ExecutionCommitment memory c = ASCPCallEscrow.ExecutionCommitment({
             orgDomain: bytes32(uint256(1)),
             operationId: bytes32(uint256(2)),

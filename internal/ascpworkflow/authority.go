@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/pkg/governanceworkflow"
 )
 
 var ErrAuthorityProof = errors.New("workflow chain authority proof is invalid")
@@ -148,11 +149,58 @@ func (v *AuthorityVerifier) ValidateWorkflow(kind Kind, action ChainAction, payl
 	return nil
 }
 
+func (v *AuthorityVerifier) ValidateGovernanceAction(bound governanceworkflow.BoundAction) error {
+	action, err := chainActionForBound(bound)
+	if err != nil {
+		return ErrAuthorityProof
+	}
+	rule, ok := v.rules[action]
+	if !ok || rule.Kind != Kind(bound.WorkflowKind) || rule.ChainID != bound.ChainID ||
+		rule.ContractAddress != bound.ContractAddress || rule.FunctionSelector != bound.FunctionSelector ||
+		!hash(bound.PayloadHash) {
+		return ErrAuthorityProof
+	}
+	return nil
+}
+
+func chainActionForBound(bound governanceworkflow.BoundAction) (ChainAction, error) {
+	var action struct {
+		Type governanceworkflow.ActionType `json:"type"`
+	}
+	if err := json.Unmarshal(bound.CanonicalAction, &action); err != nil {
+		return "", ErrAuthorityProof
+	}
+	switch action.Type {
+	case governanceworkflow.ActionCallEscrowAddVerifier:
+		return ActionCallEscrowAddVerifier, nil
+	case governanceworkflow.ActionCallEscrowRevokeVerifier:
+		return ActionCallEscrowRevokeVerifier, nil
+	case governanceworkflow.ActionCallEscrowPause:
+		return ActionCallEscrowPause, nil
+	case governanceworkflow.ActionSpendAuthorizer:
+		return ActionSpendSetAuthorizer, nil
+	case governanceworkflow.ActionSpendAllowlist:
+		return ActionSpendSetAllowlist, nil
+	case governanceworkflow.ActionSpendCaps:
+		return ActionSpendScheduleCaps, nil
+	case governanceworkflow.ActionSpendPause:
+		return ActionSpendPause, nil
+	case governanceworkflow.ActionSpendInvalidateNonces:
+		return ActionSpendInvalidateNonces, nil
+	case governanceworkflow.ActionDirectoryApprove:
+		return ActionDirectoryPublish, nil
+	case governanceworkflow.ActionDirectoryCancel:
+		return ActionDirectoryCancel, nil
+	default:
+		return "", ErrAuthorityProof
+	}
+}
+
 func (v *AuthorityVerifier) VerifyWorkflowCompletion(_ context.Context, workflow Workflow, receipt CompletionReceipt) error {
 	rule, ok := v.rules[workflow.ChainAction]
 	if !validReceipt(receipt) || !ok || receipt.ChainAction != workflow.ChainAction || rule.Kind != workflow.Kind ||
 		workflow.PayloadHash != receipt.PayloadHash || workflow.WorkflowID != receipt.WorkflowID ||
-		workflow.State != ApprovedPendingChain || workflow.ProposerRole != rule.ProposerRole ||
+		!completionCandidateState(workflow.State) || workflow.ProposerRole != rule.ProposerRole ||
 		workflow.ApproverRole != rule.ApproverRole || workflow.ProposedBy == workflow.ApprovedBy ||
 		rule.WorkflowQuorum != 2 || len(receipt.AuthorityProof) < v.providerQuorum || len(receipt.AuthorityProof) > 5 {
 		return ErrAuthorityProof
@@ -209,13 +257,18 @@ func observationMatchesRule(observation AuthorityObservation, rule AuthorityRule
 		observation.BlockHash != receipt.BlockHash || observation.ContractAddress != rule.ContractAddress ||
 		observation.ContractAddress != receipt.ContractAddress || observation.ContractCodeHash != rule.ContractCodeHash ||
 		observation.OnChainPrincipal != rule.OnChainPrincipal || observation.FunctionSelector != rule.FunctionSelector ||
-		observation.ActionEventSignature != rule.ActionEventSignature || observation.ActionEventSignature != receipt.EventSignature ||
+		observation.ActionEventSignature != rule.ActionEventSignature || observation.ActionEventSignature != receipt.ActionEventSignature ||
 		observation.SecondaryActionEventSignature != rule.SecondaryActionEventSignature ||
-		observation.WorkflowEventSignature != rule.WorkflowEventSignature || observation.WorkflowID != workflow.WorkflowID ||
+		observation.WorkflowEventSignature != rule.WorkflowEventSignature ||
+		observation.WorkflowID != workflow.WorkflowID ||
 		observation.PayloadHash != workflow.PayloadHash || observation.Finality != "FINALIZED" || receipt.Finality != "FINALIZED" {
 		return false
 	}
-	if observation.ActionLogIndex != receipt.LogIndex || observation.ObservedTimelockSeconds < rule.MinimumTimelockSeconds {
+	if rule.WorkflowEventSignature != "" && observation.WorkflowEventSignature != receipt.EventSignature {
+		return false
+	}
+	if !containsLogIndex(receipt.ActionLogIndexes, observation.ActionLogIndex) ||
+		observation.WorkflowLogIndex != receipt.LogIndex || observation.ObservedTimelockSeconds < rule.MinimumTimelockSeconds {
 		return false
 	}
 	if rule.WorkflowEventSignature != "" && observation.ActionLogIndex == observation.WorkflowLogIndex {
@@ -230,6 +283,15 @@ func observationMatchesRule(observation AuthorityObservation, rule AuthorityRule
 		return false
 	}
 	return rule.RelayerMode == RelayerAny || observation.Relayer == rule.Relayer
+}
+
+func containsLogIndex(indexes []uint64, target uint64) bool {
+	for _, index := range indexes {
+		if index == target {
+			return true
+		}
+	}
+	return false
 }
 
 func sameAuthorityOutcome(left, right AuthorityObservation) bool {
@@ -255,8 +317,10 @@ func validChainAction(action ChainAction) bool {
 
 func expectedAuthorityWorkflow(action ChainAction) (Kind, Role, Role, bool) {
 	switch action {
-	case ActionCallEscrowAddVerifier, ActionCallEscrowRevokeVerifier, ActionCallEscrowPause:
+	case ActionCallEscrowAddVerifier, ActionCallEscrowRevokeVerifier:
 		return VerifierGovernance, SignerOperator, OrgAdmin, true
+	case ActionCallEscrowPause, ActionSpendPause:
+		return BreakGlass, OrgAdmin, IncidentResponder, true
 	case ActionDirectoryPublish:
 		return PayoutChange, SellerAdmin, OrgAdmin, true
 	case ActionDirectoryCancel, ActionDirectoryPauseSeller, ActionDirectoryUnpauseSeller, ActionDirectoryRevokeQuoteKey, ActionDirectoryUnrevokeQuoteKey:
@@ -265,7 +329,9 @@ func expectedAuthorityWorkflow(action ChainAction) (Kind, Role, Role, bool) {
 		return RoleAdmin, OrgAdmin, OrgAdmin, true
 	case ActionDirectorySetPublisher, ActionDirectorySetPauser, ActionAgentSetRegistryAdmin:
 		return BreakGlass, OrgAdmin, IncidentResponder, true
-	case ActionSpendSetAuthorizer, ActionSpendSetAllowlist, ActionSpendScheduleCaps, ActionSpendPause, ActionSpendInvalidateNonces,
+	case ActionSpendScheduleCaps:
+		return SignerCaps, SignerOperator, OrgAdmin, true
+	case ActionSpendSetAuthorizer, ActionSpendSetAllowlist, ActionSpendInvalidateNonces,
 		ActionSafeEnableModule, ActionSafeDisableModule:
 		return ModuleGovernance, SignerOperator, OrgAdmin, true
 	case ActionSafeAddOwner, ActionSafeRemoveOwner, ActionSafeSwapOwner, ActionSafeChangeThreshold:
@@ -376,5 +442,4 @@ func selector(value string) bool {
 	return true
 }
 
-var _ CompletionVerifier = (*AuthorityVerifier)(nil)
-var _ CreationAuthorityPolicy = (*AuthorityVerifier)(nil)
+var _ GovernanceActionGate = (*AuthorityVerifier)(nil)

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowops.dev/schemas/verdict-attestation-v1.json",
+  "title": "ASCP v4 VerdictAttestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["callId", "commitmentHash", "escrowContract", "verifierEpoch", "verificationSpecHash", "verifierSoftwareHash", "deliveryHash", "deliveredAt", "evidenceHash", "verdict", "verdictNonce", "issuedAt", "validUntil"],
+  "properties": {
+    "callId": {"$ref": "#/$defs/hash"},
+    "commitmentHash": {"$ref": "#/$defs/hash"},
+    "escrowContract": {"$ref": "#/$defs/address"},
+    "verifierEpoch": {"$ref": "#/$defs/positiveUint64"},
+    "verificationSpecHash": {"$ref": "#/$defs/hash"},
+    "verifierSoftwareHash": {"$ref": "#/$defs/hash"},
+    "deliveryHash": {"$ref": "#/$defs/hash"},
+    "deliveredAt": {"$ref": "#/$defs/positiveUint64"},
+    "evidenceHash": {"$ref": "#/$defs/hash"},
+    "verdict": {"type": "integer", "enum": [1, 2]},
+    "verdictNonce": {"$ref": "#/$defs/positiveUint256"},
+    "issuedAt": {"$ref": "#/$defs/positiveUint64"},
+    "validUntil": {"$ref": "#/$defs/positiveUint64"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^0x[0-9a-f]{64}$", "not": {"const": "0x0000000000000000000000000000000000000000000000000000000000000000"}},
+    "address": {"type": "string", "pattern": "^0x[0-9a-f]{40}$", "not": {"const": "0x0000000000000000000000000000000000000000"}},
+    "positiveUint256": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+    "positiveUint64": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
+  }
+}

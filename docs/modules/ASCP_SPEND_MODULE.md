@@ -14,13 +14,14 @@
 
 ## Inputs and bindings
 
-Lock authorizations bind `orgDomain`, Safe, operation, commitment digest, exact calldata hash, escrow, amount, validity window, nonce, leadership epoch, and authorizer epoch. Allowance authorizations bind `orgDomain`, Safe, admin operation, configured token, spender, exact old and new allowance, validity window, nonce, and authorizer epoch. Both use the EIP-712 domain `{name: ASCP, version: 3, chainId, verifyingContract: module}`.
+Lock authorizations bind `orgDomain`, Safe, module, operation, commitment digest, exact calldata hash, escrow, amount, `uint256` nonce, validity window, leadership epoch, and authorizer epoch. Allowance authorizations bind `orgDomain`, Safe, module, admin operation, configured token, spender, exact old and new allowance, `uint256` nonce, validity window, leadership epoch, and authorizer epoch. Both use the EIP-712 domain `{name: ASCP, version: 4, chainId, verifyingContract: module}`.
 
 The module accepts a bearer instrument only when:
 
 - the module is not paused;
 - action IDs, organization domain, and nonce are nonzero;
-- `validBefore > validAfter`, the window is at most 600 seconds, and chain time is inside it;
+- `validBefore > validAfter`, the window is at most 600 seconds, and `validAfter <= chain time < validBefore`;
+- the message's signed module is this contract and the leadership epoch is nonzero;
 - the signed authorizer epoch exactly equals the current epoch;
 - the nonce is neither consumed nor Safe-invalidated; and
 - ECDSA recovery equals the current spend authorizer.
@@ -37,7 +38,7 @@ Successful actions emit `LockExecuted` or `AllowanceExecuted`; governance emits 
 
 The Safe must implement `execTransactionFromModule(address,uint256,bytes,uint8) returns (bool)` and enable this module through its owner-governed module lifecycle. The configured token must expose ERC-20 `allowance` and `approve`. Escrows must expose the reviewed `ASCPCallEscrow` ABI and exact runtime code hash.
 
-The isolated signer uses `pkg/spendauthorization` to construct the byte-identical Go digests. Solidity and Go golden-vector tests prevent type-string, field-order, domain, or integer-encoding drift.
+The isolated signer uses `pkg/spendauthorization` to construct the byte-identical Go digests. `schemas/ascp-typed-data-v4.registry.json` pins all six normative v4 message types to their JSON Schemas and signed vectors. The dependency-free TypeScript SDK under `sdk/typescript` independently computes Ethereum Keccak, ABI words, domain separators, struct hashes, digests, and RFC 8785-compatible canonical JSON. Go, TypeScript, and Solidity tests prevent type-string, field-order, domain, module, nonce-width, or integer-encoding drift.
 
 ## UI and operations
 
@@ -58,6 +59,6 @@ Operations monitor every governance event, cap utilization, failed Safe executio
 
 - Focused Foundry mutation tests cover exact-call execution, replay, cross-Safe binding, epoch rotation A-to-B-to-A, pause/invalidation, code allowlisting, cap delay/breach, allowance drift, wrong signer, expiry, calldata suffix, and downstream rollback.
 - Foundry fuzzing exercises cap boundaries; stateful invariants compare successful principal, lifetime/day counters, and zero-value `CALL` behavior.
-- Go race tests and a Solidity/Go golden vector cover both authorization digests.
+- Go tests and shared signed vectors cover both authorization encoded bytes, canonical JSON, domain separators, digests, and recovered signers; TypeScript covers all six normative types.
 - Full repository Forge, Go, dashboard, deployment, and readiness gates must pass before merge.
 - Production-equivalent Safe/module/keeper testnet evidence and independent review remain explicit production gates, not claims made by the local suite.

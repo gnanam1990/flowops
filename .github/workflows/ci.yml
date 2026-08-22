@@ -31,6 +31,8 @@ jobs:
         run: go vet ./cmd/... ./internal/... ./pkg/...
       - name: Test with race detector
         run: go test -race ./cmd/... ./internal/... ./pkg/...
+      - name: Validate ASCP v3.4 acceptance inventory
+        run: make acceptance-manifest-check
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
         with:
           version: v1.7.1
@@ -40,6 +42,10 @@ jobs:
         run: forge build --sizes
       - name: Test Solidity contracts
         run: forge test
+      - name: Install typed-data SDK development dependencies
+        run: npm ci --prefix sdk/typescript
+      - name: Typecheck and test ASCP typed-data SDK
+        run: npm run typecheck --prefix sdk/typescript && npm test --prefix sdk/typescript
       - name: Validate Base Sepolia deployment evidence
         run: make test-deployment-evidence
       - name: Validate Base mainnet readiness remains blocked

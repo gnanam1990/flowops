@@ -3,7 +3,6 @@ package controlapi
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,30 +11,10 @@ import (
 )
 
 func TestMCPUsesTheControlPlaneAuthorizationAndLifecyclePaths(t *testing.T) {
-	rest, _, _, _, journal, _ := setupServer(t)
-	defer rest.Close()
+	rest, _, _, _, journal, _ := setupHandler(t)
 	defer journal.Close()
 
-	delegate := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		upstream, err := http.NewRequestWithContext(request.Context(), request.Method, rest.URL+request.URL.Path, request.Body)
-		if err != nil {
-			http.Error(writer, "build test upstream request", http.StatusInternalServerError)
-			return
-		}
-		upstream.Header = request.Header.Clone()
-		response, err := rest.Client().Do(upstream)
-		if err != nil {
-			http.Error(writer, "send test upstream request", http.StatusBadGateway)
-			return
-		}
-		defer response.Body.Close()
-		for key, values := range response.Header {
-			writer.Header()[key] = append([]string(nil), values...)
-		}
-		writer.WriteHeader(response.StatusCode)
-		_, _ = io.Copy(writer, response.Body)
-	})
-	server, err := mcp.NewServer(mcp.Config{Delegate: delegate})
+	server, err := mcp.NewServer(mcp.Config{Delegate: rest})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +60,7 @@ func TestMCPUsesTheControlPlaneAuthorizationAndLifecyclePaths(t *testing.T) {
 	if readResult["isError"] != false {
 		t.Fatalf("MCP intent read failed: %+v", read)
 	}
-	status, restRead := doRequest(t, rest.Client(), http.MethodGet, rest.URL+"/v1/intents/"+requestID, agentTokenA, "", nil)
+	status, restRead := callRESTHandler(t, rest, http.MethodGet, "/v1/intents/"+requestID, agentTokenA, nil)
 	if status != http.StatusOK || !sameJSON(readResult["structuredContent"], restRead) {
 		t.Fatalf("MCP/REST read parity status=%d mcp=%+v rest=%+v", status, readResult["structuredContent"], restRead)
 	}
@@ -89,14 +68,14 @@ func TestMCPUsesTheControlPlaneAuthorizationAndLifecyclePaths(t *testing.T) {
 	crossTenant := callMCP(t, server, viewerTokenB, 6, "tools/call", map[string]any{
 		"name": "ascp.intent.get", "arguments": map[string]any{"requestId": requestID},
 	})
-	if crossTenant["result"].(map[string]any)["isError"] != true {
+	if crossTenant["error"] == nil {
 		t.Fatalf("cross-tenant MCP read succeeded: %+v", crossTenant)
 	}
 
 	agentApprovals := callMCP(t, server, agentTokenA, 7, "tools/call", map[string]any{
 		"name": "ascp.approval.list", "arguments": map[string]any{},
 	})
-	if agentApprovals["result"].(map[string]any)["isError"] != true {
+	if agentApprovals["error"] == nil {
 		t.Fatalf("agent MCP approval list succeeded: %+v", agentApprovals)
 	}
 
@@ -108,6 +87,30 @@ func TestMCPUsesTheControlPlaneAuthorizationAndLifecyclePaths(t *testing.T) {
 	if approved["result"].(map[string]any)["isError"] != false {
 		t.Fatalf("MCP approval decision failed: %+v", approved)
 	}
+}
+
+func callRESTHandler(t *testing.T, handler http.Handler, method, path, token string, body any) (int, map[string]any) {
+	t.Helper()
+	var encoded []byte
+	var err error
+	if body != nil {
+		encoded, err = json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := httptest.NewRequest(method, path, bytes.NewReader(encoded))
+	request.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode REST response status=%d body=%q: %v", recorder.Code, recorder.Body.String(), err)
+	}
+	return recorder.Code, response
 }
 
 func callMCP(t *testing.T, server http.Handler, token string, id int, method string, params any) map[string]any {

@@ -73,10 +73,10 @@ func (s *PostgresStore) evaluateOnce(ctx context.Context, identity Identity, ope
 		return Decision{}, fmt.Errorf("begin ASCP policy evaluation: %w", err)
 	}
 	defer tx.Rollback()
-	material, err := lockOperationMaterial(ctx, tx, identity, operationID)
-	if err != nil {
-		return Decision{}, err
-	}
+	// A durable decision is the immutable result for this operation. Return it
+	// before joining current policy or organization state so an exact replay is
+	// not made unavailable by later policy deactivation, agent suspension, or
+	// other mutable control-plane changes.
 	if existing, err := loadDecision(ctx, tx, identity, operationID); err == nil {
 		existing.Replayed = true
 		if err := tx.Commit(); err != nil {
@@ -84,6 +84,10 @@ func (s *PostgresStore) evaluateOnce(ctx context.Context, identity Identity, ope
 		}
 		return existing, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
+		return Decision{}, err
+	}
+	material, err := lockOperationMaterial(ctx, tx, identity, operationID)
+	if err != nil {
 		return Decision{}, err
 	}
 	if material.policyVersion == "" || material.policyJSON == "" {

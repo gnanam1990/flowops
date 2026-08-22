@@ -13,7 +13,7 @@ func TestAuthorityVerifierBindsDualControlPrincipalRelayerAndReceiptQuorum(t *te
 		t.Fatal(err)
 	}
 	workflow := Workflow{
-		WorkflowID: testHash(40), OrganizationID: "org_a", Kind: ModuleGovernance, ChainAction: ActionSpendScheduleCaps,
+		WorkflowID: testHash(40), OrganizationID: "org_a", Kind: SignerCaps, ChainAction: ActionSpendScheduleCaps,
 		PayloadHash: testHash(41), ProposedBy: "signer_a", ProposerRole: SignerOperator,
 		ApprovedBy: "owner_b", ApproverRole: OrgAdmin, State: ApprovedPendingChain,
 	}
@@ -56,7 +56,7 @@ func TestAuthorityVerifierRejectsUnmappedCreateAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifier.ValidateWorkflow(ModuleGovernance, ActionSpendScheduleCaps, testHash(1)); err != nil {
+	if err := verifier.ValidateWorkflow(SignerCaps, ActionSpendScheduleCaps, testHash(1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifier.ValidateWorkflow(ModuleGovernance, ActionSpendPause, testHash(1)); !errors.Is(err, ErrAuthorityProof) {
@@ -100,7 +100,7 @@ func TestSafeOwnerSwapRequiresRemovedAndAddedOwnerEvents(t *testing.T) {
 	receipt := authorityReceiptFixture(workflow, rule)
 	for index := range receipt.AuthorityProof {
 		receipt.AuthorityProof[index].Relayer = "0x3333333333333333333333333333333333333333"
-		receipt.AuthorityProof[index].SecondaryActionLogIndex = 3
+		receipt.AuthorityProof[index].SecondaryActionLogIndex = 2
 	}
 	if err := verifier.VerifyWorkflowCompletion(context.Background(), workflow, receipt); err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func authorityRuleFixture() AuthorityRule {
 	functionSelector, actionEvent, secondaryEvent, workflowEvent, _ :=
 		expectedAuthoritySurface(ActionSpendScheduleCaps)
 	return AuthorityRule{
-		Action: ActionSpendScheduleCaps, Kind: ModuleGovernance, ChainID: 84532,
+		Action: ActionSpendScheduleCaps, Kind: SignerCaps, ChainID: 84532,
 		ContractAddress: "0x1111111111111111111111111111111111111111", ContractCodeHash: testHash(30),
 		OnChainPrincipal: "0x2222222222222222222222222222222222222222",
 		ProposerRole:     SignerOperator, ApproverRole: OrgAdmin, WorkflowQuorum: 2,
@@ -127,6 +127,12 @@ func authorityRuleFixture() AuthorityRule {
 }
 
 func authorityReceiptFixture(workflow Workflow, rule AuthorityRule) CompletionReceipt {
+	actionIndexes := []uint64{1}
+	workflowLogIndex := uint64(2)
+	if rule.SecondaryActionEventSignature != "" {
+		actionIndexes = append(actionIndexes, 2)
+		workflowLogIndex = 3
+	}
 	observation := AuthorityObservation{
 		Provider: "rpc_alpha", ChainID: rule.ChainID, TransactionHash: testHash(42), BlockNumber: 100, BlockHash: testHash(43),
 		ContractAddress: rule.ContractAddress, ContractCodeHash: rule.ContractCodeHash,
@@ -134,7 +140,8 @@ func authorityReceiptFixture(workflow Workflow, rule AuthorityRule) CompletionRe
 		ActionEventSignature:          rule.ActionEventSignature,
 		SecondaryActionEventSignature: rule.SecondaryActionEventSignature,
 		WorkflowEventSignature:        rule.WorkflowEventSignature,
-		WorkflowID:                    workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ActionLogIndex: 1, WorkflowLogIndex: 2,
+		WorkflowID:                    workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ActionLogIndex: 1,
+		WorkflowLogIndex:        workflowLogIndex,
 		ObservedTimelockSeconds: rule.MinimumTimelockSeconds, Finality: "FINALIZED",
 	}
 	second := observation
@@ -142,7 +149,11 @@ func authorityReceiptFixture(workflow Workflow, rule AuthorityRule) CompletionRe
 	return CompletionReceipt{
 		WorkflowID: workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ChainAction: workflow.ChainAction,
 		ChainID: rule.ChainID, TransactionHash: observation.TransactionHash, BlockNumber: observation.BlockNumber,
-		BlockHash: observation.BlockHash, LogIndex: observation.ActionLogIndex, ContractAddress: rule.ContractAddress,
-		EventSignature: rule.ActionEventSignature, Finality: "FINALIZED", AuthorityProof: []AuthorityObservation{observation, second},
+		BlockHash: observation.BlockHash, BlockTimestamp: 101, ConfirmedHead: 100, FinalizedHead: 100,
+		LogIndex: workflowLogIndex, ContractAddress: rule.ContractAddress,
+		EventSignature: GovernanceWorkflowBoundTopic, FunctionSelector: rule.FunctionSelector,
+		ActionEventSignature: rule.ActionEventSignature, ActionLogIndexes: actionIndexes,
+		Observers: []string{"rpc_alpha", "rpc_beta"}, EvidenceDigest: testHash(60), Finality: "FINALIZED",
+		AuthorityProof: []AuthorityObservation{observation, second},
 	}
 }

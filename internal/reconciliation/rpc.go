@@ -36,6 +36,16 @@ type ObserverSet struct {
 	clock     func() time.Time
 }
 
+// ChainID returns the immutable Base domain validated at construction. It is
+// used by higher-level authorization gates so a command cannot be approved for
+// a different Base network and merely fail during later receipt observation.
+func (s *ObserverSet) ChainID() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.chainID
+}
+
 type SnapshotResult struct {
 	Observations []Observation     `json:"observations"`
 	Failures     map[string]string `json:"failures,omitempty"`
@@ -86,10 +96,15 @@ type rpcReceipt struct {
 }
 
 type rpcLog struct {
-	Address string   `json:"address"`
-	Topics  []string `json:"topics"`
-	Data    string   `json:"data"`
-	Removed bool     `json:"removed"`
+	Address          string   `json:"address"`
+	Topics           []string `json:"topics"`
+	Data             string   `json:"data"`
+	Removed          bool     `json:"removed"`
+	BlockNumber      string   `json:"blockNumber,omitempty"`
+	BlockHash        string   `json:"blockHash,omitempty"`
+	TransactionHash  string   `json:"transactionHash,omitempty"`
+	TransactionIndex string   `json:"transactionIndex,omitempty"`
+	LogIndex         string   `json:"logIndex,omitempty"`
 }
 
 func NewObserverSet(chainID uint64, providers []RPCProvider, client *http.Client, clock func() time.Time) (*ObserverSet, error) {

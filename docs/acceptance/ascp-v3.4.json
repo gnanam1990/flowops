@@ -1,0 +1,2714 @@
+{
+  "schemaVersion": 1,
+  "specification": {
+    "name": "Agent Spend Control Plane PRD v3.4 Consolidated",
+    "sha256": "77722a0139c08c0755eb48b712aa4c3e3971016c4db4d948e325f49853ffbc8e",
+    "acceptanceSha256": "58377488c19e2dbe96498e3b61b58048aa236c588620b3810873640fdca3b3f9"
+  },
+  "releaseStage": "inventory",
+  "statusDefinitions": {
+    "accepted": "Every clause is proved by current required artifacts at the declared release stage.",
+    "local_evidence": "Direct executable local evidence exists, but this is not full AC acceptance.",
+    "partial": "Related implementation exists without complete clause-by-clause executable evidence.",
+    "missing": "A required implementation or executable evidence adapter is absent.",
+    "external_required": "Completion depends on production-equivalent or independent external evidence.",
+    "reserved": "Inactive direct-rail criterion reserved by PRD section 12.6."
+  },
+  "ownershipOverrides": [
+    {
+      "ac": "AC-1",
+      "owner": "controlplane",
+      "rationale": "PRD section 36.1 omitted an owner for the active end-to-end purchase criterion; controlplane coordinates the cross-package proof."
+    },
+    {
+      "ac": "AC-6",
+      "owner": "controlplane",
+      "rationale": "PRD section 36.1 omitted an owner for the active unlisted-seller criterion; controlplane owns the Ring 2 decision boundary."
+    },
+    {
+      "ac": "AC-8",
+      "owner": "controlplane",
+      "rationale": "PRD section 36.1 omitted an owner for the active blocked-category criterion; controlplane owns policy enforcement."
+    },
+    {
+      "ac": "AC-43",
+      "owner": "dashboard_ops",
+      "rationale": "PRD section 36.1 omitted an owner for the active failover-drain criterion; operations coordinates the unified bearer drain."
+    }
+  ],
+  "criteria": [
+    {
+      "id": "AC-1",
+      "number": 1,
+      "title": "Full auto-approved escrow purchase on testnet via Safe+module+keeper",
+      "expectation": "Complete event chain, reservation → AUTHORIZATION_LIVE → committed → consumed, lock+release receipts at finality, balanced journal, zero recovery-key signatures",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "keeper_chain",
+        "contracts",
+        "signer",
+        "verifier",
+        "seller_sdk",
+        "schemas_vectors",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-E1-E5"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-2",
+      "number": 2,
+      "title": "Escalated purchase approved",
+      "expectation": "AC-1 chain + named approval; no reservation while pending",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-3",
+      "number": 3,
+      "title": "Context changed after approval screen load",
+      "expectation": "409 snapshot mismatch; no state change",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-A1",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpapproval/approval_test.go",
+          "ref": "TestApprovalCASAndSnapshotBinding",
+          "command": "go test -race ./internal/ascpapproval -run '^TestApprovalCASAndSnapshotBinding$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-4",
+      "number": 4,
+      "title": "too_expensive rejection",
+      "expectation": "One grant, one adapted intent; second rejection escalates; inappropriate ⇒ no grant",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-POLICY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpadaptation/grant_test.go",
+          "ref": "TestIssuerAndVerifierBindSingleUseGrantScope",
+          "command": "go test -race ./internal/ascpadaptation -run '^TestIssuerAndVerifierBindSingleUseGrantScope$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascporchestration/orchestration_test.go",
+          "ref": "TestSecondAdaptiveRejectionEscalatesButBlockedCategoryDoesNot",
+          "command": "go test -race ./internal/ascporchestration -run '^TestSecondAdaptiveRejectionEscalatesButBlockedCategoryDoesNot$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-5",
+      "number": 5,
+      "title": "Seller, verifier, AND primary control plane killed after lock",
+      "expectation": "Keeper alone submits claimExpired post-settleBy within SLO; refund finalizes; journal reversal + budget restoration; zero human action",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-E1-E5",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-6",
+      "number": 6,
+      "title": "Unlisted seller intent",
+      "expectation": "Ring 2 fails; signer log shows zero contact",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "signer"
+      ],
+      "invariants": [
+        "INV-POLICY",
+        "INV-ISOLATION"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/policy/policy_test.go",
+          "ref": "TestEvaluateDeterministicOutcomes",
+          "command": "go test -race ./internal/policy -run '^TestEvaluateDeterministicOutcomes$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-7",
+      "number": 7,
+      "title": "12×0.10 vs 1.00 budget, concurrent",
+      "expectation": "Exactly 10 reservations; five-class conservation; across processes/restarts/crash-between-reserve-and-sign",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-B1"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpreservation/reservation_test.go",
+          "ref": "TestAtomicDimensionsAndLiveCannotTTLRelease",
+          "command": "go test -race ./internal/ascpreservation -run '^TestAtomicDimensionsAndLiveCannotTTLRelease$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/controlapi/ascp_execution_integration_test.go",
+          "ref": "TestASCPExecutionAuthorizationRealPostgresBudgetRace",
+          "command": "go test -race ./internal/controlapi -run '^TestASCPExecutionAuthorizationRealPostgresBudgetRace$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-8",
+      "number": 8,
+      "title": "blocked_categories",
+      "expectation": "Non-escalatable BLOCK; owner approve API refuses",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-POLICY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/policy/policy_test.go",
+          "ref": "TestEvaluateDeterministicOutcomes",
+          "command": "go test -race ./internal/policy -run '^TestEvaluateDeterministicOutcomes$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascporchestration/orchestration_test.go",
+          "ref": "TestSecondAdaptiveRejectionEscalatesButBlockedCategoryDoesNot",
+          "command": "go test -race ./internal/ascporchestration -run '^TestSecondAdaptiveRejectionEscalatesButBlockedCategoryDoesNot$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-9",
+      "number": 9,
+      "title": "Dependency-graph checks",
+      "expectation": "§25.5 isolation; meta-test catches planted violation",
+      "active": true,
+      "status": "partial",
+      "primaryOwner": "mcp_base_adapter",
+      "participants": [
+        "mcp_base_adapter"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-ISOLATION"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Related implementation exists, but no mapped executable adapter proves every clause of this criterion."
+    },
+    {
+      "id": "AC-10",
+      "number": 10,
+      "title": "Tamper at/before checkpoint",
+      "expectation": "Chain/MAC/checkpoint verification detects",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-EV1",
+        "INV-OPERATIONS",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpevents/checkpoint_test.go",
+          "ref": "TestRecoveryRejectsTruncationWORMAndSignatureMutation",
+          "command": "go test -race ./internal/ascpevents -run '^TestRecoveryRejectsTruncationWORMAndSignatureMutation$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-11",
+      "number": 11,
+      "title": "Wipe projections; replay",
+      "expectation": "Budgets/states/reputation match exactly",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpevents/postgres_integration_test.go",
+          "ref": "TestPostgresEventChainConcurrencyReplayCheckpointAndImmutability",
+          "command": "go test -race ./internal/ascpevents -run '^TestPostgresEventChainConcurrencyReplayCheckpointAndImmutability$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-12",
+      "number": 12,
+      "title": "Manual on-chain outflow outside the System (Safe or keeper EOA)",
+      "expectation": "CHAIN_ONLY within one cycle; auto-freeze",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-RC1",
+        "INV-OPERATIONS"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-13",
+      "number": 13,
+      "title": "Chain stall simulation",
+      "expectation": "No new authorizations; PENDING_CHAIN_RECOVERY; no rebroadcast; reconcile before resume",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/controlplane/chain_halt_smoke_test.go",
+          "ref": "TestSmokeChainHaltStopsBothAuthorizationBoundaries",
+          "command": "go test -race ./internal/controlplane -run '^TestSmokeChainHaltStopsBothAuthorizationBoundaries$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-14",
+      "number": 14,
+      "title": "Signer cap below approved amount",
+      "expectation": "Refusal recorded; reservation released (pre-signature)",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "signer",
+      "participants": [
+        "signer"
+      ],
+      "invariants": [
+        "INV-POLICY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/referencesigner/verifier_test.go",
+          "ref": "TestLocalLimitsAndTimeFailClosed",
+          "command": "go test -race ./pkg/referencesigner -run '^TestLocalLimitsAndTimeFailClosed$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-15",
+      "number": 15,
+      "title": "Contract fuzz+invariants (escrow, directory, module)",
+      "expectation": "§34 contract invariants hold; build fails on untested invariant",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-E1-E5"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/CallEscrow.invariant.t.sol",
+          "ref": "invariant_livePositionsEqualLockedAccounting",
+          "command": "forge test --match-path contracts/test/CallEscrow.invariant.t.sol --match-test '^invariant_livePositionsEqualLockedAccounting$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "invariantPrincipalEqualsSuccessfulCallsAndDayCounter",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^invariantPrincipalEqualsSuccessfulCallsAndDayCounter$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-16",
+      "number": 16,
+      "title": "Opaque secrets seeded everywhere",
+      "expectation": "Zero occurrences in logs/events/exports of an AC-1 run",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "mcp_base_adapter",
+      "participants": [
+        "mcp_base_adapter"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-ISOLATION"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "cmd/reference-signer/main_test.go",
+          "ref": "TestInitReceiptKeyCreatesPrivateFileWithoutLeakingKey",
+          "command": "go test -race ./cmd/reference-signer -run '^TestInitReceiptKeyCreatesPrivateFileWithoutLeakingKey$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpkeeper/boundary_test.go",
+          "ref": "TestUnixBoundaryErrorNeverReturnsDecodedSecretBuffers",
+          "command": "go test -race ./internal/ascpkeeper -run '^TestUnixBoundaryErrorNeverReturnsDecodedSecretBuffers$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-17",
+      "number": 17,
+      "title": "Export over settled+refunded+blocked period",
+      "expectation": "Correct totals/links/labels; assets vs memos vs expenses correctly sectioned; open case line one",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-OPERATIONS",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/reconciliation/readmodel_test.go",
+          "ref": "TestOrganizationViewSeparatesProvedAssetAggregatesAndExceptions",
+          "command": "go test -race ./internal/reconciliation -run '^TestOrganizationViewSeparatesProvedAssetAggregatesAndExceptions$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-18",
+      "number": 18,
+      "title": "Intake response lost; 100 retries",
+      "expectation": "One intent, one operationId, one quote-nonce consumption",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "seller_sdk"
+      ],
+      "invariants": [
+        "INV-I1",
+        "INV-IDEMPOTENCY",
+        "INV-X402",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpintake/intake_test.go",
+          "ref": "TestCreateAtomicallyClaimsNonceAndReplaysExactInput",
+          "command": "go test -race ./internal/ascpintake -run '^TestCreateAtomicallyClaimsNonceAndReplaysExactInput$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/sellerquote/quote_test.go",
+          "ref": "TestIntakeReplayConflictAndConcurrentNonceWinner",
+          "command": "go test -race ./pkg/sellerquote -run '^TestIntakeReplayConflictAndConcurrentNonceWinner$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-19",
+      "number": 19,
+      "title": "Broadcast response lost after lock",
+      "expectation": "Duplicate lock reverts ALREADY_LOCKED; receipt recovered; no second economic lock",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-I1",
+        "INV-E1-E5",
+        "INV-IDEMPOTENCY",
+        "INV-X402"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-20",
+      "number": 20,
+      "title": "Direct rail settlement",
+      "expectation": "Reserved under §12.6",
+      "active": false,
+      "status": "reserved",
+      "gap": "Reserved direct-rail criterion; inactive until the PRD re-entry gate is approved."
+    },
+    {
+      "id": "AC-21",
+      "number": 21,
+      "title": "20 simultaneous approve/reject/expiry",
+      "expectation": "One terminal outcome (CAS)",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-A1",
+        "INV-AUTHZ",
+        "INV-IDEMPOTENCY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpapproval/approval_test.go",
+          "ref": "TestApprovalExpiryCancelAndConcurrentWinners",
+          "command": "go test -race ./internal/ascpapproval -run '^TestApprovalExpiryCancelAndConcurrentWinners$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpworkflow/workflow_test.go",
+          "ref": "TestTwentyConcurrentWorkflowDecisionsHaveOneTerminalTransition",
+          "command": "go test -race ./internal/ascpworkflow -run '^TestTwentyConcurrentWorkflowDecisionsHaveOneTerminalTransition$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-22",
+      "number": 22,
+      "title": "Policy/seller/payout/status/version change during approval wait",
+      "expectation": "INVALIDATED or clean revalidation at `currentVersion()`; approval untouched; no leaked reservation",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-A1",
+        "INV-AUTHZ"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpexecauth/postgres_test.go",
+          "ref": "TestPostgresApprovalSnapshotMismatchDurablyInvalidatesWithoutReservation",
+          "command": "go test -race ./internal/ascpexecauth -run '^TestPostgresApprovalSnapshotMismatchDurablyInvalidatesWithoutReservation$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpexecauth/local_revalidator_test.go",
+          "ref": "TestLocalRevalidatorBindsCurrentPolicyDirectoryAndExecutionSnapshot",
+          "command": "go test -race ./internal/ascpexecauth -run '^TestLocalRevalidatorBindsCurrentPolicyDirectoryAndExecutionSnapshot$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-23",
+      "number": 23,
+      "title": "Crash at every durable/external boundary",
+      "expectation": "Replay converges: one effect, balanced classified journal, conserved budgets incl. AUTHORIZATION_LIVE",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-B1",
+        "INV-I1",
+        "INV-L1",
+        "INV-IDEMPOTENCY",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpbearer/coordinator_test.go",
+          "ref": "TestCoordinatorRecoversEveryPrepareActivateMirrorAcknowledgeBoundary",
+          "command": "go test -race ./internal/ascpbearer -run '^TestCoordinatorRecoversEveryPrepareActivateMirrorAcknowledgeBoundary$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpkeeper/service_test.go",
+          "ref": "TestRestartRebroadcastsExactSealedTransactionWithoutNewNonce",
+          "command": "go test -race ./internal/ascpkeeper -run '^TestRestartRebroadcastsExactSealedTransactionWithoutNewNonce$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-24",
+      "number": 24,
+      "title": "Mined lock reorged/dropped/replaced/reverted",
+      "expectation": "Correct states; no premature dispatch; no double payment",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-I1",
+        "INV-C1",
+        "INV-CANONICAL"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-25",
+      "number": 25,
+      "title": "RPC disagreement; index gap",
+      "expectation": "Freeze; case; no money state advances",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-C1",
+        "INV-RC1",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/reconciliation/engine_test.go",
+          "ref": "TestObserverDisagreementAndCheckpointRegressionFailClosed",
+          "command": "go test -race ./internal/reconciliation -run '^TestObserverDisagreementAndCheckpointRegressionFailClosed$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/reconciliation/escrow_test.go",
+          "ref": "TestEscrowLifecycleRejectsProviderDisagreementAndInsufficientConfirmations",
+          "command": "go test -race ./internal/reconciliation -run '^TestEscrowLifecycleRejectsProviderDisagreementAndInsufficientConfirmations$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-26",
+      "number": 26,
+      "title": "USDC paused/blacklisted (fork)",
+      "expectation": "TOKEN states; §11.2 reclassifications; no false claims; recovery",
+      "active": true,
+      "status": "partial",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-RC1",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Related implementation exists, but no mapped executable adapter proves every clause of this criterion."
+    },
+    {
+      "id": "AC-27",
+      "number": 27,
+      "title": "Forged/replayed/stale/FAIL/revoked-key/wrong-epoch attestation",
+      "expectation": "release/refundWithVerdict revert every time",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "verifier"
+      ],
+      "invariants": [
+        "INV-V1",
+        "INV-E1-E5",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testVerifierReleaseIsEpochBoundSingleUseAndRevocable",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testVerifierReleaseIsEpochBoundSingleUseAndRevocable$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-28",
+      "number": 28,
+      "title": "Signer replay; altered payload same actionId; restart",
+      "expectation": "Replay same signature; mismatch rejected; caps exact",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "signer"
+      ],
+      "invariants": [
+        "INV-I1",
+        "INV-AUTHZ",
+        "INV-IDEMPOTENCY",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/referencesigner/verifier_test.go",
+          "ref": "TestAuthorizeClaimsNonceExactlyOnceAndSurvivesRestart",
+          "command": "go test -race ./pkg/referencesigner -run '^TestAuthorizeClaimsNonceExactlyOnceAndSurvivesRestart$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/spendauthorization/authorization_test.go",
+          "ref": "TestAuthorizationRejectsEveryLoadBearingMutation",
+          "command": "go test -race ./pkg/spendauthorization -run '^TestAuthorizationRejectsEveryLoadBearingMutation$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-29",
+      "number": 29,
+      "title": "Role probing every endpoint×role; revoked user + open SSE; object-level blob probing",
+      "expectation": "Zero unauthorized effect; SSE terminated; blob rules hold",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "mcp_base_adapter",
+      "participants": [
+        "mcp_base_adapter",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-ISOLATION",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/controlapi/server_test.go",
+          "ref": "TestServerExactIntentIsolationIdempotencyApprovalPauseAndHalt",
+          "command": "go test -race ./internal/controlapi -run '^TestServerExactIntentIsolationIdempotencyApprovalPauseAndHalt$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-30",
+      "number": 30,
+      "title": "SSRF battery",
+      "expectation": "Blocked before protected access",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "mcp_base_adapter",
+      "participants": [
+        "mcp_base_adapter",
+        "seller_sdk"
+      ],
+      "invariants": [
+        "INV-X402",
+        "INV-CANONICAL",
+        "INV-ISOLATION"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascprails/security_test.go",
+          "ref": "TestDestinationRejectsSSRFAndAmbiguousRoutes",
+          "command": "go test -race ./internal/ascprails -run '^TestDestinationRejectsSSRFAndAmbiguousRoutes$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascprails/security_test.go",
+          "ref": "TestDialRevalidatesDNSAndNeverConnectsAfterRebind",
+          "command": "go test -race ./internal/ascprails -run '^TestDialRevalidatesDNSAndNeverConnectsAfterRebind$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-31",
+      "number": 31,
+      "title": "deliverBy−1 delivery; release near settleBy; same-block release vs claimExpired",
+      "expectation": "Exactly one terminal transfer",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-E1-E5"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-32",
+      "number": 32,
+      "title": "DB destroyed; tampered backup variant",
+      "expectation": "Restore in RPO/RTO; tamper detected; trial balance matches chain; authorization registry + tombstones intact",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-EV1",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpevents/checkpoint_test.go",
+          "ref": "TestSignedCheckpointWORMRemoteHeadAndRecovery",
+          "command": "go test -race ./internal/ascpevents -run '^TestSignedCheckpointWORMRemoteHeadAndRecovery$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-33",
+      "number": 33,
+      "title": "Escrow+module version migration; restart mid-way",
+      "expectation": "Old escrows releasable/refundable; no wrong-address signing; dual indexing",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-RC1",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-34",
+      "number": 34,
+      "title": "Sustained peak + retries + restart",
+      "expectation": "SLOs met; zero leaked reservations/authorizations/duplicates/unbounded queues",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    },
+    {
+      "id": "AC-35",
+      "number": 35,
+      "title": "Direct-rail loss",
+      "expectation": "Reserved under §12.6",
+      "active": false,
+      "status": "reserved",
+      "gap": "Reserved direct-rail criterion; inactive until the PRD re-entry gate is approved."
+    },
+    {
+      "id": "AC-36",
+      "number": 36,
+      "title": "ESCALATE under 20 concurrent intents",
+      "expectation": "Zero pending reservations; concurrent approvals reserve exactly the available number",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-B1",
+        "INV-POLICY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/controlapi/ascp_execution_integration_test.go",
+          "ref": "TestASCPExecutionAuthorizationRealPostgresBudgetRace",
+          "command": "go test -race ./internal/controlapi -run '^TestASCPExecutionAuthorizationRealPostgresBudgetRace$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-37",
+      "number": 37,
+      "title": "Safe lock reorged before finality",
+      "expectation": "COMMITTED_SAFE → REORGED_BACK; conservation; no duplicate",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-B1",
+        "INV-C1",
+        "INV-RC1"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-38",
+      "number": 38,
+      "title": "LOCK_AUTH → duplicate → ALLOWANCE_AUTH → duplicate",
+      "expectation": "Distinct actions accepted; duplicates replay signatures; no unauthorized third economic action",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "signer"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-IDEMPOTENCY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/spendauthorization/authorization_test.go",
+          "ref": "TestAuthorizationGoldenVectors",
+          "command": "go test -race ./pkg/spendauthorization -run '^TestAuthorizationGoldenVectors$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpkeeper/service_test.go",
+          "ref": "TestEnqueueIsExactReplayAndConcurrentClaimIsExclusive",
+          "command": "go test -race ./internal/ascpkeeper -run '^TestEnqueueIsExactReplayAndConcurrentClaimIsExclusive$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-39",
+      "number": 39,
+      "title": "EIP-3009 signing battery",
+      "expectation": "Reserved under §12.6",
+      "active": false,
+      "status": "reserved",
+      "gap": "Reserved direct-rail criterion; inactive until the PRD re-entry gate is approved."
+    },
+    {
+      "id": "AC-40",
+      "number": 40,
+      "title": "Commitment mutation matrix (incl. verificationSpecHash, quoteExpiresAt)",
+      "expectation": "Every single-field mutation between quote, authorization, lock, attestation, receipt fails at the first consuming boundary; golden vectors (domain separator, structHash, digest, signature, signer) pass Go/TS/Solidity",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "schemas_vectors",
+      "participants": [
+        "schemas_vectors"
+      ],
+      "invariants": [
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/executioncommitment/commitment_test.go",
+          "ref": "TestExecutionCommitmentRejectsWireAndDomainSubstitution",
+          "command": "go test -race ./pkg/executioncommitment -run '^TestExecutionCommitmentRejectsWireAndDomainSubstitution$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testExecutionCommitmentMatchesPublishedGoGoldenVector",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testExecutionCommitmentMatchesPublishedGoGoldenVector$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-41",
+      "number": 41,
+      "title": "Governance battery",
+      "expectation": "No single EOA activates/revokes/pauses; pre-activation keys cannot attest; revoked/wrong-epoch revert; rotation at boundary blocks",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "verifier"
+      ],
+      "invariants": [
+        "INV-V1",
+        "INV-G1"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testVerifierGovernanceRequiresExactWorkflowPayloadBinding",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testVerifierGovernanceRequiresExactWorkflowPayloadBinding$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testRevokedVerifierCannotReturnAfterRotation",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testRevokedVerifierCannotReturnAfterRotation$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-42",
+      "number": 42,
+      "title": "Retry after 7/30/365 days + restores",
+      "expectation": "Tombstones + seller result store prevent any new effect",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "seller_sdk"
+      ],
+      "invariants": [
+        "INV-I1",
+        "INV-IDEMPOTENCY",
+        "INV-X402"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    },
+    {
+      "id": "AC-43",
+      "number": 43,
+      "title": "Failover begins while any bearer class remains live",
+      "expectation": "Promotion refuses completion until unified-registry drain gives every artifact an authoritative consumed/invalidated/expired outcome",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops",
+        "controlplane",
+        "signer",
+        "keeper_chain",
+        "verifier"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpleadership/leadership_test.go",
+          "ref": "TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce",
+          "command": "go test -race ./internal/ascpleadership -run '^TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-44",
+      "number": 44,
+      "title": "Truncation before/at/within-tail of checkpoint",
+      "expectation": "First two detected; tail follows the bounded-guarantee outcome (remote-head refusal when enabled)",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-EV1",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpevents/checkpoint_test.go",
+          "ref": "TestRecoveryRejectsTruncationWORMAndSignatureMutation",
+          "command": "go test -race ./internal/ascpevents -run '^TestRecoveryRejectsTruncationWORMAndSignatureMutation$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpevents/checkpoint_test.go",
+          "ref": "TestRecoveryRejectsRemoteHeadWithoutMatchingCheckpoint",
+          "command": "go test -race ./internal/ascpevents -run '^TestRecoveryRejectsRemoteHeadWithoutMatchingCheckpoint$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-45",
+      "number": 45,
+      "title": "Quote key rotation/revocation + escrow-call conformance",
+      "expectation": "Old/revoked (overlay)/cross-domain quotes fail; nonce reuse for a different intent fails, identical replay succeeds; concurrent nonce race: one winner; VERSION_UNSUPPORTED; golden vectors; seller restart replays",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "schemas_vectors",
+      "participants": [
+        "schemas_vectors",
+        "seller_sdk"
+      ],
+      "invariants": [
+        "INV-IDEMPOTENCY",
+        "INV-X402",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/sellerquote/quote_test.go",
+          "ref": "TestIntakeAcceptRejectsSubstitutionExpiryAndRevocation",
+          "command": "go test -race ./pkg/sellerquote -run '^TestIntakeAcceptRejectsSubstitutionExpiryAndRevocation$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/escrowcall/wire_test.go",
+          "ref": "TestOfficialX402V2HTTPClientConsumesExactHeaders",
+          "command": "go test -race ./pkg/escrowcall -run '^TestOfficialX402V2HTTPClientConsumesExactHeaders$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-46",
+      "number": 46,
+      "title": "Destroy signer host; separately destroy one recovery key",
+      "expectation": "Hardware `spendAuthorizerKey` reattaches; 2-of-3 owner rotation restores Safe control; both ceremonies distinct; no unilateral takeover",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "signer",
+      "participants": [
+        "signer",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-OPERATIONS",
+        "INV-ISOLATION",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-47",
+      "number": 47,
+      "title": "Routine spend from production-equivalent 2-of-3 Safe",
+      "expectation": "Lock and refund complete with zero Safe-owner signatures; only the module path acts",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-M1",
+        "INV-E1-E5",
+        "INV-ISOLATION"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-48",
+      "number": 48,
+      "title": "Module mutation battery",
+      "expectation": "Wrong target/selector/token/spender/payee/amount/commitment/calldata/nonce/expiry/epoch, delegatecall, value, calldata suffix, allowance mismatch, cap breach, **cross-Safe replay, downstream false return** — all revert with nonce/counters rolled back",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-M1",
+        "INV-E1-E5",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "testLockRejectsMutatedCalldataAmountCommitmentAndEpoch",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^testLockRejectsMutatedCalldataAmountCommitmentAndEpoch$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "testDownstreamFalseRollsBackNonceAndCounters",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^testDownstreamFalseRollsBackNonceAndCounters$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-49",
+      "number": 49,
+      "title": "Real-facilitator ERC-1271 settlement",
+      "expectation": "Reserved: §12.6 gate evidence",
+      "active": false,
+      "status": "reserved",
+      "gap": "Reserved direct-rail criterion; inactive until the PRD re-entry gate is approved."
+    },
+    {
+      "id": "AC-50",
+      "number": 50,
+      "title": "Commitment construction at intent creation",
+      "expectation": "Every field exists at creation; vectors match across languages; no implementation-defined sentinel",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "schemas_vectors",
+      "participants": [
+        "schemas_vectors",
+        "signer"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/executioncommitment/commitment_test.go",
+          "ref": "TestExecutionCommitmentGoldenValues",
+          "command": "go test -race ./pkg/executioncommitment -run '^TestExecutionCommitmentGoldenValues$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-51",
+      "number": 51,
+      "title": "Self-consistent but unauthorized commitment",
+      "expectation": "Unlisted/paused/retired seller, wrong payout, stale (non-current) version, revoked quote key, altered spec: refused by the signer; the contract independently rejects every condition it receives (proofs, currentness, status, linkage, pause, spec hash)",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "signer",
+      "participants": [
+        "signer"
+      ],
+      "invariants": [
+        "INV-D1",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testLockRequiresCurrentVerifiedActiveUnrevokedDirectoryTerms",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testLockRequiresCurrentVerifiedActiveUnrevokedDirectoryTerms$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/referencesigner/verifier_test.go",
+          "ref": "TestSignatureAndTrustSubstitutionRefused",
+          "command": "go test -race ./pkg/referencesigner -run '^TestSignatureAndTrustSubstitutionRefused$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-52",
+      "number": 52,
+      "title": "Direct authorization expiry",
+      "expectation": "Reserved under §12.6",
+      "active": false,
+      "status": "reserved",
+      "gap": "Reserved direct-rail criterion; inactive until the PRD re-entry gate is approved."
+    },
+    {
+      "id": "AC-53",
+      "number": 53,
+      "title": "Keeper liveness drill",
+      "expectation": "AC-5 mechanism + gas-floor exhaustion recovery + fee-bump under reorg, exactly-once",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-E1-E5",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-54",
+      "number": 54,
+      "title": "Standby promotion with old-host traffic injected at every controlled sink through cutover",
+      "expectation": "Every old-epoch issuance/effect rejected from cutover; evidence names sink and observed epoch; cutover not declared before drain completion",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "dashboard_ops",
+      "participants": [
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    },
+    {
+      "id": "AC-55",
+      "number": 55,
+      "title": "Directory version/pause race",
+      "expectation": "Non-current version fails at signer and lock; pause immediately before lock always reverts; invalid/unavailable proof or blob fails closed",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-D1",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testLockRequiresCurrentVerifiedActiveUnrevokedDirectoryTerms",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testLockRequiresCurrentVerifiedActiveUnrevokedDirectoryTerms$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ServiceDirectory.t.sol",
+          "ref": "testGovernorIsRequiredForApprovalAndCancellationReproposalIsBound",
+          "command": "forge test --match-path contracts/test/ServiceDirectory.t.sol --match-test '^testGovernorIsRequiredForApprovalAndCancellationReproposalIsBound$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-56",
+      "number": 56,
+      "title": "Accounting classification suite",
+      "expectation": "Classified trial balance, asset/memo/expense sections, restriction memos, token-blocked assets, receivables (external only), write-offs, reversals correct across normal/blocked/reorged/recovered cases",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-L1",
+        "INV-OPERATIONS",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpsettlement/postgres_integration_test.go",
+          "ref": "TestPostgresStoreFinalityAccountingAndTerminalReorgRecovery",
+          "command": "go test -race ./internal/ascpsettlement -run '^TestPostgresStoreFinalityAccountingAndTerminalReorgRecovery$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/reconciliation/readmodel_test.go",
+          "ref": "TestOrganizationViewSeparatesProvedAssetAggregatesAndExceptions",
+          "command": "go test -race ./internal/reconciliation -run '^TestOrganizationViewSeparatesProvedAssetAggregatesAndExceptions$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-57",
+      "number": 57,
+      "title": "Old epoch holds a signed unused lock authorization at failover",
+      "expectation": "Outcome follows the drain model: instrument either consumed, expired + proven unused, or invalidated by pause/rotation; budget stays AUTHORIZATION_LIVE throughout; no instant-revocation claim anywhere",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "signer",
+      "participants": [
+        "signer"
+      ],
+      "invariants": [
+        "INV-B1",
+        "INV-R1-R2",
+        "INV-AUTHZ",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpreservation/reservation_test.go",
+          "ref": "TestAtomicDimensionsAndLiveCannotTTLRelease",
+          "command": "go test -race ./internal/ascpreservation -run '^TestAtomicDimensionsAndLiveCannotTTLRelease$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-58",
+      "number": 58,
+      "title": "Old epoch holds a signed attestation at failover",
+      "expectation": "Submission behavior matches the drain model; attestation validity bounded by its window; no stale-host invariant falsely asserted",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "verifier",
+      "participants": [
+        "verifier"
+      ],
+      "invariants": [
+        "INV-V1",
+        "INV-AUTHZ",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpverifier/service_test.go",
+          "ref": "TestRevocationAndExpiryStopCachedBearerPublication",
+          "command": "go test -race ./internal/ascpverifier -run '^TestRevocationAndExpiryStopCachedBearerPublication$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-59",
+      "number": 59,
+      "title": "Mutate leaves/proofs/calldata after signer authorization; Safe call returns false",
+      "expectation": "calldataHash mismatch reverts; cross-Safe/cross-module replay reverts; nonce and counters roll back on downstream false return",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "signer"
+      ],
+      "invariants": [
+        "INV-I1",
+        "INV-M1",
+        "INV-E1-E5",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "testLockRejectsMutatedCalldataAmountCommitmentAndEpoch",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^testLockRejectsMutatedCalldataAmountCommitmentAndEpoch$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "testLockReplayAndCrossSafeReplayFail",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^testLockReplayAndCrossSafeReplayFail$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-60",
+      "number": 60,
+      "title": "Signed lock authorization never broadcasts; reservation TTL passes; third party submits late",
+      "expectation": "Reservation remains AUTHORIZATION_LIVE until nonce consumed or chain-time expiry + margin with module-reported unused nonce; a late third-party submission within validity finds the budget still committed — never double-counted",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane"
+      ],
+      "invariants": [
+        "INV-B1",
+        "INV-I1",
+        "INV-R1-R2",
+        "INV-IDEMPOTENCY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpbearer/handle_test.go",
+          "ref": "TestPreparedExpiryRequiresAuthoritativeUnactivatedProof",
+          "command": "go test -race ./internal/ascpbearer -run '^TestPreparedExpiryRequiresAuthoritativeUnactivatedProof$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpreservation/reservation_test.go",
+          "ref": "TestAtomicDimensionsAndLiveCannotTTLRelease",
+          "command": "go test -race ./internal/ascpreservation -run '^TestAtomicDimensionsAndLiveCannotTTLRelease$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-61",
+      "number": 61,
+      "title": "Weaker VerificationSpec substituted after approval",
+      "expectation": "Verifier hash-compare refuses before any check; no attestation producible for the substituted spec; commitment/attestation binding unchanged",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "signer",
+      "participants": [
+        "signer",
+        "verifier"
+      ],
+      "invariants": [
+        "INV-V1",
+        "INV-E1-E5",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpverifier/service_test.go",
+          "ref": "TestSpecMismatchFailsBeforeChecksAndSigning",
+          "command": "go test -race ./internal/ascpverifier -run '^TestSpecMismatchFailsBeforeChecksAndSigning$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-62",
+      "number": 62,
+      "title": "Old directory version/key/payout after newer activation or revocation",
+      "expectation": "Non-current version rejected at signer and lock; overlay-revoked key rejected; retired status and cross-seller ResourceLeaf always revert",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-D1",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testLockRequiresCurrentVerifiedActiveUnrevokedDirectoryTerms",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testLockRequiresCurrentVerifiedActiveUnrevokedDirectoryTerms$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-63",
+      "number": 63,
+      "title": "Header-value and URL-normalization mutation matrix",
+      "expectation": "Every semantic mutation changes purchaseSpecHash/ResourceRequestDigest or PaymentProofDigest and is refused; transport fields are rails-generated and stripped from callers",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "schemas_vectors",
+      "participants": [
+        "schemas_vectors",
+        "mcp_base_adapter",
+        "seller_sdk"
+      ],
+      "invariants": [
+        "INV-X402",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/escrowcall/wire_test.go",
+          "ref": "TestResourceRequestDigestMutationsChangeDigest",
+          "command": "go test -race ./pkg/escrowcall -run '^TestResourceRequestDigestMutationsChangeDigest$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/escrowcall/wire_test.go",
+          "ref": "TestPaymentHeadersStripsCallerPaymentAndLegacyEscrowHeaders",
+          "command": "go test -race ./pkg/escrowcall -run '^TestPaymentHeadersStripsCallerPaymentAndLegacyEscrowHeaders$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-64",
+      "number": 64,
+      "title": "Lock reaches safe, then finalized, then release/refund under reorg injection at each stage",
+      "expectation": "Operation, budget classes, journal sequencing, and classified statements follow the distinct finality transitions",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-B1",
+        "INV-C1",
+        "INV-L1",
+        "INV-RC1",
+        "INV-E1-E5"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpsettlement/postgres_integration_test.go",
+          "ref": "TestPostgresStoreLockReorgReversesEveryClassifiedPosting",
+          "command": "go test -race ./internal/ascpsettlement -run '^TestPostgresStoreLockReorgReversesEveryClassifiedPosting$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/reconciliation/escrow_durable_test.go",
+          "ref": "TestDurableEscrowReorgReversesEveryDependentLedgerAndQuarantinesPosition",
+          "command": "go test -race ./internal/reconciliation -run '^TestDurableEscrowReorgReversesEveryDependentLedgerAndQuarantinesPosition$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-65",
+      "number": 65,
+      "title": "Keeper pays gas for lock/release/refund/fee bump",
+      "expectation": "Journal posts against KeeperRelayerETH; Safe and keeper balances match receipts; reconciliation covers both",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-L1",
+        "INV-RC1",
+        "INV-OPERATIONS"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpkeeper/postgres_integration_test.go",
+          "ref": "TestPostgresKeeperDurableNonceAndBroadcastLifecycle",
+          "command": "go test -race ./internal/ascpkeeper -run '^TestPostgresKeeperDurableNonceAndBroadcastLifecycle$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-66",
+      "number": 66,
+      "title": "Every Owner API that changes chain state",
+      "expectation": "Exact on-chain principal, workflow quorum, relayer, receipt, and event proven per §26.4; single-role/single-key bypass fails for every dual-control row",
+      "active": true,
+      "status": "partial",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-ADM1",
+        "INV-AUTHZ",
+        "INV-OPERATIONS",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Related implementation exists, but no mapped executable adapter proves every clause of this criterion."
+    },
+    {
+      "id": "AC-67",
+      "number": 67,
+      "title": "Publisher proposes payout/key redirection without governor approval",
+      "expectation": "Proposal may be recorded but never activates; current root and payout remain unchanged",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-D1",
+        "INV-D2",
+        "INV-ADM1",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ServiceDirectory.t.sol",
+          "ref": "testProposalAuthorizationRejectsPayloadSubstitutionAndReplay",
+          "command": "forge test --match-path contracts/test/ServiceDirectory.t.sol --match-test '^testProposalAuthorizationRejectsPayloadSubstitutionAndReplay$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-68",
+      "number": 68,
+      "title": "Execute every contract-authority row end-to-end",
+      "expectation": "Sender, gas payer, signer, epochs, nonce, workflow, calldata, receipt, and replay outcome exactly match §26.4",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "keeper_chain",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-ADM1",
+        "INV-AUTHZ",
+        "INV-OPERATIONS",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-69",
+      "number": 69,
+      "title": "Issue lock, allowance, admin, and verdict bearer artifacts at maximum and malformed lifetimes; promote standby",
+      "expectation": "Contract rejects oversized/future execution; unified registry inventories every live artifact; drain cannot omit a class",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "signer",
+        "verifier"
+      ],
+      "invariants": [
+        "INV-V1",
+        "INV-ADM1",
+        "INV-R1-R2",
+        "INV-AUTHZ"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpbearer/handle_test.go",
+          "ref": "TestSignerLedgerRejectsAlreadyExpiredPrepare",
+          "command": "go test -race ./internal/ascpbearer -run '^TestSignerLedgerRejectsAlreadyExpiredPrepare$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "testAuthorizationWindowAndCapsAreEnforced",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^testAuthorizationWindowAndCapsAreEnforced$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-70",
+      "number": 70,
+      "title": "Pause seller, attempt budget release, unpause, then submit still-valid authorization",
+      "expectation": "Pause never releases budget; valid bearer remains accounted until consumption, expiry proof, or finalized nonce invalidation",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-D1",
+        "INV-E1-E5",
+        "INV-AUTHZ"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "testPauseDoesNotConsumeAndSafeInvalidationIsPermanent",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^testPauseDoesNotConsumeAndSafeInvalidationIsPermanent$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-71",
+      "number": 71,
+      "title": "Rotate spend authorizer A→B→A and revoke quote key after authorization but before lock",
+      "expectation": "Old epoch signature and revoked-key lock both revert; nonce/counters/budget remain correct",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "signer"
+      ],
+      "invariants": [
+        "INV-M1",
+        "INV-D1",
+        "INV-E1-E5",
+        "INV-AUTHZ",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "testAuthorizerRotationAtoBtoAMakesOldSignaturePermanentlyInvalid",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^testAuthorizerRotationAtoBtoAMakesOldSignaturePermanentlyInvalid$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-72",
+      "number": 72,
+      "title": "Official x402 v2 envelopes and header byte vectors",
+      "expectation": "Pinned custom handler interoperates for challenge, paid retry, response, versions, errors, and base64 variants",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "schemas_vectors",
+      "participants": [
+        "schemas_vectors",
+        "seller_sdk"
+      ],
+      "invariants": [
+        "INV-X402",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/escrowcall/wire_test.go",
+          "ref": "TestBuildOfferUsesCompleteX402V2Envelope",
+          "command": "go test -race ./pkg/escrowcall -run '^TestBuildOfferUsesCompleteX402V2Envelope$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/escrowcall/wire_test.go",
+          "ref": "TestOfficialX402V2HTTPClientConsumesExactHeaders",
+          "command": "go test -race ./pkg/escrowcall -run '^TestOfficialX402V2HTTPClientConsumesExactHeaders$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-73",
+      "number": 73,
+      "title": "Mutate resource request independently from payment payload and vice versa",
+      "expectation": "ResourceRequestDigest or PaymentProofDigest fails at pre-egress/seller validation; caller payment headers are stripped",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "schemas_vectors",
+      "participants": [
+        "schemas_vectors",
+        "mcp_base_adapter",
+        "seller_sdk"
+      ],
+      "invariants": [
+        "INV-X402",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/escrowcall/wire_test.go",
+          "ref": "TestVerifyBeforeEgressRejectsMutationAndAmbiguousJSON",
+          "command": "go test -race ./pkg/escrowcall -run '^TestVerifyBeforeEgressRejectsMutationAndAmbiguousJSON$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/escrowcall/wire_test.go",
+          "ref": "TestPrepareRequestBindsActualRoutingAndRebuildsExactBody",
+          "command": "go test -race ./pkg/escrowcall -run '^TestPrepareRequestBindsActualRoutingAndRebuildsExactBody$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-74",
+      "number": 74,
+      "title": "Compute commitment in Solidity module/escrow, Go, and TypeScript; mutate domain/chain/escrow/field",
+      "expectation": "Identical valid digest; every mutation fails; routine API/mutability compiles as specified",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "schemas_vectors"
+      ],
+      "invariants": [
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/executioncommitment/commitment_test.go",
+          "ref": "TestPublishedVectorAndIntegrityManifest",
+          "command": "go test -race ./pkg/executioncommitment -run '^TestPublishedVectorAndIntegrityManifest$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testExecutionCommitmentMatchesPublishedGoGoldenVector",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testExecutionCommitmentMatchesPublishedGoGoldenVector$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-75",
+      "number": 75,
+      "title": "Crash at every prepare→activate→release boundary and retry for each bearer class",
+      "expectation": "No signature bytes release before authoritative registry activation; exact artifact replays; budget never TTL-releases blindly",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "signer",
+      "participants": [
+        "signer",
+        "verifier"
+      ],
+      "invariants": [
+        "INV-R1-R2",
+        "INV-AUTHZ",
+        "INV-IDEMPOTENCY",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpbearer/coordinator_test.go",
+          "ref": "TestCoordinatorRecoversEveryPrepareActivateMirrorAcknowledgeBoundary",
+          "command": "go test -race ./internal/ascpbearer -run '^TestCoordinatorRecoversEveryPrepareActivateMirrorAcknowledgeBoundary$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-76",
+      "number": 76,
+      "title": "Concurrent directory successor proposals, cancellation, activation boundary, and version gaps",
+      "expectation": "At most one live successor; current version is an unbroken unique sequence; gaps/ties/early activation fail",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-D1",
+        "INV-D2",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ServiceDirectory.t.sol",
+          "ref": "testGovernorIsRequiredForApprovalAndCancellationReproposalIsBound",
+          "command": "forge test --match-path contracts/test/ServiceDirectory.t.sol --match-test '^testGovernorIsRequiredForApprovalAndCancellationReproposalIsBound$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-77",
+      "number": 77,
+      "title": "Generate all amended EIP-712/JSON types from the normative appendix in Solidity, Go, and TypeScript",
+      "expectation": "Identical type strings, domain separators, struct hashes, digests, and canonical JSON bytes",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "schemas_vectors",
+      "participants": [
+        "schemas_vectors",
+        "signer"
+      ],
+      "invariants": [
+        "INV-CANONICAL"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    },
+    {
+      "id": "AC-78",
+      "number": 78,
+      "title": "Propose directory version, mutate/reorder/cancel/repropose around Safe approval and delay boundaries",
+      "expectation": "Safe approval binds immutable `proposalHash`; stale predecessor, changed URI/hash/class/workflow, early activation, and parallel successor all revert",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-D1",
+        "INV-D2",
+        "INV-ADM1",
+        "INV-AUTHZ",
+        "INV-CANONICAL",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ServiceDirectory.t.sol",
+          "ref": "testDirectoryProposalAndCancellationRejectWorkflowPayloadSubstitution",
+          "command": "forge test --match-path contracts/test/ServiceDirectory.t.sol --match-test '^testDirectoryProposalAndCancellationRejectWorkflowPayloadSubstitution$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-79",
+      "number": 79,
+      "title": "Admin signer A→B→A; reuse nonce across epoch, role, contract, chain, selector, and payload",
+      "expectation": "Every stale/cross-scope authorization fails; current exact action succeeds once; registry records terminal outcome",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts"
+      ],
+      "invariants": [
+        "INV-ADM1",
+        "INV-AUTHZ",
+        "INV-IDEMPOTENCY",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/AgentRegistry.t.sol",
+          "ref": "testAdminRotationAtoBtoAMakesOldSignaturePermanentlyInvalid",
+          "command": "forge test --match-path contracts/test/AgentRegistry.t.sol --match-test '^testAdminRotationAtoBtoAMakesOldSignaturePermanentlyInvalid$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/AgentRegistry.t.sol",
+          "ref": "testRegisterRejectsPayloadWorkflowSelectorRoleAndCrossContractMutation",
+          "command": "forge test --match-path contracts/test/AgentRegistry.t.sol --match-test '^testRegisterRejectsPayloadWorkflowSelectorRoleAndCrossContractMutation$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-80",
+      "number": 80,
+      "title": "Official x402 v2 client/server with explicit `escrow-call/1` plugin handles challenge, retry, reorg/error, response",
+      "expectation": "Standard envelopes/headers interoperate; lock transaction and escrow-not-release semantics are unambiguous",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "schemas_vectors",
+      "participants": [
+        "schemas_vectors",
+        "seller_sdk"
+      ],
+      "invariants": [
+        "INV-X402",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/escrowcall/wire_test.go",
+          "ref": "TestPaymentResponseSuccessAndNormativeFailures",
+          "command": "go test -race ./pkg/escrowcall -run '^TestPaymentResponseSuccessAndNormativeFailures$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-81",
+      "number": 81,
+      "title": "Race prepared-handle activation against expiry/recovery for lock, allowance, admin, and verdict",
+      "expectation": "Exactly one terminal handle state; no release without authoritative action record; expired handle never activates",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "signer",
+      "participants": [
+        "signer",
+        "verifier"
+      ],
+      "invariants": [
+        "INV-R1-R2",
+        "INV-AUTHZ",
+        "INV-IDEMPOTENCY",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpbearer/coordinator_test.go",
+          "ref": "TestLedgerPreparedSignerSerializesConcurrentExactPrepare",
+          "command": "go test -race ./internal/ascpbearer -run '^TestLedgerPreparedSignerSerializesConcurrentExactPrepare$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-82",
+      "number": 82,
+      "title": "Verification budget exceeds 120 s and lock is delayed after signer approval",
+      "expectation": "Contract rejects when remaining time is below declared work plus authoritative verification budget",
+      "active": true,
+      "status": "local_evidence",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "signer"
+      ],
+      "invariants": [
+        "INV-M1",
+        "INV-D1",
+        "INV-E1-E5",
+        "INV-CANONICAL"
+      ],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPSpendModule.t.sol",
+          "ref": "testAuthorizationWindowAndCapsAreEnforced",
+          "command": "forge test --match-path contracts/test/ASCPSpendModule.t.sol --match-test '^testAuthorizationWindowAndCapsAreEnforced$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPCallEscrow.t.sol",
+          "ref": "testLockRejectsExpiredOrUnsafeTimingAndDuplicate",
+          "command": "forge test --match-path contracts/test/ASCPCallEscrow.t.sol --match-test '^testLockRejectsExpiredOrUnsafeTimingAndDuplicate$'"
+        }
+      ],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "Direct local executable evidence exists, but the full AC artifact bundle and release-stage proof are not yet complete."
+    },
+    {
+      "id": "AC-83",
+      "number": 83,
+      "title": "Safe action pending, dropped, reorged, mined-revert, or stale after changed preconditions",
+      "expectation": "Only byte-identical relay-safe cases auto-retry; owner re-sign/reapproval occurs when Safe nonce or authorization changes",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "contracts",
+      "participants": [
+        "contracts",
+        "controlplane",
+        "keeper_chain"
+      ],
+      "invariants": [
+        "INV-C1",
+        "INV-E1-E5",
+        "INV-CANONICAL",
+        "INV-AVAILABILITY"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    },
+    {
+      "id": "AC-84",
+      "number": 84,
+      "title": "Publisher claims two replicas while one is missing, stale, mutable, or hash-wrong",
+      "expectation": "Independent approval-side proof fails; governor cannot approve; proposal never activates",
+      "active": true,
+      "status": "external_required",
+      "primaryOwner": "keeper_chain",
+      "participants": [
+        "keeper_chain",
+        "verifier",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-V1",
+        "INV-D1",
+        "INV-D2",
+        "INV-RC1",
+        "INV-OPERATIONS",
+        "INV-AVAILABILITY",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "signed-external-evidence",
+        "event-chain-export",
+        "manifest-hash"
+      ],
+      "gap": "Requires production-equivalent Base testnet, independent-provider, ceremony, or other external evidence not present in the repository."
+    },
+    {
+      "id": "AC-85",
+      "number": 85,
+      "title": "Agent invokes every MCP tool and attempts owner/admin parameters",
+      "expectation": "Credential-derived identity and tool scopes hold; no approval, signer, keeper, evidence, or admin boundary is bypassed",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "mcp_base_adapter",
+      "participants": [
+        "mcp_base_adapter",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-MCP1",
+        "INV-AUTHZ",
+        "INV-ISOLATION",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    },
+    {
+      "id": "AC-86",
+      "number": 86,
+      "title": "Seller quote/content/tool result contains prompt injection, fake tool calls, secrets, or destination changes",
+      "expectation": "Content remains data; policy, payee, calldata, system instructions, logs, and approval UI are unchanged or safely escaped",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "mcp_base_adapter",
+      "participants": [
+        "mcp_base_adapter",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-AUTHZ",
+        "INV-X402",
+        "INV-ISOLATION",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    },
+    {
+      "id": "AC-87",
+      "number": 87,
+      "title": "ASCP MCP/Base adapter/official Base MCP requests signing, arbitrary send, swap, contract call, private key, allowance, x402 write, unknown tool, or single-provider override",
+      "expectation": "Production capability firewall denies all; only pinned read tools work; dependency-graph tests fail if a write path is planted",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "mcp_base_adapter",
+      "participants": [
+        "mcp_base_adapter",
+        "dashboard_ops"
+      ],
+      "invariants": [
+        "INV-MCP1",
+        "INV-AUTHZ",
+        "INV-ISOLATION",
+        "INV-UI-EVIDENCE"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    },
+    {
+      "id": "AC-88",
+      "number": 88,
+      "title": "Submit the same intent concurrently through REST and MCP; lose responses and restart",
+      "expectation": "One operation, quote nonce, reservation, authorization, and economic effect; both surfaces replay the same outcome",
+      "active": true,
+      "status": "missing",
+      "primaryOwner": "controlplane",
+      "participants": [
+        "controlplane",
+        "mcp_base_adapter"
+      ],
+      "invariants": [
+        "INV-MCP1",
+        "INV-IDEMPOTENCY",
+        "INV-X402",
+        "INV-CANONICAL"
+      ],
+      "evidence": [],
+      "requiredArtifacts": [
+        "executable-evidence",
+        "evidence-report",
+        "manifest-hash"
+      ],
+      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+    }
+  ]
+}

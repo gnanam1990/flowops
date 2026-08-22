@@ -218,6 +218,9 @@ contract AgentRegistryTest is Test {
     }
 
     function testGoSolidityAdminAuthorizationGoldenVector() public {
+        assertEq(
+            registry.TYPED_DATA_MANIFEST_SHA256(), 0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5
+        );
         address fixedRegistry = 0x1111111111111111111111111111111111111111;
         vm.etch(fixedRegistry, address(registry).code);
         vm.chainId(8453);
