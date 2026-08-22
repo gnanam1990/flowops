@@ -3,6 +3,7 @@ package controlapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpworkflow"
+	"github.com/gnanam1990/flowops/pkg/governanceworkflow"
 )
 
 func TestASCPWorkflowAPIDualControlStepUpAndTenantBoundary(t *testing.T) {
@@ -29,7 +31,8 @@ func TestASCPWorkflowAPIDualControlStepUpAndTenantBoundary(t *testing.T) {
 		store.principals[TokenDigest(workflowToken(token))] = principal
 	}
 	store.agents[agentKey("org_a", "agent_a")] = Agent{OrganizationID: "org_a", ID: "agent_a", CustomerID: "customer_a", Name: "Agent", Status: AgentActive, UpdatedAt: now}
-	workflowService, err := ascpworkflow.New(ascpworkflow.NewMemoryStore(), nil, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{4}, 64)))
+	workflowService, err := ascpworkflow.New(ascpworkflow.NewMemoryStore(), nil, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{4}, 64)),
+		ascpworkflow.WithGovernanceActionGate(testGovernanceActionGate{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +41,14 @@ func TestASCPWorkflowAPIDualControlStepUpAndTenantBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	create := workflowRequest(t, server, http.MethodPost, "/v1/workflows", "seller", "create_1", `{"kind":"PAYOUT_CHANGE","payloadHash":"0x`+strings.Repeat("1", 64)+`"}`)
+	missingRequest := payoutWorkflowCreateRequest(0)
+	missingRequest.WorkflowID = ""
+	missingID := workflowRequest(t, server, http.MethodPost, "/v1/workflows", "seller", "missing_id", workflowCreateJSON(t, missingRequest))
+	if missingID.Code != http.StatusBadRequest || !strings.Contains(missingID.Body.String(), "INVALID_WORKFLOW") {
+		t.Fatalf("missing workflow ID=%d %s", missingID.Code, missingID.Body.String())
+	}
+	createBody := workflowCreateJSON(t, payoutWorkflowCreateRequest(2))
+	create := workflowRequest(t, server, http.MethodPost, "/v1/workflows", "seller", "create_1", createBody)
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create=%d %s", create.Code, create.Body.String())
 	}
@@ -76,9 +86,25 @@ func TestASCPWorkflowAPIDualControlStepUpAndTenantBoundary(t *testing.T) {
 	if approved.Code != http.StatusOK || !strings.Contains(approved.Body.String(), `"state":"APPROVED_PENDING_CHAIN"`) {
 		t.Fatalf("approve=%d %s", approved.Code, approved.Body.String())
 	}
-	unknown := workflowRequest(t, server, http.MethodPost, "/v1/workflows", "seller", "unknown_1", `{"kind":"PAYOUT_CHANGE","payloadHash":"0x`+strings.Repeat("1", 64)+`","mutablePayload":{}}`)
+	unknownBody := strings.TrimSuffix(createBody, "}") + `,"mutablePayload":{}}`
+	unknown := workflowRequest(t, server, http.MethodPost, "/v1/workflows", "seller", "unknown_1", unknownBody)
 	if unknown.Code != http.StatusBadRequest {
 		t.Fatalf("unknown JSON=%d %s", unknown.Code, unknown.Body.String())
+	}
+	ungatedService, err := ascpworkflow.New(ascpworkflow.NewMemoryStore(), nil, func() time.Time { return now },
+		bytes.NewReader(bytes.Repeat([]byte{5}, 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ungatedServer, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain,
+		Clock: func() time.Time { return now }, ASCPWorkflows: ungatedService})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ungated := workflowRequest(t, ungatedServer, http.MethodPost, "/v1/workflows", "seller", "ungated_1",
+		workflowCreateJSON(t, payoutWorkflowCreateRequest(22)))
+	if ungated.Code != http.StatusServiceUnavailable || !strings.Contains(ungated.Body.String(), "GOVERNANCE_TARGETS_UNAVAILABLE") {
+		t.Fatalf("ungated workflow=%d %s", ungated.Code, ungated.Body.String())
 	}
 }
 
@@ -95,3 +121,51 @@ func workflowRequest(t *testing.T, handler http.Handler, method, path, token, ke
 }
 
 func workflowToken(name string) string { return "workflow_test_" + name + "_000000000000000000000000" }
+
+type testGovernanceActionGate struct{}
+
+func (testGovernanceActionGate) ValidateGovernanceAction(governanceworkflow.BoundAction) error {
+	return nil
+}
+
+func payoutWorkflowCreateRequest(id uint64) ascpworkflow.CreateRequest {
+	hash := func(value uint64) string { return "0x" + fmt.Sprintf("%064x", value) }
+	return ascpworkflow.CreateRequest{
+		Kind: ascpworkflow.PayoutChange, WorkflowID: hash(id),
+		Action: &governanceworkflow.Action{
+			Type: governanceworkflow.ActionDirectoryApprove, ChainID: 84532,
+			ContractAddress: "0x1111111111111111111111111111111111111111",
+			DirectoryApprove: &governanceworkflow.DirectoryApproveAction{
+				Proposal: governanceworkflow.DirectoryProposal{
+					VersionID: 2, PreviousVersion: 1, PreviousRoot: hash(10), NewRoot: hash(11),
+					BlobContentHash: hash(12), LocationsHash: hash(13), ChangeClass: 2,
+					RequestedActivatesAt: 1_800_100_000,
+				},
+				ProposerNonce: "14",
+			},
+		},
+	}
+}
+
+func signerCapsWorkflowCreateRequest(id uint64) ascpworkflow.CreateRequest {
+	return ascpworkflow.CreateRequest{
+		Kind: ascpworkflow.SignerCaps, WorkflowID: fmt.Sprintf("0x%064x", id),
+		Action: &governanceworkflow.Action{
+			Type: governanceworkflow.ActionSpendCaps, ChainID: 84532,
+			ContractAddress: "0x2222222222222222222222222222222222222222",
+			SpendCaps: &governanceworkflow.SpendCapsAction{
+				Current: governanceworkflow.Caps{PerTransaction: "100", PerDay: "200", AllowanceCeiling: "300"},
+				Next:    governanceworkflow.Caps{PerTransaction: "101", PerDay: "201", AllowanceCeiling: "301"},
+			},
+		},
+	}
+}
+
+func workflowCreateJSON(t *testing.T, request ascpworkflow.CreateRequest) string {
+	t.Helper()
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}

@@ -68,7 +68,7 @@ The API service requires:
 | `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |
 | `FLOWOPS_ASCP_CALL_ESCROW_CONTRACT` | Optional canonical reviewed ASCPCallEscrow address; requires the complete governance-observer tuple |
 | `FLOWOPS_ASCP_SPEND_MODULE_CONTRACT` | Optional canonical reviewed ASCPSpendModule address; requires the complete governance-observer tuple |
-| `FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK` | Positive canonical decimal earliest deployment block across the three governance contracts; enables the internal receipt worker only with all addresses |
+| `FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK` | Positive canonical decimal earliest deployment block across the three governance contracts; enables both the chain-action creation allowlist and internal receipt worker only with all addresses |
 | `FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS` | Canonical recovered address of the dedicated platform adaptation key; enables signed grants only with the complete tuple below |
 | `FLOWOPS_ASCP_ADAPTATION_KEY_ID` | Canonical HSM key identifier dedicated to adaptation grants |
 | `FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH` | Positive canonical HSM key epoch |

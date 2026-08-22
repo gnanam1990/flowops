@@ -37,6 +37,16 @@ values. This makes an approval stale if verifier state, authorizer epoch,
 allowlist code hash, active caps, or pause state changes before Safe execution.
 Verifier additions also bind any already-pending verifier epoch and activation
 time. A second cap schedule is rejected while one is pending.
+Directory approval additionally includes the proposal's `proposerNonce`. The
+server recomputes `ServiceDirectory.hashProposal` from the proposal domain,
+Base chain, directory address, exact workflow ID/payload hash, every proposal
+field, and that nonce. The executable `approveVersion` calldata therefore
+cannot select a different stored proposal hash.
+
+Persisted JSONB is re-decoded under the closed action schema and rebound at
+approval, execution-command creation, and receipt observation. Key ordering and
+whitespace changes are harmless; unknown fields, mismatched payload/calldata,
+extra variants, and explicit-null ambiguity fail closed.
 
 ## Receipt boundary
 

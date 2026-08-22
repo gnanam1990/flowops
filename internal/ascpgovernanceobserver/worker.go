@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpworkflow"
 )
 
 type PendingStore interface {
-	Pending(context.Context, int) ([]ascpworkflow.Workflow, error)
+	Pending(context.Context, int, string) ([]ascpworkflow.Workflow, error)
 }
 
 type WorkflowCompleter interface {
 	ObserveAndComplete(context.Context, string, string) (ascpworkflow.Workflow, error)
+	RequireReapproval(context.Context, string, string, ascpworkflow.TerminalReason) (ascpworkflow.Workflow, error)
 }
 
 type WorkerConfig struct {
@@ -35,6 +37,8 @@ type Worker struct {
 	store     PendingStore
 	completer WorkflowCompleter
 	config    WorkerConfig
+	cycleMu   sync.Mutex
+	cursor    string
 }
 
 func NewWorker(store PendingStore, completer WorkflowCompleter, config WorkerConfig) (*Worker, error) {
@@ -64,21 +68,33 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) RunOnce(ctx context.Context) (WorkerCycle, error) {
+	w.cycleMu.Lock()
+	defer w.cycleMu.Unlock()
 	cycle := WorkerCycle{}
-	pending, err := w.store.Pending(ctx, w.config.BatchSize+1)
+	pending, err := w.store.Pending(ctx, w.config.BatchSize, w.cursor)
 	if err != nil {
 		return cycle, err
 	}
-	if len(pending) > w.config.BatchSize {
-		return cycle, errors.New("governance workflow observer capacity exceeded")
+	if len(pending) == 0 && w.cursor != "" {
+		w.cursor = ""
+		pending, err = w.store.Pending(ctx, w.config.BatchSize, "")
+		if err != nil {
+			return cycle, err
+		}
 	}
 	cycle.Pending = len(pending)
+	if len(pending) > 0 {
+		w.cursor = pending[len(pending)-1].WorkflowID
+	}
 	for _, workflow := range pending {
 		queryCtx, cancel := context.WithTimeout(ctx, w.config.QueryTimeout)
 		_, err := w.completer.ObserveAndComplete(queryCtx, workflow.OrganizationID, workflow.WorkflowID)
 		cancel()
 		if err != nil {
-			if errors.Is(err, ErrReceiptRejected) || errors.Is(err, ErrObserverDisagreement) {
+			if errors.Is(err, ErrReceiptRejected) {
+				if _, terminalErr := w.completer.RequireReapproval(ctx, workflow.OrganizationID, workflow.WorkflowID, ascpworkflow.ReceiptRejected); terminalErr != nil {
+					return cycle, fmt.Errorf("terminalize rejected governance workflow %s: %w", workflow.WorkflowID, terminalErr)
+				}
 				cycle.Rejected++
 				continue
 			}
@@ -109,5 +125,5 @@ func (w *Worker) runCycle(ctx context.Context) error {
 
 func deferred(err error) bool {
 	return errors.Is(err, ErrReceiptPending) || errors.Is(err, ErrQuorumUnavailable) ||
-		errors.Is(err, ErrUnsafeFinality)
+		errors.Is(err, ErrUnsafeFinality) || errors.Is(err, ErrObserverDisagreement)
 }

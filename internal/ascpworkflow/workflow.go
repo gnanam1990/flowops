@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/pkg/envelope"
+	"github.com/gnanam1990/flowops/pkg/governanceworkflow"
 )
 
 const (
 	ProposalTTL                  = 24 * time.Hour
 	MaximumStepUpLife            = 5 * time.Minute
 	GovernanceWorkflowBoundTopic = "0x71840a8df3cf7e14c302ff72b4fd1c651a2845389dfb0a4fdd884a2ffb104bfe"
+	GovernanceExecutionVersion   = "ASCP_GOVERNANCE_EXECUTION_V1"
 )
 
 var (
@@ -32,6 +34,7 @@ var (
 	ErrIdempotencyConflict   = errors.New("workflow idempotency key names different input")
 	ErrStateConflict         = errors.New("proposal workflow state conflicts with the requested transition")
 	ErrCompletionUnavailable = errors.New("workflow completion observer is unavailable")
+	ErrGovernanceUnavailable = errors.New("governance action targets are unavailable")
 	ErrInvalidReceipt        = errors.New("workflow completion receipt is invalid")
 	ErrReceiptOwned          = errors.New("workflow completion receipt is already owned")
 )
@@ -54,9 +57,26 @@ type State string
 const (
 	Proposed             State = "PROPOSED"
 	ApprovedPendingChain State = "APPROVED_PENDING_CHAIN"
-	Approved             State = "APPROVED"
+	Submitted            State = "SUBMITTED"
+	Confirmed            State = "CONFIRMED"
+	Finalized            State = "FINALIZED"
+	Reverted             State = "REVERTED"
+	Reorged              State = "REORGED"
+	TimedOut             State = "TIMED_OUT"
+	RequiresReapproval   State = "REQUIRES_REAPPROVAL"
 	Cancelled            State = "CANCELLED"
 	Expired              State = "EXPIRED"
+)
+
+type TerminalReason string
+
+const (
+	ReceiptRejected     TerminalReason = "RECEIPT_REJECTED"
+	MinedRevert         TerminalReason = "MINED_REVERT"
+	ReorgDetected       TerminalReason = "REORG_DETECTED"
+	SubmissionTimeout   TerminalReason = "SUBMISSION_TIMEOUT"
+	SafeNonceConflict   TerminalReason = "SAFE_NONCE_CONFLICT"
+	PreconditionChanged TerminalReason = "PRECONDITION_CHANGED"
 )
 
 type Role string
@@ -81,6 +101,11 @@ type Workflow struct {
 	OrganizationID      string          `json:"organizationId"`
 	Kind                Kind            `json:"kind"`
 	PayloadHash         string          `json:"payloadHash"`
+	ChainID             uint64          `json:"chainId,omitempty"`
+	ContractAddress     string          `json:"contractAddress,omitempty"`
+	FunctionSelector    string          `json:"functionSelector,omitempty"`
+	Calldata            string          `json:"calldata,omitempty"`
+	GovernanceAction    json.RawMessage `json:"governanceAction,omitempty"`
 	ProposedBy          string          `json:"proposedBy"`
 	ProposerRole        Role            `json:"proposerRole"`
 	State               State           `json:"state"`
@@ -96,15 +121,45 @@ type Workflow struct {
 	CancelledAt         int64           `json:"cancelledAt,omitempty"`
 	ExpiredAt           int64           `json:"expiredAt,omitempty"`
 	ExpiresAt           int64           `json:"expiresAt"`
+	SubmissionTxHash    string          `json:"submissionTransactionHash,omitempty"`
+	SubmittedAt         int64           `json:"submittedAt,omitempty"`
+	ConfirmedAt         int64           `json:"confirmedAt,omitempty"`
 	CompletionReceipt   json.RawMessage `json:"completionReceipt,omitempty"`
 	CompletionDigest    string          `json:"completionDigest,omitempty"`
-	CompletedAt         int64           `json:"completedAt,omitempty"`
+	FinalizedAt         int64           `json:"finalizedAt,omitempty"`
+	TerminalReason      TerminalReason  `json:"terminalReason,omitempty"`
+	TerminalAt          int64           `json:"terminalAt,omitempty"`
 	Replayed            bool            `json:"replayed"`
 }
 
+// GovernanceExecutionCommand is the immutable, versioned command written in
+// the same transaction as dual-control approval. It contains only authority
+// and exact execution material; a relayer must not reconstruct calldata from
+// mutable application state.
+type GovernanceExecutionCommand struct {
+	Version            string          `json:"version"`
+	WorkflowID         string          `json:"workflowId"`
+	OrganizationID     string          `json:"organizationId"`
+	Kind               Kind            `json:"kind"`
+	PayloadHash        string          `json:"payloadHash"`
+	ChainID            uint64          `json:"chainId"`
+	ContractAddress    string          `json:"contractAddress"`
+	FunctionSelector   string          `json:"functionSelector"`
+	Calldata           string          `json:"calldata"`
+	Value              string          `json:"value"`
+	Operation          string          `json:"operation"`
+	GovernanceAction   json.RawMessage `json:"governanceAction"`
+	ApprovedBy         string          `json:"approvedBy"`
+	ApprovedAt         int64           `json:"approvedAt"`
+	ExecuteAfter       int64           `json:"executeAfter"`
+	ApprovalActionHash string          `json:"approvalActionHash"`
+}
+
 type CreateRequest struct {
-	Kind        Kind   `json:"kind"`
-	PayloadHash string `json:"payloadHash"`
+	Kind        Kind                       `json:"kind"`
+	WorkflowID  string                     `json:"workflowId,omitempty"`
+	PayloadHash string                     `json:"payloadHash,omitempty"`
+	Action      *governanceworkflow.Action `json:"action,omitempty"`
 }
 
 type CompletionReceipt struct {
@@ -132,25 +187,51 @@ type CompletionObserver interface {
 	ObserveWorkflowCompletion(context.Context, Workflow) (CompletionReceipt, error)
 }
 
+// GovernanceActionGate authorizes the exact server-derived chain, contract,
+// kind, and selector before a proposal can be stored. Receipt validation is a
+// later independent boundary and cannot make an unsafe approval command safe.
+type GovernanceActionGate interface {
+	ValidateGovernanceAction(governanceworkflow.BoundAction) error
+}
+
+type Option func(*Service) error
+
+func WithGovernanceActionGate(gate GovernanceActionGate) Option {
+	return func(service *Service) error {
+		if gate == nil {
+			return errors.New("governance action gate is required")
+		}
+		if service.actionGate != nil {
+			return errors.New("governance action gate is already configured")
+		}
+		service.actionGate = gate
+		return nil
+	}
+}
+
 type Store interface {
 	ReplayCreate(context.Context, Actor, string, string) (Workflow, bool, error)
 	Create(context.Context, Workflow, string, string) (Workflow, bool, error)
 	Get(context.Context, string, string) (Workflow, error)
-	Pending(context.Context, int) ([]Workflow, error)
+	Pending(context.Context, int, string) ([]Workflow, error)
 	Approve(context.Context, Actor, string, string, string, time.Time) (Workflow, bool, error)
 	Cancel(context.Context, Actor, string, string, string, time.Time) (Workflow, bool, error)
 	Expire(context.Context, string, string, time.Time) (Workflow, bool, error)
+	Submit(context.Context, string, string, string, time.Time) (Workflow, bool, error)
+	Confirm(context.Context, string, string, string, time.Time) (Workflow, bool, error)
 	Complete(context.Context, string, string, CompletionReceipt, string, []byte, time.Time) (Workflow, bool, error)
+	FailChain(context.Context, string, string, State, TerminalReason, time.Time) (Workflow, bool, error)
 }
 
 type Service struct {
-	store    Store
-	observer CompletionObserver
-	clock    func() time.Time
-	newID    func() (string, error)
+	store      Store
+	observer   CompletionObserver
+	actionGate GovernanceActionGate
+	clock      func() time.Time
+	newID      func() (string, error)
 }
 
-func New(store Store, observer CompletionObserver, clock func() time.Time, random io.Reader) (*Service, error) {
+func New(store Store, observer CompletionObserver, clock func() time.Time, random io.Reader, options ...Option) (*Service, error) {
 	if store == nil {
 		return nil, errors.New("durable workflow store is required")
 	}
@@ -160,36 +241,88 @@ func New(store Store, observer CompletionObserver, clock func() time.Time, rando
 	if random == nil {
 		random = rand.Reader
 	}
-	return &Service{store: store, observer: observer, clock: clock, newID: workflowIDSource(random)}, nil
+	service := &Service{store: store, observer: observer, clock: clock, newID: workflowIDSource(random)}
+	if gate, ok := observer.(GovernanceActionGate); ok {
+		service.actionGate = gate
+	}
+	for _, option := range options {
+		if option == nil {
+			return nil, errors.New("proposal workflow option is nil")
+		}
+		if err := option(service); err != nil {
+			return nil, err
+		}
+	}
+	return service, nil
 }
 
 func (s *Service) Create(ctx context.Context, actor Actor, idempotencyKey string, request CreateRequest) (Workflow, error) {
 	observedAt := s.clock().UTC()
-	if err := validateActor(actor, observedAt, true); err != nil {
+	if err := validateActor(actor, observedAt, false); err != nil {
 		return Workflow{}, err
 	}
 	if !canPropose(request.Kind, actor.Role) {
 		return Workflow{}, ErrForbiddenRole
 	}
-	if !hash(request.PayloadHash) || !idempotency(idempotencyKey) {
+	chainBacked := requiresChainReceipt(request.Kind)
+	if !idempotency(idempotencyKey) || (chainBacked && (!hash(request.WorkflowID) || request.PayloadHash != "" || request.Action == nil)) ||
+		(!chainBacked && (request.WorkflowID != "" || request.Action != nil || !hash(request.PayloadHash))) {
 		return Workflow{}, ErrInvalidWorkflow
 	}
-	inputHash := actionHash("CREATE", actor, "", idempotencyKey, request)
+	var bound governanceworkflow.BoundAction
+	if chainBacked {
+		var err error
+		bound, err = governanceworkflow.BindAction(request.WorkflowID, *request.Action)
+		if err != nil || bound.WorkflowKind != string(request.Kind) {
+			return Workflow{}, ErrInvalidWorkflow
+		}
+		request.Action = nil
+	}
+	createInput := struct {
+		Kind        Kind                            `json:"kind"`
+		WorkflowID  string                          `json:"workflowId,omitempty"`
+		PayloadHash string                          `json:"payloadHash,omitempty"`
+		BoundAction *governanceworkflow.BoundAction `json:"boundAction,omitempty"`
+	}{Kind: request.Kind, WorkflowID: request.WorkflowID, PayloadHash: request.PayloadHash}
+	if chainBacked {
+		createInput.BoundAction = &bound
+	}
+	inputHash := actionHash("CREATE", actor, "", idempotencyKey, createInput)
 	if stored, replayed, err := s.store.ReplayCreate(ctx, actor, idempotencyKey, inputHash); err != nil || replayed {
 		if replayed {
 			stored.Replayed = true
 		}
 		return stored, err
 	}
-	id, err := s.newID()
-	if err != nil {
+	if err := validateActor(actor, observedAt, true); err != nil {
 		return Workflow{}, err
+	}
+	if chainBacked {
+		if s.actionGate == nil {
+			return Workflow{}, ErrGovernanceUnavailable
+		}
+		if err := s.actionGate.ValidateGovernanceAction(bound); err != nil {
+			return Workflow{}, ErrInvalidWorkflow
+		}
+	}
+	id := request.WorkflowID
+	if !requiresChainReceipt(request.Kind) {
+		var err error
+		id, err = s.newID()
+		if err != nil {
+			return Workflow{}, err
+		}
 	}
 	now := observedAt.Truncate(time.Second)
 	workflow := Workflow{
 		WorkflowID: id, OrganizationID: actor.OrganizationID, Kind: request.Kind, PayloadHash: request.PayloadHash,
 		ProposedBy: actor.PrincipalID, ProposerRole: actor.Role, State: Proposed,
 		ProposerStepUpAt: actor.StepUpAt.UTC().Unix(), ProposerStepUpUntil: actor.StepUpUntil.UTC().Unix(), ProposedAt: now.Unix(), ExpiresAt: now.Add(ProposalTTL).Unix(),
+	}
+	if chainBacked {
+		workflow.PayloadHash, workflow.ChainID, workflow.ContractAddress = bound.PayloadHash, bound.ChainID, bound.ContractAddress
+		workflow.FunctionSelector, workflow.Calldata = bound.FunctionSelector, bound.Calldata
+		workflow.GovernanceAction = append(json.RawMessage(nil), bound.CanonicalAction...)
 	}
 	stored, replayed, err := s.store.Create(ctx, workflow, idempotencyKey, inputHash)
 	if err != nil {
@@ -210,15 +343,41 @@ func (s *Service) Get(ctx context.Context, actor Actor, workflowID string) (Work
 
 func (s *Service) Approve(ctx context.Context, actor Actor, workflowID, idempotencyKey string) (Workflow, error) {
 	observedAt := s.clock().UTC()
-	if err := validateActor(actor, observedAt, true); err != nil {
+	if err := validateActor(actor, observedAt, false); err != nil {
 		return Workflow{}, err
 	}
-	now := observedAt.Truncate(time.Second)
 	if !hash(workflowID) || !idempotency(idempotencyKey) {
 		return Workflow{}, ErrInvalidWorkflow
 	}
 	inputHash := actionHash("APPROVE", actor, workflowID, idempotencyKey, struct{}{})
-	workflow, replayed, err := s.store.Approve(ctx, actor, workflowID, idempotencyKey, inputHash, now)
+	current, err := s.store.Get(ctx, actor.OrganizationID, workflowID)
+	if err != nil {
+		return Workflow{}, err
+	}
+	if current.State != Proposed {
+		workflow, replayed, err := s.store.Approve(ctx, actor, workflowID, idempotencyKey, inputHash, observedAt.Truncate(time.Second))
+		if err != nil {
+			return Workflow{}, err
+		}
+		workflow.Replayed = replayed
+		return workflow, nil
+	}
+	if err := validateActor(actor, observedAt, true); err != nil {
+		return Workflow{}, err
+	}
+	if current.State == Proposed && requiresChainReceipt(current.Kind) {
+		bound, err := boundActionForWorkflow(current)
+		if err != nil {
+			return Workflow{}, ErrInvalidWorkflow
+		}
+		if s.actionGate == nil {
+			return Workflow{}, ErrGovernanceUnavailable
+		}
+		if err := s.actionGate.ValidateGovernanceAction(bound); err != nil {
+			return Workflow{}, ErrInvalidWorkflow
+		}
+	}
+	workflow, replayed, err := s.store.Approve(ctx, actor, workflowID, idempotencyKey, inputHash, observedAt.Truncate(time.Second))
 	if err != nil {
 		return Workflow{}, err
 	}
@@ -228,15 +387,51 @@ func (s *Service) Approve(ctx context.Context, actor Actor, workflowID, idempote
 
 func (s *Service) Cancel(ctx context.Context, actor Actor, workflowID, idempotencyKey string) (Workflow, error) {
 	observedAt := s.clock().UTC()
-	if err := validateActor(actor, observedAt, true); err != nil {
+	if err := validateActor(actor, observedAt, false); err != nil {
 		return Workflow{}, err
 	}
-	now := observedAt.Truncate(time.Second)
 	if !hash(workflowID) || !idempotency(idempotencyKey) {
 		return Workflow{}, ErrInvalidWorkflow
 	}
 	inputHash := actionHash("CANCEL", actor, workflowID, idempotencyKey, struct{}{})
-	workflow, replayed, err := s.store.Cancel(ctx, actor, workflowID, idempotencyKey, inputHash, now)
+	current, err := s.store.Get(ctx, actor.OrganizationID, workflowID)
+	if err != nil {
+		return Workflow{}, err
+	}
+	if current.State == Proposed {
+		if err := validateActor(actor, observedAt, true); err != nil {
+			return Workflow{}, err
+		}
+	}
+	workflow, replayed, err := s.store.Cancel(ctx, actor, workflowID, idempotencyKey, inputHash, observedAt.Truncate(time.Second))
+	if err != nil {
+		return Workflow{}, err
+	}
+	workflow.Replayed = replayed
+	return workflow, nil
+}
+
+// RecordSubmission is an internal relayer boundary. It records the exact
+// broadcast transaction hash before the process may report submission.
+func (s *Service) RecordSubmission(ctx context.Context, organizationID, workflowID, transactionHash string) (Workflow, error) {
+	if !identifier(organizationID) || !hash(workflowID) || !hash(transactionHash) {
+		return Workflow{}, ErrInvalidWorkflow
+	}
+	workflow, replayed, err := s.store.Submit(ctx, organizationID, workflowID, transactionHash, s.clock().UTC().Truncate(time.Second))
+	if err != nil {
+		return Workflow{}, err
+	}
+	workflow.Replayed = replayed
+	return workflow, nil
+}
+
+// RecordConfirmation is an internal reconciler boundary. Finalization still
+// requires the independent canonical receipt observer.
+func (s *Service) RecordConfirmation(ctx context.Context, organizationID, workflowID, transactionHash string) (Workflow, error) {
+	if !identifier(organizationID) || !hash(workflowID) || !hash(transactionHash) {
+		return Workflow{}, ErrInvalidWorkflow
+	}
+	workflow, replayed, err := s.store.Confirm(ctx, organizationID, workflowID, transactionHash, s.clock().UTC().Truncate(time.Second))
 	if err != nil {
 		return Workflow{}, err
 	}
@@ -258,11 +453,11 @@ func (s *Service) ObserveAndComplete(ctx context.Context, organizationID, workfl
 	if err != nil {
 		return Workflow{}, err
 	}
-	if workflow.State == Approved && workflow.CompletionDigest != "" {
+	if workflow.State == Finalized && workflow.CompletionDigest != "" {
 		workflow.Replayed = true
 		return workflow, nil
 	}
-	if workflow.State != ApprovedPendingChain {
+	if workflow.State != ApprovedPendingChain && workflow.State != Submitted && workflow.State != Confirmed {
 		return Workflow{}, ErrStateConflict
 	}
 	receipt, err := s.observer.ObserveWorkflowCompletion(ctx, workflow)
@@ -270,6 +465,7 @@ func (s *Service) ObserveAndComplete(ctx context.Context, organizationID, workfl
 		return Workflow{}, fmt.Errorf("%w: %w", ErrInvalidReceipt, err)
 	}
 	if !validReceipt(receipt) || workflow.WorkflowID != receipt.WorkflowID || workflow.PayloadHash != receipt.PayloadHash ||
+		workflow.ChainID != receipt.ChainID || workflow.ContractAddress != receipt.ContractAddress || workflow.FunctionSelector != receipt.FunctionSelector ||
 		workflow.ApprovedAt <= 0 || receipt.BlockTimestamp <= uint64(workflow.ApprovedAt) {
 		return Workflow{}, ErrInvalidReceipt
 	}
@@ -284,6 +480,42 @@ func (s *Service) ObserveAndComplete(ctx context.Context, organizationID, workfl
 	}
 	stored.Replayed = replayed
 	return stored, nil
+}
+
+// RequireReapproval terminalizes a deterministically rejected chain workflow.
+// It is an internal observer boundary: callers cannot supply arbitrary error
+// strings or move a finalized workflow back into an approval state.
+func (s *Service) RequireReapproval(ctx context.Context, organizationID, workflowID string, reason TerminalReason) (Workflow, error) {
+	return s.RecordChainFailure(ctx, organizationID, workflowID, RequiresReapproval, reason)
+}
+
+// RecordChainFailure moves an in-flight workflow to one explicit side state.
+// Reason/state pairs are closed so raw provider errors never become authority.
+func (s *Service) RecordChainFailure(ctx context.Context, organizationID, workflowID string, state State, reason TerminalReason) (Workflow, error) {
+	if !identifier(organizationID) || !hash(workflowID) || !validChainFailure(state, reason) {
+		return Workflow{}, ErrInvalidWorkflow
+	}
+	workflow, replayed, err := s.store.FailChain(ctx, organizationID, workflowID, state, reason, s.clock().UTC().Truncate(time.Second))
+	if err != nil {
+		return Workflow{}, err
+	}
+	workflow.Replayed = replayed
+	return workflow, nil
+}
+
+func validChainFailure(state State, reason TerminalReason) bool {
+	switch state {
+	case Reverted:
+		return reason == MinedRevert
+	case Reorged:
+		return reason == ReorgDetected
+	case TimedOut:
+		return reason == SubmissionTimeout
+	case RequiresReapproval:
+		return reason == ReceiptRejected || reason == SafeNonceConflict || reason == PreconditionChanged
+	default:
+		return false
+	}
 }
 
 func validateActor(actor Actor, now time.Time, requireStepUp bool) error {
@@ -455,4 +687,26 @@ func selector(value string) bool {
 	}
 	decoded, err := hex.DecodeString(value[2:])
 	return err == nil && len(decoded) == 4
+}
+
+func governanceCalldata(value, functionSelector string) bool {
+	if len(value) <= 10 || len(value) > 131082 || len(value)%2 != 0 || value != strings.ToLower(value) ||
+		!strings.HasPrefix(value, functionSelector) {
+		return false
+	}
+	decoded, err := hex.DecodeString(value[2:])
+	return err == nil && len(decoded) > 4
+}
+
+func boundActionForWorkflow(workflow Workflow) (governanceworkflow.BoundAction, error) {
+	if !hash(workflow.WorkflowID) || len(workflow.GovernanceAction) == 0 || !json.Valid(workflow.GovernanceAction) {
+		return governanceworkflow.BoundAction{}, ErrInvalidWorkflow
+	}
+	bound, err := governanceworkflow.RebindAction(workflow.WorkflowID, workflow.GovernanceAction)
+	if err != nil || bound.WorkflowKind != string(workflow.Kind) || bound.PayloadHash != workflow.PayloadHash ||
+		bound.ChainID != workflow.ChainID || bound.ContractAddress != workflow.ContractAddress ||
+		bound.FunctionSelector != workflow.FunctionSelector || bound.Calldata != workflow.Calldata {
+		return governanceworkflow.BoundAction{}, ErrInvalidWorkflow
+	}
+	return bound, nil
 }

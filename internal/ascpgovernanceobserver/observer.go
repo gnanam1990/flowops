@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gnanam1990/flowops/internal/ascpworkflow"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/pkg/governanceworkflow"
 )
 
 const governanceWorkflowBoundSignature = "GovernanceWorkflowBound(bytes32,bytes32,bytes4)"
@@ -37,6 +38,25 @@ type Config struct {
 	CallEscrowContract     string
 	SpendModuleContract    string
 	DirectoryContract      string
+}
+
+// ValidateGovernanceAction is the proposal-time allowlist boundary. It uses
+// the same immutable chain, contracts, kinds, and selectors as receipt
+// discovery so an unobservable or arbitrary target never reaches approval.
+func (o *Observer) ValidateGovernanceAction(bound governanceworkflow.BoundAction) error {
+	if o == nil || o.observers == nil || bound.ChainID != o.observers.ChainID() {
+		return ErrUnsupportedWorkflow
+	}
+	rules, err := o.rules(ascpworkflow.Kind(bound.WorkflowKind))
+	if err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		if rule.Contract == bound.ContractAddress && rule.FunctionSelector == bound.FunctionSelector {
+			return nil
+		}
+	}
+	return ErrUnsupportedWorkflow
 }
 
 type Observer struct {
@@ -64,10 +84,10 @@ func New(config Config) (*Observer, error) {
 }
 
 func (o *Observer) ObserveWorkflowCompletion(ctx context.Context, workflow ascpworkflow.Workflow) (ascpworkflow.CompletionReceipt, error) {
-	if workflow.State != ascpworkflow.ApprovedPendingChain || workflow.ApprovedAt <= 0 {
+	if (workflow.State != ascpworkflow.ApprovedPendingChain && workflow.State != ascpworkflow.Submitted && workflow.State != ascpworkflow.Confirmed) || workflow.ApprovedAt <= 0 {
 		return ascpworkflow.CompletionReceipt{}, ErrReceiptRejected
 	}
-	rules, err := o.rules(workflow.Kind)
+	rules, err := o.rulesForWorkflow(workflow)
 	if err != nil {
 		return ascpworkflow.CompletionReceipt{}, err
 	}
@@ -76,8 +96,14 @@ func (o *Observer) ObserveWorkflowCompletion(ctx context.Context, workflow ascpw
 		FromBlock: o.fromBlock, Rules: rules,
 	}
 	result := o.observers.GovernanceReceiptQuorum(ctx, expected)
+	// A quorum that validates one receipt cannot overrule a separate quorum
+	// that deterministically rejects it. That split has no safe canonical
+	// outcome even though only one side can return structured evidence.
+	if len(result.Evidence) >= o.quorum && len(result.InvalidProviders) >= o.quorum {
+		return ascpworkflow.CompletionReceipt{}, ErrObserverDisagreement
+	}
 	if len(result.Evidence) < o.quorum {
-		if len(result.InvalidProviders) > 0 {
+		if len(result.InvalidProviders) >= o.quorum {
 			return ascpworkflow.CompletionReceipt{}, fmt.Errorf("%w: %d provider(s)", ErrReceiptRejected, len(result.InvalidProviders))
 		}
 		if len(result.Failures) > 0 && len(result.PendingProviders) == len(result.Failures) {
@@ -124,6 +150,50 @@ func (o *Observer) ObserveWorkflowCompletion(ctx context.Context, workflow ascpw
 	return receipt, nil
 }
 
+func (o *Observer) rulesForWorkflow(workflow ascpworkflow.Workflow) ([]reconciliation.GovernanceRule, error) {
+	if (workflow.ChainID != 8453 && workflow.ChainID != 84532) || !address(workflow.ContractAddress) ||
+		!executableCalldata(workflow.Calldata, workflow.FunctionSelector) ||
+		len(workflow.GovernanceAction) == 0 || !json.Valid(workflow.GovernanceAction) {
+		return nil, ErrReceiptRejected
+	}
+	bound, err := governanceworkflow.RebindAction(workflow.WorkflowID, workflow.GovernanceAction)
+	if err != nil || bound.WorkflowKind != string(workflow.Kind) || bound.PayloadHash != workflow.PayloadHash ||
+		bound.ChainID != workflow.ChainID || bound.ContractAddress != workflow.ContractAddress ||
+		bound.FunctionSelector != workflow.FunctionSelector || bound.Calldata != workflow.Calldata {
+		return nil, ErrReceiptRejected
+	}
+	var action governanceworkflow.Action
+	if err := json.Unmarshal(bound.CanonicalAction, &action); err != nil {
+		return nil, ErrReceiptRejected
+	}
+	candidates, err := o.rules(workflow.Kind)
+	if err != nil {
+		return nil, err
+	}
+	matched := make([]reconciliation.GovernanceRule, 0, 1)
+	for _, candidate := range candidates {
+		if candidate.Contract == workflow.ContractAddress && candidate.FunctionSelector == workflow.FunctionSelector {
+			if action.Type == governanceworkflow.ActionSpendInvalidateNonces {
+				candidate.ExpectedActionEvents = len(action.SpendInvalidateNonces.Nonces)
+			}
+			matched = append(matched, candidate)
+		}
+	}
+	if len(matched) != 1 {
+		return nil, ErrReceiptRejected
+	}
+	return matched, nil
+}
+
+func executableCalldata(value, selector string) bool {
+	if len(selector) != 10 || len(value) <= 10 || len(value) > 131082 || len(value)%2 != 0 ||
+		value != strings.ToLower(value) || !strings.HasPrefix(value, selector) {
+		return false
+	}
+	decoded, err := hex.DecodeString(value[2:])
+	return err == nil && len(decoded) > 4
+}
+
 // agreeingQuorum accepts one and only one canonical evidence group meeting the
 // configured quorum. A dissenting provider cannot veto a valid quorum, while
 // two independently qualifying groups remain ambiguous and fail closed.
@@ -159,7 +229,7 @@ func (o *Observer) rules(kind ascpworkflow.Kind) ([]reconciliation.GovernanceRul
 	rule := func(contract, function, event string, multiple bool) reconciliation.GovernanceRule {
 		return reconciliation.GovernanceRule{
 			Contract: contract, FunctionSelector: functionSelector(function),
-			ActionEventSignature: eventTopic(event), MultipleActionEvents: multiple,
+			ActionEventSignature: eventTopic(event), MultipleActionEvents: multiple, ExpectedActionEvents: 1,
 		}
 	}
 	switch kind {

@@ -14,6 +14,7 @@ import (
 const (
 	governanceWorkflowBoundTopic = "0x71840a8df3cf7e14c302ff72b4fd1c651a2845389dfb0a4fdd884a2ffb104bfe"
 	governanceLogBlockSpan       = uint64(10_000)
+	governanceMaxLogWindows      = uint64(1_000)
 )
 
 var (
@@ -26,6 +27,7 @@ type GovernanceRule struct {
 	FunctionSelector     string `json:"functionSelector"`
 	ActionEventSignature string `json:"actionEventSignature"`
 	MultipleActionEvents bool   `json:"multipleActionEvents"`
+	ExpectedActionEvents int    `json:"expectedActionEvents,omitempty"`
 }
 
 type GovernanceExpectedReceipt struct {
@@ -72,7 +74,9 @@ func (expected GovernanceExpectedReceipt) Validate() error {
 		key := rule.Contract + "\x00" + rule.FunctionSelector
 		if !addressPattern.MatchString(rule.Contract) || rule.Contract == "0x0000000000000000000000000000000000000000" ||
 			!validFunctionSelector(rule.FunctionSelector) || rule.FunctionSelector == "0x00000000" ||
-			!hashPattern.MatchString(rule.ActionEventSignature) || rule.ActionEventSignature == zeroHash {
+			!hashPattern.MatchString(rule.ActionEventSignature) || rule.ActionEventSignature == zeroHash ||
+			rule.ExpectedActionEvents < 0 || rule.ExpectedActionEvents > 100 ||
+			(!rule.MultipleActionEvents && rule.ExpectedActionEvents > 1) {
 			return errors.New("governance receipt rule is invalid")
 		}
 		if _, duplicate := seen[key]; duplicate {
@@ -149,7 +153,11 @@ func (s *ObserverSet) governanceReceipt(ctx context.Context, provider RPCProvide
 		}
 	}
 	bindings := make([]rpcLog, 0, 1)
-	for _, window := range governanceLogWindows(expected.FromBlock, latest.number) {
+	windows, err := governanceLogWindows(expected.FromBlock, latest.number)
+	if err != nil {
+		return failure, err
+	}
+	for _, window := range windows {
 		filter := map[string]any{
 			"fromBlock": fmt.Sprintf("0x%x", window[0]), "toBlock": fmt.Sprintf("0x%x", window[1]), "address": addresses,
 			"topics": []any{governanceWorkflowBoundTopic, expected.WorkflowID, expected.PayloadHash},
@@ -315,6 +323,9 @@ func verifyGovernanceReceiptLogs(logs []rpcLog, expected GovernanceExpectedRecei
 		return nil, invalidGovernanceReceipt("receipt does not contain an adjacent nonce-invalidation event run")
 	}
 	slices.Reverse(paired)
+	if rule.ExpectedActionEvents > 0 && len(paired) != rule.ExpectedActionEvents {
+		return nil, invalidGovernanceReceipt("nonce-invalidation event count does not match the approved action")
+	}
 	return paired, nil
 }
 
@@ -347,11 +358,15 @@ func invalidGovernanceReceipt(message string) error {
 	return fmt.Errorf("%w: %s", ErrGovernanceReceiptInvalid, message)
 }
 
-func governanceLogWindows(from, to uint64) [][2]uint64 {
+func governanceLogWindows(from, to uint64) ([][2]uint64, error) {
 	if from > to {
-		return nil
+		return nil, nil
 	}
-	windows := make([][2]uint64, 0, (to-from)/governanceLogBlockSpan+1)
+	count := (to-from)/governanceLogBlockSpan + 1
+	if count > governanceMaxLogWindows {
+		return nil, errors.New("governance log scan range exceeds the bounded observer limit")
+	}
+	windows := make([][2]uint64, 0, int(count))
 	for start := from; ; {
 		end := start + governanceLogBlockSpan - 1
 		if end < start || end > to {
@@ -359,7 +374,7 @@ func governanceLogWindows(from, to uint64) [][2]uint64 {
 		}
 		windows = append(windows, [2]uint64{start, end})
 		if end == to {
-			return windows
+			return windows, nil
 		}
 		start = end + 1
 	}

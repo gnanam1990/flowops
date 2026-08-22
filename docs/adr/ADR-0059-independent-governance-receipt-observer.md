@@ -19,7 +19,9 @@ Receipt ownership is claimed atomically with workflow completion and immutable
 event/outbox insertion. The ownership identity is chain ID, transaction hash,
 and binding-log index, allowing precise log identity while preventing one event
 from closing two workflows. RPC disagreement, reorg, missing evidence, or
-unsupported selectors leave the workflow pending.
+insufficient finality leave the workflow pending. A quorum-level deterministic
+receipt rejection moves the row to `REQUIRES_REAPPROVAL`; minority rejection
+does not.
 
 ## Consequences
 
@@ -29,6 +31,10 @@ unsupported selectors leave the workflow pending.
 - Production still requires reviewed deployed runtimes, provider admission,
   production-equivalent Safe/keeper evidence, and independent review.
 - Cycle telemetry distinguishes temporary quorum/finality deferral from
-  deterministic receipt rejection; neither class advances workflow state.
-- The richer submitted/confirmed/finalized execution state machine and its
-  resubmission/reorg recovery remain a separate v3.3 module.
+  deterministic receipt rejection; rejected rows terminalize and cannot starve
+  later bounded batches. A keyset cursor rotates across deferred rows, so a full
+  oldest batch cannot permanently hide newer finalized receipts.
+- Durable `SUBMITTED`, `CONFIRMED`, and `FINALIZED` transitions are implemented,
+  including atomic recovery of missing intermediate transitions. Automated
+  Safe fee-bump/resubmission and post-finalization reorg recovery remain later
+  execution/reconciliation work.

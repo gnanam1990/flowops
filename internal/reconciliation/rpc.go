@@ -36,6 +36,16 @@ type ObserverSet struct {
 	clock     func() time.Time
 }
 
+// ChainID returns the immutable Base domain validated at construction. It is
+// used by higher-level authorization gates so a command cannot be approved for
+// a different Base network and merely fail during later receipt observation.
+func (s *ObserverSet) ChainID() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.chainID
+}
+
 type SnapshotResult struct {
 	Observations []Observation     `json:"observations"`
 	Failures     map[string]string `json:"failures,omitempty"`

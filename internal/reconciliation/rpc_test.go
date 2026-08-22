@@ -147,7 +147,7 @@ func TestGovernanceReceiptPairsOnlyAdjacentNonceInvalidationRun(t *testing.T) {
 	logs := []rpcLog{log(0, actionTopic), log(2, actionTopic), log(3, actionTopic), log(4, governanceWorkflowBoundTopic)}
 	logs[3].Topics = []string{governanceWorkflowBoundTopic, workflowID, payloadHash, "0x12345678" + strings.Repeat("0", 56)}
 	paired, err := verifyGovernanceReceiptLogs(logs, GovernanceExpectedReceipt{WorkflowID: workflowID, PayloadHash: payloadHash},
-		GovernanceRule{Contract: contract, FunctionSelector: "0x12345678", ActionEventSignature: actionTopic, MultipleActionEvents: true},
+		GovernanceRule{Contract: contract, FunctionSelector: "0x12345678", ActionEventSignature: actionTopic, MultipleActionEvents: true, ExpectedActionEvents: 2},
 		txHash, 100, blockHash, 4)
 	if err != nil || !slices.Equal(paired, []uint64{2, 3}) {
 		t.Fatalf("paired nonce invalidations=%v err=%v", paired, err)
@@ -158,16 +158,25 @@ func TestGovernanceReceiptPairsOnlyAdjacentNonceInvalidationRun(t *testing.T) {
 		txHash, 100, blockHash, 4); !errors.Is(err, ErrGovernanceReceiptInvalid) {
 		t.Fatalf("duplicate receipt log index error=%v", err)
 	}
+	if _, err := verifyGovernanceReceiptLogs(logs, GovernanceExpectedReceipt{WorkflowID: workflowID, PayloadHash: payloadHash},
+		GovernanceRule{Contract: contract, FunctionSelector: "0x12345678", ActionEventSignature: actionTopic, MultipleActionEvents: true, ExpectedActionEvents: 3},
+		txHash, 100, blockHash, 4); !errors.Is(err, ErrGovernanceReceiptInvalid) {
+		t.Fatalf("wrong nonce-invalidation count error=%v", err)
+	}
 }
 
 func TestGovernanceLogWindowsAreBoundedAndOverflowSafe(t *testing.T) {
-	if got, want := governanceLogWindows(1, 25_001), [][2]uint64{{1, 10_000}, {10_001, 20_000}, {20_001, 25_001}}; !slices.Equal(got, want) {
+	got, err := governanceLogWindows(1, 25_001)
+	if want := [][2]uint64{{1, 10_000}, {10_001, 20_000}, {20_001, 25_001}}; err != nil || !slices.Equal(got, want) {
 		t.Fatalf("windows=%v want=%v", got, want)
 	}
 	maximum := ^uint64(0)
-	got := governanceLogWindows(maximum-5, maximum)
-	if !slices.Equal(got, [][2]uint64{{maximum - 5, maximum}}) {
+	got, err = governanceLogWindows(maximum-5, maximum)
+	if err != nil || !slices.Equal(got, [][2]uint64{{maximum - 5, maximum}}) {
 		t.Fatalf("overflow windows=%v", got)
+	}
+	if _, err := governanceLogWindows(1, maximum); err == nil {
+		t.Fatal("untrusted provider head was allowed to allocate an unbounded governance scan")
 	}
 }
 

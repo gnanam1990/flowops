@@ -61,6 +61,9 @@ func (s *MemoryStore) Create(ctx context.Context, workflow Workflow, key, inputH
 		}
 		return cloneWorkflow(s.workflows[action.workflowID]), true, nil
 	}
+	if _, exists := s.workflows[workflow.WorkflowID]; exists {
+		return Workflow{}, false, ErrStateConflict
+	}
 	s.workflows[workflow.WorkflowID] = cloneWorkflow(workflow)
 	s.actions[scope] = memoryAction{hash: inputHash, workflowID: workflow.WorkflowID}
 	return cloneWorkflow(workflow), false, nil
@@ -79,18 +82,27 @@ func (s *MemoryStore) Get(ctx context.Context, organizationID, workflowID string
 	return cloneWorkflow(workflow), nil
 }
 
-func (s *MemoryStore) Pending(ctx context.Context, limit int) ([]Workflow, error) {
+func (s *MemoryStore) Pending(ctx context.Context, limit int, afterWorkflowID string) ([]Workflow, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if limit < 1 {
+	if limit < 1 || limit > 1000 || (afterWorkflowID != "" && !hash(afterWorkflowID)) {
 		return nil, ErrInvalidWorkflow
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var cursor Workflow
+	if afterWorkflowID != "" {
+		var exists bool
+		cursor, exists = s.workflows[afterWorkflowID]
+		if !exists || cursor.ApprovedAt == 0 {
+			return nil, ErrInvalidWorkflow
+		}
+	}
 	result := make([]Workflow, 0, limit)
 	for _, workflow := range s.workflows {
-		if workflow.State == ApprovedPendingChain {
+		if activeChainState(workflow.State) && (afterWorkflowID == "" || workflow.ApprovedAt > cursor.ApprovedAt ||
+			(workflow.ApprovedAt == cursor.ApprovedAt && workflow.WorkflowID > afterWorkflowID)) {
 			result = append(result, cloneWorkflow(workflow))
 		}
 	}
@@ -146,9 +158,11 @@ func (s *MemoryStore) transition(ctx context.Context, actor Actor, workflowID, a
 	} else if workflow.State == Proposed {
 		switch action {
 		case "APPROVE":
-			workflow.State = Approved
+			workflow.State = Finalized
 			if requiresChainReceipt(workflow.Kind) {
 				workflow.State = ApprovedPendingChain
+			} else {
+				workflow.FinalizedAt = now.Unix()
 			}
 			workflow.ApprovedBy, workflow.ApproverRole = actor.PrincipalID, actor.Role
 			workflow.ApproverStepUpAt, workflow.ApproverStepUpUntil = actor.StepUpAt.UTC().Unix(), actor.StepUpUntil.UTC().Unix()
@@ -182,6 +196,59 @@ func (s *MemoryStore) Expire(ctx context.Context, organizationID, workflowID str
 	return cloneWorkflow(workflow), false, nil
 }
 
+func (s *MemoryStore) Submit(ctx context.Context, organizationID, workflowID, transactionHash string, now time.Time) (Workflow, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Workflow{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workflow, exists := s.workflows[workflowID]
+	if !exists || workflow.OrganizationID != organizationID {
+		return Workflow{}, false, ErrNotFound
+	}
+	if workflow.State == Submitted && workflow.SubmissionTxHash == transactionHash {
+		return cloneWorkflow(workflow), true, nil
+	}
+	// A retry after timeout or reorg needs the relayer's byte-identical Safe
+	// transaction and nonce proof. This store boundary does not receive that
+	// evidence, so it must not turn an arbitrary replacement transaction hash
+	// back into an approved submission.
+	if workflow.State != ApprovedPendingChain {
+		return Workflow{}, false, ErrStateConflict
+	}
+	if now.Unix() < workflow.ApprovedAt {
+		return Workflow{}, false, ErrStateConflict
+	}
+	workflow.State, workflow.SubmissionTxHash, workflow.SubmittedAt = Submitted, transactionHash, now.Unix()
+	workflow.ConfirmedAt, workflow.TerminalReason, workflow.TerminalAt = 0, "", 0
+	s.workflows[workflowID] = cloneWorkflow(workflow)
+	return cloneWorkflow(workflow), false, nil
+}
+
+func (s *MemoryStore) Confirm(ctx context.Context, organizationID, workflowID, transactionHash string, now time.Time) (Workflow, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Workflow{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workflow, exists := s.workflows[workflowID]
+	if !exists || workflow.OrganizationID != organizationID {
+		return Workflow{}, false, ErrNotFound
+	}
+	if workflow.State == Confirmed && workflow.SubmissionTxHash == transactionHash {
+		return cloneWorkflow(workflow), true, nil
+	}
+	if workflow.State != Submitted || workflow.SubmissionTxHash != transactionHash {
+		return Workflow{}, false, ErrStateConflict
+	}
+	if now.Unix() < workflow.SubmittedAt {
+		return Workflow{}, false, ErrStateConflict
+	}
+	workflow.State, workflow.ConfirmedAt = Confirmed, now.Unix()
+	s.workflows[workflowID] = cloneWorkflow(workflow)
+	return cloneWorkflow(workflow), false, nil
+}
+
 func (s *MemoryStore) Complete(ctx context.Context, organizationID, workflowID string, receipt CompletionReceipt, digest string, bytes []byte, now time.Time) (Workflow, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return Workflow{}, false, err
@@ -192,10 +259,14 @@ func (s *MemoryStore) Complete(ctx context.Context, organizationID, workflowID s
 	if !exists || workflow.OrganizationID != organizationID {
 		return Workflow{}, false, ErrNotFound
 	}
-	if workflow.State == Approved && workflow.CompletionDigest == digest {
+	if workflow.State == Finalized && workflow.CompletionDigest == digest {
 		return cloneWorkflow(workflow), true, nil
 	}
-	if workflow.State != ApprovedPendingChain || workflow.PayloadHash != receipt.PayloadHash {
+	if !activeChainState(workflow.State) || workflow.PayloadHash != receipt.PayloadHash ||
+		(workflow.SubmissionTxHash != "" && workflow.SubmissionTxHash != receipt.TransactionHash) {
+		return Workflow{}, false, ErrStateConflict
+	}
+	if now.Unix() < workflow.ApprovedAt || now.Unix() < workflow.SubmittedAt || now.Unix() < workflow.ConfirmedAt {
 		return Workflow{}, false, ErrStateConflict
 	}
 	receiptKey := fmt.Sprintf("%d\x00%s\x00%d", receipt.ChainID, receipt.TransactionHash, receipt.LogIndex)
@@ -207,9 +278,40 @@ func (s *MemoryStore) Complete(ctx context.Context, organizationID, workflowID s
 			return Workflow{}, false, ErrStateConflict
 		}
 	}
-	workflow.State, workflow.CompletionDigest, workflow.CompletionReceipt, workflow.CompletedAt = Approved, digest, append(json.RawMessage(nil), bytes...), now.Unix()
+	if workflow.State == ApprovedPendingChain {
+		workflow.State = Submitted
+		workflow.SubmissionTxHash, workflow.SubmittedAt = receipt.TransactionHash, now.Unix()
+	}
+	if workflow.State == Submitted {
+		workflow.State, workflow.ConfirmedAt = Confirmed, now.Unix()
+	}
+	workflow.State, workflow.CompletionDigest, workflow.CompletionReceipt, workflow.FinalizedAt = Finalized, digest, append(json.RawMessage(nil), bytes...), now.Unix()
 	s.workflows[workflowID] = cloneWorkflow(workflow)
 	s.receipts[receiptKey] = memoryReceiptOwner{workflowID: workflowID, digest: digest}
+	return cloneWorkflow(workflow), false, nil
+}
+
+func (s *MemoryStore) FailChain(ctx context.Context, organizationID, workflowID string, state State, reason TerminalReason, now time.Time) (Workflow, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Workflow{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workflow, exists := s.workflows[workflowID]
+	if !exists || workflow.OrganizationID != organizationID {
+		return Workflow{}, false, ErrNotFound
+	}
+	if workflow.State == state && workflow.TerminalReason == reason {
+		return cloneWorkflow(workflow), true, nil
+	}
+	if !validFailureTransition(workflow.State, state) {
+		return Workflow{}, false, ErrStateConflict
+	}
+	if now.Unix() < workflow.ApprovedAt || now.Unix() < workflow.SubmittedAt || now.Unix() < workflow.ConfirmedAt {
+		return Workflow{}, false, ErrStateConflict
+	}
+	workflow.State, workflow.TerminalReason, workflow.TerminalAt = state, reason, now.Unix()
+	s.workflows[workflowID] = cloneWorkflow(workflow)
 	return cloneWorkflow(workflow), false, nil
 }
 
@@ -219,5 +321,25 @@ func actionScope(org, actor, action, key string) string {
 
 func cloneWorkflow(workflow Workflow) Workflow {
 	workflow.CompletionReceipt = append(json.RawMessage(nil), workflow.CompletionReceipt...)
+	workflow.GovernanceAction = append(json.RawMessage(nil), workflow.GovernanceAction...)
 	return workflow
+}
+
+func activeChainState(state State) bool {
+	return state == ApprovedPendingChain || state == Submitted || state == Confirmed
+}
+
+func validFailureTransition(from, to State) bool {
+	switch from {
+	case ApprovedPendingChain:
+		return to == TimedOut || to == RequiresReapproval
+	case Submitted:
+		return to == Reverted || to == Reorged || to == TimedOut || to == RequiresReapproval
+	case Confirmed:
+		return to == Reorged || to == RequiresReapproval
+	case Reverted, Reorged, TimedOut:
+		return to == RequiresReapproval
+	default:
+		return false
+	}
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/gnanam1990/flowops/internal/ascpworkflow"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/pkg/governanceworkflow"
 )
 
 type governanceTransport struct {
@@ -29,6 +30,7 @@ type governanceTransport struct {
 	selector  string
 	action    string
 	timestamp uint64
+	invalid   map[string]bool
 }
 
 func (t *governanceTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -58,8 +60,12 @@ func (t *governanceTransport) RoundTrip(request *http.Request) (*http.Response, 
 	case "eth_getLogs":
 		result = []any{bindingLog}
 	case "eth_getTransactionReceipt":
+		status := "0x1"
+		if t.invalid[request.URL.Hostname()] {
+			status = "0x0"
+		}
 		result = map[string]any{"transactionHash": t.txHash, "blockNumber": fmt.Sprintf("0x%x", t.block),
-			"blockHash": t.blockHash, "status": "0x1", "logs": []any{actionLog, bindingLog}}
+			"blockHash": t.blockHash, "status": status, "logs": []any{actionLog, bindingLog}}
 	case "eth_getBlockByNumber":
 		var params []any
 		_ = json.Unmarshal(call.Params, &params)
@@ -79,12 +85,26 @@ func (t *governanceTransport) RoundTrip(request *http.Request) (*http.Response, 
 }
 
 func TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence(t *testing.T) {
-	workflow := ascpworkflow.Workflow{WorkflowID: testHash(1), PayloadHash: testHash(2), Kind: ascpworkflow.SignerCaps,
-		State: ascpworkflow.ApprovedPendingChain, ApprovedAt: 1_800_000_000}
 	spend := "0x2222222222222222222222222222222222222222"
+	action := governanceworkflow.Action{
+		Type: governanceworkflow.ActionSpendCaps, ChainID: 84532, ContractAddress: spend,
+		SpendCaps: &governanceworkflow.SpendCapsAction{
+			Current: governanceworkflow.Caps{PerTransaction: "100", PerDay: "200", AllowanceCeiling: "300"},
+			Next:    governanceworkflow.Caps{PerTransaction: "101", PerDay: "201", AllowanceCeiling: "301"},
+		},
+	}
+	bound, err := governanceworkflow.BindAction(testHash(1), action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector := bound.FunctionSelector
+	workflow := ascpworkflow.Workflow{WorkflowID: testHash(1), PayloadHash: bound.PayloadHash, Kind: ascpworkflow.SignerCaps,
+		State: ascpworkflow.ApprovedPendingChain, ApprovedAt: 1_800_000_000, ChainID: 84532,
+		ContractAddress: spend, FunctionSelector: selector, Calldata: bound.Calldata,
+		GovernanceAction: bound.CanonicalAction}
 	transport := &governanceTransport{head: 120, block: 100, blockHash: testHash(100), txHash: testHash(3), timestamp: 1_800_000_001,
 		workflow: workflow.WorkflowID, payload: workflow.PayloadHash, contract: spend,
-		selector: functionSelector("scheduleCaps((uint256,uint256,uint256),bytes32,bytes32)"),
+		selector: selector,
 		action:   eventTopic("CapsScheduled(uint256,uint256,uint256,uint64)"),
 	}
 	client := &http.Client{Transport: transport, Timeout: time.Second}
@@ -98,6 +118,19 @@ func TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence(t *testing.T) {
 		DirectoryContract: "0x3333333333333333333333333333333333333333"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err != nil || observer.ValidateGovernanceAction(bound) != nil {
+		t.Fatalf("configured governance target rejected: bound=%+v err=%v", bound, err)
+	}
+	wrongTarget := bound
+	wrongTarget.ContractAddress = "0x1111111111111111111111111111111111111111"
+	if err := observer.ValidateGovernanceAction(wrongTarget); !errors.Is(err, ErrUnsupportedWorkflow) {
+		t.Fatalf("unconfigured governance target error=%v", err)
+	}
+	wrongChain := bound
+	wrongChain.ChainID = 8453
+	if err := observer.ValidateGovernanceAction(wrongChain); !errors.Is(err, ErrUnsupportedWorkflow) {
+		t.Fatalf("wrong governance chain error=%v", err)
 	}
 	receipt, err := observer.ObserveWorkflowCompletion(t.Context(), workflow)
 	if err != nil {
@@ -129,6 +162,32 @@ func TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence(t *testing.T) {
 	transport.mu.Unlock()
 	if _, err := observer.ObserveWorkflowCompletion(t.Context(), workflow); !errors.Is(err, ErrReceiptRejected) {
 		t.Fatalf("pre-approval receipt error=%v", err)
+	}
+	transport.mu.Lock()
+	transport.timestamp = uint64(workflow.ApprovedAt + 1)
+	transport.mu.Unlock()
+	wrongAction := workflow
+	wrongAction.FunctionSelector = functionSelector("setSpendAuthorizer(address,bytes32,bytes32)")
+	wrongAction.Calldata = wrongAction.FunctionSelector + strings.Repeat("0", 64)
+	if _, err := observer.ObserveWorkflowCompletion(t.Context(), wrongAction); !errors.Is(err, ErrReceiptRejected) {
+		t.Fatalf("stored selector substitution error=%v", err)
+	}
+	wrongContract := workflow
+	wrongContract.ContractAddress = "0x1111111111111111111111111111111111111111"
+	if _, err := observer.ObserveWorkflowCompletion(t.Context(), wrongContract); !errors.Is(err, ErrReceiptRejected) {
+		t.Fatalf("stored contract substitution error=%v", err)
+	}
+	tamperedAction := action
+	tamperedAction.SpendCaps = &governanceworkflow.SpendCapsAction{Current: action.SpendCaps.Current,
+		Next: governanceworkflow.Caps{PerTransaction: "102", PerDay: "202", AllowanceCeiling: "302"}}
+	wrongBytes, err := json.Marshal(tamperedAction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongAction = workflow
+	wrongAction.GovernanceAction = wrongBytes
+	if _, err := observer.ObserveWorkflowCompletion(t.Context(), wrongAction); !errors.Is(err, ErrReceiptRejected) {
+		t.Fatalf("stored action substitution error=%v", err)
 	}
 }
 
@@ -221,15 +280,82 @@ func TestCanonicalEvidenceQuorumDoesNotRequireUnanimity(t *testing.T) {
 	}
 }
 
+func TestObserverDefersValidVersusInvalidQuorumSplit(t *testing.T) {
+	spend := "0x2222222222222222222222222222222222222222"
+	action := governanceworkflow.Action{
+		Type: governanceworkflow.ActionSpendCaps, ChainID: 84532, ContractAddress: spend,
+		SpendCaps: &governanceworkflow.SpendCapsAction{
+			Current: governanceworkflow.Caps{PerTransaction: "100", PerDay: "200", AllowanceCeiling: "300"},
+			Next:    governanceworkflow.Caps{PerTransaction: "101", PerDay: "201", AllowanceCeiling: "301"},
+		},
+	}
+	bound, err := governanceworkflow.BindAction(testHash(71), action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := ascpworkflow.Workflow{
+		WorkflowID: testHash(71), PayloadHash: bound.PayloadHash, Kind: ascpworkflow.SignerCaps,
+		State: ascpworkflow.ApprovedPendingChain, ApprovedAt: 1_800_000_000, ChainID: 84532,
+		ContractAddress: spend, FunctionSelector: bound.FunctionSelector, Calldata: bound.Calldata,
+		GovernanceAction: bound.CanonicalAction,
+	}
+	transport := &governanceTransport{
+		head: 120, block: 100, blockHash: testHash(72), txHash: testHash(73), timestamp: 1_800_000_001,
+		workflow: workflow.WorkflowID, payload: workflow.PayloadHash, contract: spend,
+		selector: bound.FunctionSelector, action: eventTopic("CapsScheduled(uint256,uint256,uint256,uint64)"),
+		invalid: map[string]bool{"c.rpc.example": true, "d.rpc.example": true},
+	}
+	providers := []reconciliation.RPCProvider{
+		{Name: "rpc_a", URL: "https://a.rpc.example"}, {Name: "rpc_b", URL: "https://b.rpc.example"},
+		{Name: "rpc_c", URL: "https://c.rpc.example"}, {Name: "rpc_d", URL: "https://d.rpc.example"},
+	}
+	set, err := reconciliation.NewObserverSet(84532, providers, &http.Client{Transport: transport, Timeout: time.Second}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer, err := New(Config{Observers: set, Quorum: 2, FinalizedConfirmations: 12, FromBlock: 80,
+		CallEscrowContract: "0x1111111111111111111111111111111111111111", SpendModuleContract: spend,
+		DirectoryContract: "0x3333333333333333333333333333333333333333"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observer.ObserveWorkflowCompletion(t.Context(), workflow); !errors.Is(err, ErrObserverDisagreement) {
+		t.Fatalf("valid/invalid quorum split error=%v", err)
+	}
+}
+
 type pendingStoreStub struct{ workflows []ascpworkflow.Workflow }
 
-func (s pendingStoreStub) Pending(context.Context, int) ([]ascpworkflow.Workflow, error) {
-	return s.workflows, nil
+func (s pendingStoreStub) Pending(_ context.Context, limit int, afterWorkflowID string) ([]ascpworkflow.Workflow, error) {
+	start := 0
+	if afterWorkflowID != "" {
+		start = -1
+		for index, workflow := range s.workflows {
+			if workflow.WorkflowID == afterWorkflowID {
+				start = index + 1
+				break
+			}
+		}
+		if start < 0 {
+			return nil, ascpworkflow.ErrInvalidWorkflow
+		}
+	}
+	end := start + limit
+	if end > len(s.workflows) {
+		end = len(s.workflows)
+	}
+	return s.workflows[start:end], nil
 }
 
 type completerStub struct {
-	err   error
-	calls int
+	err           error
+	calls         int
+	terminalCalls int
+}
+
+func (s *completerStub) RequireReapproval(context.Context, string, string, ascpworkflow.TerminalReason) (ascpworkflow.Workflow, error) {
+	s.terminalCalls++
+	return ascpworkflow.Workflow{State: ascpworkflow.RequiresReapproval}, nil
 }
 
 func (s *completerStub) ObserveAndComplete(context.Context, string, string) (ascpworkflow.Workflow, error) {
@@ -250,7 +376,7 @@ func TestWorkerDefersUnfinalizedEvidenceAndFailsClosedOnOwnershipConflict(t *tes
 	}
 	completer.err = fmt.Errorf("%w: %w", ascpworkflow.ErrInvalidReceipt, ErrReceiptRejected)
 	cycle, err = worker.RunOnce(t.Context())
-	if err != nil || cycle.Rejected != 1 || cycle.Deferred != 0 {
+	if err != nil || cycle.Rejected != 1 || cycle.Deferred != 0 || completer.terminalCalls != 1 {
 		t.Fatalf("rejected cycle=%+v err=%v", cycle, err)
 	}
 	completer.err = ascpworkflow.ErrReceiptOwned
@@ -259,7 +385,60 @@ func TestWorkerDefersUnfinalizedEvidenceAndFailsClosedOnOwnershipConflict(t *tes
 	}
 }
 
-func TestWorkerRunsInitialCycleStopsOnCancellationAndRejectsOverflow(t *testing.T) {
+type rejectingObserver struct{}
+
+func (rejectingObserver) ValidateGovernanceAction(governanceworkflow.BoundAction) error { return nil }
+
+func (rejectingObserver) ObserveWorkflowCompletion(context.Context, ascpworkflow.Workflow) (ascpworkflow.CompletionReceipt, error) {
+	return ascpworkflow.CompletionReceipt{}, ErrReceiptRejected
+}
+
+func TestWorkerTerminalizesDeterministicRejectionWithoutStarvingQueue(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	store := ascpworkflow.NewMemoryStore()
+	service, err := ascpworkflow.New(store, rejectingObserver{}, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{1}, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposer := ascpworkflow.Actor{OrganizationID: "org_a", PrincipalID: "signer", Role: ascpworkflow.SignerOperator,
+		StepUpAt: now.Add(-time.Minute), StepUpUntil: now.Add(time.Minute)}
+	workflow, err := service.Create(t.Context(), proposer, "create", ascpworkflow.CreateRequest{
+		Kind: ascpworkflow.SignerCaps, WorkflowID: testHash(901), Action: &governanceworkflow.Action{
+			Type: governanceworkflow.ActionSpendCaps, ChainID: 84532,
+			ContractAddress: "0x2222222222222222222222222222222222222222",
+			SpendCaps: &governanceworkflow.SpendCapsAction{
+				Current: governanceworkflow.Caps{PerTransaction: "100", PerDay: "200", AllowanceCeiling: "300"},
+				Next:    governanceworkflow.Caps{PerTransaction: "101", PerDay: "201", AllowanceCeiling: "301"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approver := ascpworkflow.Actor{OrganizationID: "org_a", PrincipalID: "owner", Role: ascpworkflow.OrgAdmin,
+		StepUpAt: now.Add(-time.Minute), StepUpUntil: now.Add(time.Minute)}
+	if _, err := service.Approve(t.Context(), approver, workflow.WorkflowID, "approve"); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := NewWorker(store, service, WorkerConfig{Interval: time.Second, QueryTimeout: 100 * time.Millisecond, BatchSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle, err := worker.RunOnce(t.Context())
+	if err != nil || cycle.Rejected != 1 {
+		t.Fatalf("rejection cycle=%+v err=%v", cycle, err)
+	}
+	stored, err := service.Get(t.Context(), approver, workflow.WorkflowID)
+	if err != nil || stored.State != ascpworkflow.RequiresReapproval || stored.TerminalReason != ascpworkflow.ReceiptRejected {
+		t.Fatalf("terminal workflow=%+v err=%v", stored, err)
+	}
+	next, err := worker.RunOnce(t.Context())
+	if err != nil || next.Pending != 0 {
+		t.Fatalf("terminal workflow remained queued: cycle=%+v err=%v", next, err)
+	}
+}
+
+func TestWorkerRunsInitialCycleStopsOnCancellationAndProcessesBoundedBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	worker, err := NewWorker(pendingStoreStub{}, &completerStub{}, WorkerConfig{
 		Interval: 20 * time.Millisecond, QueryTimeout: time.Millisecond, BatchSize: 10,
@@ -277,14 +456,19 @@ func TestWorkerRunsInitialCycleStopsOnCancellationAndRejectsOverflow(t *testing.
 		workflows[index] = ascpworkflow.Workflow{WorkflowID: testHash(uint64(index + 1)), OrganizationID: "org_a"}
 	}
 	completer := &completerStub{}
-	overflow, err := NewWorker(pendingStoreStub{workflows: workflows}, completer, WorkerConfig{
+	bounded, err := NewWorker(pendingStoreStub{workflows: workflows}, completer, WorkerConfig{
 		Interval: time.Second, QueryTimeout: time.Millisecond, BatchSize: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := overflow.RunOnce(t.Context()); err == nil || completer.calls != 0 {
-		t.Fatalf("overflow error=%v calls=%d", err, completer.calls)
+	cycle, err := bounded.RunOnce(t.Context())
+	if err != nil || completer.calls != 10 || cycle.Pending != 10 || cycle.Completed != 10 {
+		t.Fatalf("bounded cycle=%+v error=%v calls=%d", cycle, err, completer.calls)
+	}
+	cycle, err = bounded.RunOnce(t.Context())
+	if err != nil || completer.calls != 11 || cycle.Pending != 1 || cycle.Completed != 1 {
+		t.Fatalf("rotated cycle=%+v error=%v calls=%d", cycle, err, completer.calls)
 	}
 }
 

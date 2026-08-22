@@ -299,7 +299,7 @@ func run(ctx context.Context) (returnErr error) {
 			return fmt.Errorf("create ASCP governance receipt worker: %w", err)
 		}
 	} else {
-		slog.Warn("ASCP governance receipt completion is disabled", "reason", "governance contract tuple is unset")
+		slog.Warn("ASCP chain governance workflows are disabled", "reason", "governance contract tuple is unset")
 	}
 	observerSupervisor, err := reconciliation.NewSupervisor(observers, reconciliationEngine, reconciliation.SupervisorConfig{
 		Interval: cfg.observerInterval, ObservationTimeout: cfg.observerTimeout,
