@@ -3,6 +3,7 @@
 package ascpring6
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -44,12 +45,12 @@ func TestJournalRejectsTamperTruncationAndConcurrentWriter(t *testing.T) {
 	})
 	t.Run("hash-tamper", func(t *testing.T) {
 		mutated := append([]byte(nil), original...)
-		for index, value := range mutated {
-			if value == 'a' {
-				mutated[index] = 'b'
-				break
-			}
+		marker := []byte(`"sequence":1`)
+		index := bytes.Index(mutated, marker)
+		if index < 0 {
+			t.Fatal("journal record layout changed")
 		}
+		mutated[index+len(marker)-1] = '2'
 		if err := os.WriteFile(path, mutated, 0o600); err != nil {
 			t.Fatal(err)
 		}

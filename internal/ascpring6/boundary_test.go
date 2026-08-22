@@ -128,7 +128,7 @@ func TestComponentBoundaryRejectsDuplicateAndWrongHealthIdentity(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"operationHandle":"one","operationHandle":"two","digest":"` + ringHash(1) + `","signature":"AA=="}`))
 	})}
-	go server.Serve(listener)
+	go func() { _ = server.Serve(listener) }()
 	defer func() { _ = server.Close(); _ = listener.Close() }()
 	boundary, _ := NewComponentBoundary("hsm", path, time.Second)
 	if err := boundary.Check(context.Background()); err == nil {
@@ -159,6 +159,6 @@ func serveComponent(t *testing.T, path, boundary string, register func(*http.Ser
 	})
 	register(mux)
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
+	go func() { _ = server.Serve(listener) }()
 	return func() { _ = server.Close(); _ = listener.Close() }
 }

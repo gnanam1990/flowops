@@ -145,7 +145,7 @@ func TestServiceBindsActionAndReplaysOneHSMOperationAcrossConcurrencyAndRestart(
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer restarted.Close()
+	defer func() { _ = restarted.Close() }()
 	replayed, err := ringService(t, restarted, verifier, hsm, key, now).VerifyAndSign(context.Background(), input)
 	if err != nil || !bytes.Equal(replayed, first) {
 		t.Fatalf("restart replay changed: err=%v", err)
@@ -165,7 +165,7 @@ func TestServicePersistsOnlyExplicitVerifierRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	verifier := &testVerifier{err: &PermanentRefusal{Code: "EVIDENCE_INVALID"}}
 	hsm := &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}
 	service := ringService(t, journal, verifier, hsm, key, now)
@@ -189,7 +189,7 @@ func TestServiceRejectsWrongRecoveredSignerWithoutTerminalRefusal(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	hsm := &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}, wrong: true}
 	service := ringService(t, journal, &testVerifier{}, hsm, key, now)
 	if _, err := service.VerifyAndSign(context.Background(), ringInput(now)); !errors.Is(err, ErrBinding) {
@@ -204,7 +204,7 @@ func TestServiceNeverPersistsPermanentRefusalAfterAmbiguousHSMRequest(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	verifier := &testVerifier{}
 	delegate := &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}
 	hsm := &ambiguousHSM{delegate: delegate, first: true}
@@ -230,7 +230,7 @@ func TestServiceAllowsOnlyPersistedHSMReplayAfterFreshnessWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	verifier := &testVerifier{}
 	delegate := &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}
 	hsm := &ambiguousHSM{delegate: delegate, first: true}
@@ -266,7 +266,7 @@ func TestServiceDoesNotBypassFreshnessForPersistedBoundAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	verifier := &testVerifier{err: errors.New("verifier unavailable")}
 	service, err := New(Config{Store: journal, Verifier: verifier,
 		HSM: &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}, Clock: func() time.Time { return clock },
@@ -292,7 +292,7 @@ func TestServiceReturnsNoPermanentRefusalWhenRefusalCannotBePersisted(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	service := ringService(t, refusalFailureStore{BindingStore: journal}, &testVerifier{err: &PermanentRefusal{Code: "EVIDENCE_INVALID"}},
 		&deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}, key, now)
 	if _, err := service.VerifyAndSign(context.Background(), ringInput(now)); err == nil || errors.Is(err, ErrRefused) {

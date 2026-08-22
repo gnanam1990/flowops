@@ -87,7 +87,10 @@ Every path must be clean, absolute, non-root, and distinct; socket paths must
 fit the platform Unix address bound. Startup gives component health checks a
 ten-second deadline, then replays the journal under the process lifecycle
 context so journal size does not inherit the health timeout. The listener
-refuses any startup path that already exists. Graceful shutdown unlinks only
+allows three dependency-timeout budgets for the response because verification,
+HSM signing, and durable journal writes occur sequentially; each dependency
+call retains the configured one-to-ten-second bound. It refuses any startup
+path that already exists. Graceful shutdown unlinks only
 the exact device/inode/change-time identity created by that process, allowing
 safe same-path restart while preserving a replacement path for operator
 inspection.

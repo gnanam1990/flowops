@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/internal/ascpbearer"
 )
 
 func TestHandlerSignsExactRequestAndRejectsProtocolAndJSONSubstitution(t *testing.T) {
@@ -24,7 +26,7 @@ func TestHandlerSignsExactRequestAndRejectsProtocolAndJSONSubstitution(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	service := ringService(t, journal, &testVerifier{}, &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}, key, now)
 	input := ringInput(now)
 	body, _ := json.Marshal(struct {
@@ -60,7 +62,7 @@ func TestHandlerMapsPermanentRefusalWithoutLeakingSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	service := ringService(t, journal, &testVerifier{err: &PermanentRefusal{Code: "EVIDENCE_INVALID"}}, &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}, key, now)
 	body, _ := json.Marshal(struct {
 		Protocol string `json:"protocol"`
@@ -80,7 +82,7 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer journal.Close()
+	defer func() { _ = journal.Close() }()
 	service := ringService(t, journal, &testVerifier{}, &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}, key, now)
 	socket := filepath.Join(directory, "ring6.sock")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -92,11 +94,15 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 		t.Fatalf("socket info=%v err=%v", info, err)
 	}
 	client := unixHTTPClient(socket)
-	response, err := client.Get("http://unix/healthz")
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://unix/healthz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("health status=%d", response.StatusCode)
 	}
@@ -131,6 +137,100 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 	}
 }
 
+func TestServeUnixAllowsSequentialDependencyBudgets(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	key, _ := crypto.GenerateKey()
+	directory := ringTempDir(t)
+	journal, err := OpenJournal(context.Background(), filepath.Join(directory, "ring6.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = journal.Close() }()
+	delay := 600 * time.Millisecond
+	verifier := delayedVerifier{delay: delay, delegate: &testVerifier{}}
+	hsm := delayedHSM{delay: delay, delegate: &deterministicHSM{
+		key: crypto.FromECDSA(key), operations: map[string]HSMResult{},
+	}}
+	service := ringService(t, journal, verifier, hsm, key, now)
+	socket := filepath.Join(directory, "budget.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- service.ServeUnix(ctx, UnixConfig{Socket: socket, RequestTimeout: time.Second}) }()
+	waitForSocket(t, socket)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Errorf("stop budget-test runtime: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("budget-test runtime did not stop")
+		}
+	})
+	body, err := json.Marshal(struct {
+		Protocol string `json:"protocol"`
+		Input    any    `json:"input"`
+	}{Protocol, ringInput(now)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://unix/v1/verify-and-sign", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	client := unixHTTPClient(socket)
+	client.Timeout = 4 * time.Second
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("sequential verifier and HSM budgets lost the response: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !bytes.Contains(responseBody, []byte(`"signature"`)) {
+		t.Fatalf("status=%d body=%s", response.StatusCode, responseBody)
+	}
+}
+
+type delayedVerifier struct {
+	delay    time.Duration
+	delegate IndependentVerifier
+}
+
+func (v delayedVerifier) Verify(ctx context.Context, input ascpbearer.ActivationInput, inputHash string) error {
+	if err := waitDelay(ctx, v.delay); err != nil {
+		return err
+	}
+	return v.delegate.Verify(ctx, input, inputHash)
+}
+
+type delayedHSM struct {
+	delay    time.Duration
+	delegate HSM
+}
+
+func (h delayedHSM) Sign(ctx context.Context, request HSMRequest) (HSMResult, error) {
+	if err := waitDelay(ctx, h.delay); err != nil {
+		return HSMResult{}, err
+	}
+	return h.delegate.Sign(ctx, request)
+}
+
+func waitDelay(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func TestPrivateUnixListenerPreservesReplacementPathOnClose(t *testing.T) {
 	directory := ringTempDir(t)
 	path := filepath.Join(directory, "owned.sock")
@@ -154,7 +254,7 @@ func TestPrivateUnixListenerPreservesReplacementPathOnClose(t *testing.T) {
 }
 
 func serveJSON(handler http.Handler, body []byte) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/v1/verify-and-sign", bytes.NewReader(body))
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/verify-and-sign", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

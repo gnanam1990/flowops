@@ -46,10 +46,12 @@ func (s *Service) ServeUnix(ctx context.Context, config UnixConfig) error {
 	if err != nil {
 		return fmt.Errorf("listen on Ring 6 socket: %w", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	server := &http.Server{
 		Handler: s.Handler(), ReadHeaderTimeout: config.RequestTimeout, ReadTimeout: config.RequestTimeout,
-		WriteTimeout: config.RequestTimeout, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+		// A signing request performs sequential verifier and HSM calls plus
+		// durable journal fsyncs. Each dependency may consume its full budget.
+		WriteTimeout: 3 * config.RequestTimeout, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 	result := make(chan error, 1)
 	go func() { result <- server.Serve(listener) }()
@@ -84,7 +86,7 @@ func listenPrivateUnix(path string) (*privateUnixListener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open secure Ring 6 socket parent: %w", err)
 	}
-	defer parent.Close()
+	defer func() { _ = parent.Close() }()
 	info, err := parent.Stat()
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 || !securefile.OwnerAllowed(info) {
 		return nil, errors.New("Ring 6 socket parent must be private and owner controlled")
@@ -141,7 +143,7 @@ func unlinkOwnedSocket(path string, identity socketIdentity) error {
 	if err != nil {
 		return err
 	}
-	defer parent.Close()
+	defer func() { _ = parent.Close() }()
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

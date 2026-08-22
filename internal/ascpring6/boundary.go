@@ -178,7 +178,7 @@ func (b *ComponentBoundary) call(ctx context.Context, method, endpoint string, i
 	if err != nil {
 		return fmt.Errorf("call Ring 6 %s component: %w", b.name, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes+1))
 	defer clear(raw)
 	if err != nil || len(raw) == 0 || len(raw) > maxBodyBytes {
@@ -220,7 +220,7 @@ func inspectSocket(path string) (socketIdentity, error) {
 	if err != nil {
 		return socketIdentity{}, err
 	}
-	defer parent.Close()
+	defer func() { _ = parent.Close() }()
 	info, err := parent.Stat()
 	if err != nil || info.Mode().Perm() != 0o700 || !securefile.OwnerAllowed(info) {
 		return socketIdentity{}, errors.New("Ring 6 socket parent must be private and owner controlled")
