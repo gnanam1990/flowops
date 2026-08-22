@@ -23,6 +23,37 @@ func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 }
 
 func (s *PostgresStore) Create(ctx context.Context, input StoreInput) (Operation, bool, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		operation, replayed, err := s.createOnce(ctx, input)
+		if errors.Is(err, ErrQuoteNonceConsumed) {
+			// The insert conflicts on both the idempotency scope and quote nonce
+			// for an exact concurrent replay. PostgreSQL may report the non-arbiter
+			// quote constraint first, so resolve the durable idempotency owner on a
+			// fresh transaction before classifying this as a second economic use.
+			existing, storedHash, found, lookupErr := s.Lookup(ctx, input.Operation.OrganizationID, input.Operation.ActorID, input.IdempotencyKey)
+			if lookupErr != nil {
+				return Operation{}, false, lookupErr
+			}
+			if found {
+				if storedHash != input.CanonicalInputHash {
+					return Operation{}, false, ErrIdempotencyConflict
+				}
+				return existing, true, nil
+			}
+		}
+		if !serializationFailure(err) {
+			return operation, replayed, err
+		}
+		lastErr = err
+		if err := ctx.Err(); err != nil {
+			return Operation{}, false, err
+		}
+	}
+	return Operation{}, false, fmt.Errorf("ASCP intake serialization retries exhausted: %w", lastErr)
+}
+
+func (s *PostgresStore) createOnce(ctx context.Context, input StoreInput) (Operation, bool, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return Operation{}, false, fmt.Errorf("begin ASCP intake transaction: %w", err)
@@ -139,6 +170,11 @@ func (s *PostgresStore) Get(ctx context.Context, organizationID, actorID, operat
 	}
 	operation.CreatedAt = createdAt.UTC().Unix()
 	return operation, nil
+}
+
+func serializationFailure(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) && (postgresError.Code == "40001" || postgresError.Code == "40P01")
 }
 
 func classifyInsertError(err error) error {
