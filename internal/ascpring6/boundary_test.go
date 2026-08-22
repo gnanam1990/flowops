@@ -68,6 +68,7 @@ func TestUnixVerifierPersistsOnlyCanonicalUnprocessableRefusal(t *testing.T) {
 		{"permanent", http.StatusUnprocessableEntity, "EVIDENCE_INVALID", true},
 		{"transient", http.StatusServiceUnavailable, "EVIDENCE_INVALID", false},
 		{"invalid-code", http.StatusUnprocessableEntity, "not valid!", false},
+		{"missing-code", http.StatusUnprocessableEntity, "", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(ringTempDir(t), "verifier.sock")
@@ -80,10 +81,33 @@ func TestUnixVerifierPersistsOnlyCanonicalUnprocessableRefusal(t *testing.T) {
 			boundary, _ := NewComponentBoundary("verifier", path, time.Second)
 			verifier, _ := NewUnixVerifier(boundary)
 			err := verifier.Verify(context.Background(), ringInput(time.Unix(1_800_000_000, 0).UTC()), ringHash(8))
-			if errors.Is(err, ErrRefused) != test.permanent {
+			if err == nil || errors.Is(err, ErrRefused) != test.permanent {
 				t.Fatalf("error=%v permanent=%v", err, errors.Is(err, ErrRefused))
 			}
 		})
+	}
+}
+
+func TestComponentBoundaryRejectsSocketReplacementAfterPinning(t *testing.T) {
+	path := filepath.Join(ringTempDir(t), "verifier.sock")
+	stopFirst := serveComponent(t, path, "verifier", func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /v1/verify", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"verified": true, "inputHash": ringHash(8)})
+		})
+	})
+	boundary, err := NewComponentBoundary("verifier", path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopFirst()
+	stopReplacement := serveComponent(t, path, "verifier", func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /v1/verify", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"verified": true, "inputHash": ringHash(8)})
+		})
+	})
+	defer stopReplacement()
+	if err := boundary.Check(context.Background()); err == nil {
+		t.Fatal("replacement component socket retained the pinned identity")
 	}
 }
 

@@ -41,6 +41,16 @@ func TestLoadConfigPinsDistinctCanonicalBoundaries(t *testing.T) {
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("noncanonical key identifier accepted")
 	}
+	setRingRuntimeEnvironment(t, directory)
+	t.Setenv("FLOWOPS_RING6_SIGNER_ADDRESS", "1111111111111111111111111111111111111111")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("signer address without canonical prefix accepted")
+	}
+	setRingRuntimeEnvironment(t, directory)
+	t.Setenv("FLOWOPS_RING6_HSM_SOCKET", filepath.Join(directory, strings.Repeat("x", 128)+".sock"))
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("overlong Unix socket path accepted")
+	}
 }
 
 func TestRunStartsFullRing6WirePathAndStopsCleanly(t *testing.T) {

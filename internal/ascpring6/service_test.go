@@ -135,7 +135,7 @@ func TestServiceBindsActionAndReplaysOneHSMOperationAcrossConcurrencyAndRestart(
 			t.Fatal("concurrent retry changed signature")
 		}
 	}
-	if calls, operations := hsm.counts(); calls != workers || operations != 1 || verifier.count() != workers {
+	if calls, operations := hsm.counts(); calls != workers || operations != 1 || verifier.count() != 1 {
 		t.Fatalf("hsm calls=%d operations=%d verifier=%d", calls, operations, verifier.count())
 	}
 	if err := journal.Close(); err != nil {
@@ -214,15 +214,74 @@ func TestServiceNeverPersistsPermanentRefusalAfterAmbiguousHSMRequest(t *testing
 		t.Fatalf("ambiguous HSM error=%v", err)
 	}
 	verifier.err = &PermanentRefusal{Code: "EVIDENCE_INVALID"}
-	if _, err := service.VerifyAndSign(context.Background(), input); err == nil || errors.Is(err, ErrRefused) {
-		t.Fatalf("post-HSM refusal became permanent: %v", err)
-	}
-	verifier.err = nil
 	if signature, err := service.VerifyAndSign(context.Background(), input); err != nil || len(signature) != 65 {
 		t.Fatalf("idempotent HSM recovery signature=%x err=%v", signature, err)
 	}
-	if calls, operations := delegate.counts(); calls != 2 || operations != 1 {
-		t.Fatalf("HSM calls=%d operations=%d", calls, operations)
+	if calls, operations := delegate.counts(); calls != 2 || operations != 1 || verifier.count() != 1 {
+		t.Fatalf("HSM calls=%d operations=%d verifier=%d", calls, operations, verifier.count())
+	}
+}
+
+func TestServiceAllowsOnlyPersistedHSMReplayAfterFreshnessWindow(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	clock := now
+	key, _ := crypto.GenerateKey()
+	journal, err := OpenJournal(context.Background(), filepath.Join(ringTempDir(t), "ring6.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	verifier := &testVerifier{}
+	delegate := &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}
+	hsm := &ambiguousHSM{delegate: delegate, first: true}
+	service, err := New(Config{Store: journal, Verifier: verifier, HSM: hsm, Clock: func() time.Time { return clock },
+		KeyID: "key-1", KeyEpoch: 1, KeeperID: "keeper-1", SignerAddress: strings.ToLower(crypto.PubkeyToAddress(key.PublicKey).Hex())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ringInput(now)
+	if _, err := service.VerifyAndSign(context.Background(), input); err == nil {
+		t.Fatal("ambiguous HSM response was accepted")
+	}
+	clock = now.Add(2 * time.Minute)
+	if signature, err := service.VerifyAndSign(context.Background(), input); err != nil || len(signature) != 65 {
+		t.Fatalf("late persisted replay signature=%x err=%v", signature, err)
+	}
+	freshnessOnly := input
+	freshnessOnly.ActionID = "new-stale-action"
+	if _, err := service.VerifyAndSign(context.Background(), freshnessOnly); !errors.Is(err, ascpbearer.ErrActivationInput) {
+		t.Fatalf("new stale binding error=%v", err)
+	}
+	clock = now.Add(6 * time.Minute)
+	if _, err := service.VerifyAndSign(context.Background(), input); !errors.Is(err, ascpbearer.ErrActivationInput) {
+		t.Fatalf("expired persisted replay error=%v", err)
+	}
+}
+
+func TestServiceDoesNotBypassFreshnessForPersistedBoundAction(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	clock := now
+	key, _ := crypto.GenerateKey()
+	journal, err := OpenJournal(context.Background(), filepath.Join(ringTempDir(t), "ring6.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	verifier := &testVerifier{err: errors.New("verifier unavailable")}
+	service, err := New(Config{Store: journal, Verifier: verifier,
+		HSM: &deterministicHSM{key: crypto.FromECDSA(key), operations: map[string]HSMResult{}}, Clock: func() time.Time { return clock },
+		KeyID: "key-1", KeyEpoch: 1, KeeperID: "keeper-1", SignerAddress: strings.ToLower(crypto.PubkeyToAddress(key.PublicKey).Hex())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ringInput(now)
+	if _, err := service.VerifyAndSign(context.Background(), input); err == nil {
+		t.Fatal("transient verifier error was swallowed")
+	}
+	clock = now.Add(2 * time.Minute)
+	verifier.err = nil
+	if _, err := service.VerifyAndSign(context.Background(), input); !errors.Is(err, ascpbearer.ErrActivationInput) {
+		t.Fatalf("stale BOUND replay error=%v", err)
 	}
 }
 

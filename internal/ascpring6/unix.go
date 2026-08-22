@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +22,21 @@ import (
 type UnixConfig struct {
 	Socket         string
 	RequestTimeout time.Duration
+}
+
+type privateUnixListener struct {
+	*net.UnixListener
+	path     string
+	identity [2]uint64
+	once     sync.Once
+	closeErr error
+}
+
+func (l *privateUnixListener) Close() error {
+	l.once.Do(func() {
+		l.closeErr = errors.Join(l.UnixListener.Close(), unlinkOwnedSocket(l.path, l.identity))
+	})
+	return l.closeErr
 }
 
 func (s *Service) ServeUnix(ctx context.Context, config UnixConfig) error {
@@ -57,12 +73,14 @@ func (s *Service) ServeUnix(ctx context.Context, config UnixConfig) error {
 	}
 }
 
-func cleanAbsoluteSocket(path string) bool {
+func ValidSocketPath(path string) bool {
 	return strings.TrimSpace(path) == path && filepath.IsAbs(path) && filepath.Clean(path) == path && path != "/" &&
 		len(path) <= len(unix.RawSockaddrUnix{}.Path)-1
 }
 
-func listenPrivateUnix(path string) (*net.UnixListener, error) {
+func cleanAbsoluteSocket(path string) bool { return ValidSocketPath(path) }
+
+func listenPrivateUnix(path string) (*privateUnixListener, error) {
 	parent, err := securefile.OpenDirectory(filepath.Dir(path))
 	if err != nil {
 		return nil, fmt.Errorf("open secure Ring 6 socket parent: %w", err)
@@ -79,19 +97,61 @@ func listenPrivateUnix(path string) (*net.UnixListener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = listener.Close()
-		return nil, err
-	}
+	listener.SetUnlinkOnClose(false)
 	created, err := os.Lstat(path)
 	if err != nil {
+		listener.SetUnlinkOnClose(true)
 		_ = listener.Close()
 		return nil, err
 	}
 	stat, ok := created.Sys().(*syscall.Stat_t)
-	if created.Mode()&os.ModeSocket == 0 || created.Mode().Perm() != 0o600 || !ok || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {
+	if created.Mode()&os.ModeSocket == 0 || !ok || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {
+		listener.SetUnlinkOnClose(true)
 		_ = listener.Close()
 		return nil, errors.New("Ring 6 socket identity changed during bind")
 	}
-	return listener, nil
+	identity := [2]uint64{uint64(stat.Dev), uint64(stat.Ino)}
+	cleanup := func() {
+		_ = listener.Close()
+		_ = unlinkOwnedSocket(path, identity)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		cleanup()
+		return nil, err
+	}
+	created, err = os.Lstat(path)
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	stat, ok = created.Sys().(*syscall.Stat_t)
+	if created.Mode()&os.ModeSocket == 0 || created.Mode().Perm() != 0o600 || !ok ||
+		[2]uint64{uint64(stat.Dev), uint64(stat.Ino)} != identity || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {
+		cleanup()
+		return nil, errors.New("Ring 6 socket identity changed during bind")
+	}
+	return &privateUnixListener{UnixListener: listener, path: path, identity: identity}, nil
+}
+
+func unlinkOwnedSocket(path string, identity [2]uint64) error {
+	parent, err := securefile.OpenDirectory(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || info.Mode()&os.ModeSocket == 0 || [2]uint64{uint64(stat.Dev), uint64(stat.Ino)} != identity {
+		return errors.New("Ring 6 socket path no longer identifies this listener")
+	}
+	if err := unix.Unlinkat(int(parent.Fd()), filepath.Base(path), 0); err != nil {
+		return err
+	}
+	return parent.Sync()
 }

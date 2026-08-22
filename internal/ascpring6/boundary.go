@@ -24,12 +24,17 @@ const ComponentProtocol = "ASCP_RING6_COMPONENT_V1"
 
 type ComponentBoundary struct {
 	name, path string
+	identity   [2]uint64
 	client     *http.Client
 }
 
 func NewComponentBoundary(name, path string, timeout time.Duration) (*ComponentBoundary, error) {
 	if name != "verifier" && name != "hsm" || !cleanAbsoluteSocket(path) || timeout < time.Second || timeout > 10*time.Second {
 		return nil, errors.New("Ring 6 component configuration is invalid")
+	}
+	identity, err := inspectSocket(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Ring 6 %s component: %w", name, err)
 	}
 	dialer := &net.Dialer{Timeout: min(timeout, 5*time.Second), KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
@@ -39,7 +44,7 @@ func NewComponentBoundary(name, path string, timeout time.Duration) (*ComponentB
 			return dialer.DialContext(ctx, "unix", path)
 		},
 	}
-	return &ComponentBoundary{name: name, path: path, client: &http.Client{
+	return &ComponentBoundary{name: name, path: path, identity: identity, client: &http.Client{
 		Transport: transport, Timeout: timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
@@ -71,7 +76,7 @@ func ValidateComponentSockets(boundaries ...*ComponentBoundary) error {
 			return errors.New("Ring 6 components must not share a socket path")
 		}
 		seenPaths[boundary.path] = struct{}{}
-		identity, err := inspectSocket(boundary.path)
+		identity, err := boundary.inspectPinned()
 		if err != nil {
 			return err
 		}
@@ -105,7 +110,7 @@ func (v *UnixVerifier) Verify(ctx context.Context, input ascpbearer.ActivationIn
 	err := v.boundary.call(ctx, http.MethodPost, "/v1/verify", request, &response)
 	if err != nil {
 		var component *componentError
-		if errors.As(err, &component) && component.status == http.StatusUnprocessableEntity && identifierPattern.MatchString(component.code) {
+		if errors.As(err, &component) && component.status == http.StatusUnprocessableEntity && component.canonical {
 			return &PermanentRefusal{Code: component.code}
 		}
 		return err
@@ -139,8 +144,9 @@ func (h *UnixHSM) Sign(ctx context.Context, request HSMRequest) (HSMResult, erro
 }
 
 type componentError struct {
-	status int
-	code   string
+	status    int
+	code      string
+	canonical bool
 }
 
 func (e *componentError) Error() string {
@@ -148,7 +154,7 @@ func (e *componentError) Error() string {
 }
 
 func (b *ComponentBoundary) call(ctx context.Context, method, endpoint string, input, output any) error {
-	if _, err := inspectSocket(b.path); err != nil {
+	if _, err := b.inspectPinned(); err != nil {
 		return fmt.Errorf("validate Ring 6 %s component: %w", b.name, err)
 	}
 	var body io.Reader
@@ -187,15 +193,27 @@ func (b *ComponentBoundary) call(ctx context.Context, method, endpoint string, i
 		var failure struct {
 			Code string `json:"code"`
 		}
-		if decodeStrict(raw, &failure) != nil || failure.Code == "" {
+		canonical := decodeStrict(raw, &failure) == nil && identifierPattern.MatchString(failure.Code)
+		if !canonical {
 			failure.Code = "UNCLASSIFIED"
 		}
-		return &componentError{status: response.StatusCode, code: failure.Code}
+		return &componentError{status: response.StatusCode, code: failure.Code, canonical: canonical}
 	}
 	if output == nil {
 		return errors.New("Ring 6 component output contract is missing")
 	}
 	return decodeStrict(raw, output)
+}
+
+func (b *ComponentBoundary) inspectPinned() ([2]uint64, error) {
+	identity, err := inspectSocket(b.path)
+	if err != nil {
+		return [2]uint64{}, err
+	}
+	if identity != b.identity {
+		return [2]uint64{}, errors.New("Ring 6 component socket identity changed")
+	}
+	return identity, nil
 }
 
 func inspectSocket(path string) ([2]uint64, error) {

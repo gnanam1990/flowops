@@ -31,9 +31,16 @@ on one provider operation.
   Transport errors, `5xx`, malformed responses, HSM ambiguity, binding errors,
   cancellation, and timeouts remain nonterminal. Once `HSM_REQUESTED` is
   durable, no later verifier response can terminalize the action as refused.
+- Pin each component socket's startup device/inode identity for its process
+  lifetime. A same-path replacement fails closed before request bytes are sent.
+- Reapply intake freshness while an action is new or merely `BOUND`. Exact
+  `HSM_REQUESTED`/`SIGNED` recovery skips repeated verification and may replay
+  the same provider operation until `ValidUntil`.
 - Refuse existing listener paths and insecure or symlinked ancestors. Bound all
   JSON to 2 MiB and reject duplicate keys, unknown fields, trailing values,
   excessive nesting, wrong content type, and protocol/health substitution.
+  On shutdown, remove only the socket inode created by this process; preserve
+  and report any replacement path.
 
 ## Consequences
 

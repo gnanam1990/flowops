@@ -111,6 +111,19 @@ func (j *Journal) Bind(ctx context.Context, binding ActionBinding) (ActionBindin
 	return binding, false, nil
 }
 
+func (j *Journal) Get(ctx context.Context, operationID, actionID string) (ActionBinding, bool, error) {
+	if !hash(operationID) || !identifierPattern.MatchString(actionID) {
+		return ActionBinding{}, false, ErrBinding
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return ActionBinding{}, false, err
+	}
+	binding, exists := j.records[actionKey(operationID, actionID)]
+	return binding, exists, nil
+}
+
 func (j *Journal) MarkSigned(ctx context.Context, binding ActionBinding, handle string) (ActionBinding, error) {
 	return j.transition(ctx, binding, "SIGNED", handle)
 }

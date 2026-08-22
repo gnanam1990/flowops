@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -103,6 +104,19 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Lstat(socket); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("graceful shutdown left socket path: %v", err)
+	}
+	restartCtx, restartCancel := context.WithCancel(context.Background())
+	restarted := make(chan error, 1)
+	go func() {
+		restarted <- service.ServeUnix(restartCtx, UnixConfig{Socket: socket, RequestTimeout: time.Second})
+	}()
+	waitForSocket(t, socket)
+	restartCancel()
+	if err := <-restarted; err != nil {
+		t.Fatalf("same-path restart failed: %v", err)
+	}
 
 	existing := filepath.Join(directory, "existing.sock")
 	if err := os.WriteFile(existing, []byte("do-not-remove"), 0o600); err != nil {
@@ -114,6 +128,28 @@ func TestServeUnixUsesPrivateSocketAndRefusesExistingPath(t *testing.T) {
 	content, err := os.ReadFile(existing)
 	if err != nil || string(content) != "do-not-remove" {
 		t.Fatalf("existing path changed: %q err=%v", content, err)
+	}
+}
+
+func TestPrivateUnixListenerPreservesReplacementPathOnClose(t *testing.T) {
+	directory := ringTempDir(t)
+	path := filepath.Join(directory, "owned.sock")
+	listener, err := listenPrivateUnix(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err == nil {
+		t.Fatal("replacement path was not detected")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "replacement" {
+		t.Fatalf("replacement path changed: %q err=%v", content, err)
 	}
 }
 

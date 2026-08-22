@@ -7,13 +7,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/gnanam1990/flowops/internal/ascpring6"
 )
 
@@ -24,8 +22,6 @@ type startupConfig struct {
 	verifierSocket, hsmSocket      string
 	dependencyTimeout              time.Duration
 }
-
-var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -52,12 +48,12 @@ func run(ctx context.Context) error {
 	if err := ascpring6.ValidateComponentSockets(verifierBoundary, hsmBoundary); err != nil {
 		return err
 	}
-	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	healthCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := checkComponents(startupCtx, verifierBoundary, hsmBoundary); err != nil {
+	if err := checkComponents(healthCtx, verifierBoundary, hsmBoundary); err != nil {
 		return err
 	}
-	journal, err := ascpring6.OpenJournal(startupCtx, config.journalPath)
+	journal, err := ascpring6.OpenJournal(ctx, config.journalPath)
 	if err != nil {
 		return err
 	}
@@ -105,10 +101,10 @@ func loadConfig() (startupConfig, error) {
 		hsmSocket:         os.Getenv("FLOWOPS_RING6_HSM_SOCKET"),
 		dependencyTimeout: 3 * time.Second,
 	}
-	if !identifierPattern.MatchString(config.keyID) || !identifierPattern.MatchString(config.keeperID) {
+	if !ascpring6.ValidIdentifier(config.keyID) || !ascpring6.ValidIdentifier(config.keeperID) {
 		return startupConfig{}, errors.New("Ring 6 key and keeper identifiers must be canonical")
 	}
-	if !common.IsHexAddress(config.signerAddress) || config.signerAddress != strings.ToLower(config.signerAddress) || common.HexToAddress(config.signerAddress) == (common.Address{}) {
+	if !ascpring6.ValidSignerAddress(config.signerAddress) {
 		return startupConfig{}, errors.New("FLOWOPS_RING6_SIGNER_ADDRESS must be a canonical nonzero address")
 	}
 	rawEpoch := strings.TrimSpace(os.Getenv("FLOWOPS_RING6_KEY_EPOCH"))
@@ -136,6 +132,11 @@ func loadConfig() (startupConfig, error) {
 			return startupConfig{}, errors.New("Ring 6 journal and socket paths must be distinct")
 		}
 		seen[path] = struct{}{}
+	}
+	for _, path := range []string{config.runtimeSocket, config.verifierSocket, config.hsmSocket} {
+		if !ascpring6.ValidSocketPath(path) {
+			return startupConfig{}, errors.New("Ring 6 socket paths must fit the Unix socket address limit")
+		}
 	}
 	return config, nil
 }

@@ -634,6 +634,13 @@ func (s *ActivationStore) Get(ctx context.Context, requestID string) (Activation
 }
 
 func validateActivationInput(input ActivationInput, now time.Time) error {
+	if err := validateActivationInputReplay(input, now); err != nil || input.ValidAfter.Before(now.Add(-time.Minute)) {
+		return ErrActivationInput
+	}
+	return nil
+}
+
+func validateActivationInputReplay(input ActivationInput, now time.Time) error {
 	if !hash(input.RequestID) || !hash(input.AuthorizationID) || !hash(input.OperationID) ||
 		!hash(input.ReservationID) || !identifier(input.ActionID) || len(input.CanonicalPayload) == 0 ||
 		len(input.CanonicalPayload) > 256*1024 || input.CanonicalPayloadHash != CanonicalPayloadHash(input.CanonicalPayload) ||
@@ -642,7 +649,7 @@ func validateActivationInput(input ActivationInput, now time.Time) error {
 		!hash(input.Nonce) || input.InstrumentType != InstrumentLockAuthorization || input.SignerBindingVersion == 0 ||
 		!identifier(input.SignerKeyID) || input.KeyEpoch == 0 || !address(input.ModuleAddress) ||
 		!address(input.SafeAddress) || !identifier(input.KeeperID) || input.ValidAfter.IsZero() ||
-		input.ValidUntil.IsZero() || input.ValidAfter.Before(now.Add(-time.Minute)) || input.ValidAfter.After(now.Add(time.Minute)) ||
+		input.ValidUntil.IsZero() || input.ValidAfter.After(now.Add(time.Minute)) ||
 		!input.ValidAfter.Before(input.ValidUntil) || !now.Before(input.ValidUntil) ||
 		input.ValidUntil.Sub(input.ValidAfter) > maximumAuthorizationWindow {
 		return ErrActivationInput
@@ -655,6 +662,14 @@ func validateActivationInput(input ActivationInput, now time.Time) error {
 // before consulting verifier or HSM dependencies.
 func ValidateActivationInput(input ActivationInput, now time.Time) error {
 	return validateActivationInput(input, now.UTC())
+}
+
+// ValidateActivationInputReplay validates an exact already-persisted signer
+// request until its validity deadline without reapplying the one-minute intake
+// freshness bound. Callers must prove the full input hash is already bound
+// before relying on this replay-only validation.
+func ValidateActivationInputReplay(input ActivationInput, now time.Time) error {
+	return validateActivationInputReplay(input, now.UTC())
 }
 
 // CanonicalPayloadHash is the module-facing calldataHash:

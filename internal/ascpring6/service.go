@@ -25,6 +25,13 @@ var (
 	identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 )
 
+func ValidIdentifier(value string) bool { return identifierPattern.MatchString(value) }
+
+func ValidSignerAddress(value string) bool {
+	return common.IsHexAddress(value) && value == strings.ToLower(common.HexToAddress(value).Hex()) &&
+		common.HexToAddress(value) != (common.Address{})
+}
+
 type PermanentRefusal struct{ Code string }
 
 func (e *PermanentRefusal) Error() string { return "Ring 6 verifier refused: " + e.Code }
@@ -65,6 +72,7 @@ type ActionBinding struct {
 }
 
 type BindingStore interface {
+	Get(context.Context, string, string) (ActionBinding, bool, error)
 	Bind(context.Context, ActionBinding) (ActionBinding, bool, error)
 	MarkHSMRequested(context.Context, ActionBinding) (ActionBinding, error)
 	MarkSigned(context.Context, ActionBinding, string) (ActionBinding, error)
@@ -101,9 +109,7 @@ type serviceActionLock struct {
 
 func New(config Config) (*Service, error) {
 	if config.Store == nil || config.Verifier == nil || config.HSM == nil ||
-		!identifierPattern.MatchString(config.KeyID) || !identifierPattern.MatchString(config.KeeperID) || config.KeyEpoch == 0 ||
-		!common.IsHexAddress(config.SignerAddress) || config.SignerAddress != strings.ToLower(config.SignerAddress) ||
-		common.HexToAddress(config.SignerAddress) == (common.Address{}) {
+		!ValidIdentifier(config.KeyID) || !ValidIdentifier(config.KeeperID) || config.KeyEpoch == 0 || !ValidSignerAddress(config.SignerAddress) {
 		return nil, errors.New("Ring 6 configuration is invalid")
 	}
 	if config.Clock == nil {
@@ -123,7 +129,8 @@ func (s *Service) VerifyAndSign(ctx context.Context, input ascpbearer.Activation
 	if input.SignerKeyID != s.keyID || input.KeyEpoch != s.keyEpoch || input.KeeperID != s.keeperID {
 		return nil, ErrBinding
 	}
-	if err := ascpbearer.ValidateActivationInput(input, s.clock().UTC()); err != nil {
+	now := s.clock().UTC()
+	if err := ascpbearer.ValidateActivationInputReplay(input, now); err != nil {
 		return nil, err
 	}
 	inputHash, err := ascpbearer.ActivationInputHash(input)
@@ -135,29 +142,41 @@ func (s *Service) VerifyAndSign(ctx context.Context, input ascpbearer.Activation
 		IdempotencyKey: hsmIdempotencyKey(input.OperationID, input.ActionID, inputHash), State: "BOUND"}
 	unlock := s.lockAction(input.OperationID, input.ActionID)
 	defer unlock()
-	stored, _, err := s.store.Bind(ctx, binding)
+	stored, exists, err := s.store.Get(ctx, binding.OperationID, binding.ActionID)
 	if err != nil {
 		return nil, err
 	}
-	if !sameBinding(stored, binding) {
+	if exists && !sameBinding(stored, binding) {
 		return nil, ErrBinding
+	}
+	if !exists || stored.State == "BOUND" {
+		if err := ascpbearer.ValidateActivationInput(input, now); err != nil {
+			return nil, err
+		}
+	}
+	if !exists {
+		stored, _, err = s.store.Bind(ctx, binding)
+		if err != nil {
+			return nil, err
+		}
+		if !sameBinding(stored, binding) {
+			return nil, ErrBinding
+		}
 	}
 	if stored.State == "REFUSED" {
 		return nil, &PermanentRefusal{Code: stored.RefusalCode}
 	}
-	if err := s.verifier.Verify(ctx, input, inputHash); err != nil {
-		var refusal *PermanentRefusal
-		if errors.As(err, &refusal) {
-			if stored.State != "BOUND" {
-				return nil, fmt.Errorf("Ring 6 verifier refused after HSM request: %s", refusal.Code)
+	if stored.State == "BOUND" {
+		if err := s.verifier.Verify(ctx, input, inputHash); err != nil {
+			var refusal *PermanentRefusal
+			if !errors.As(err, &refusal) {
+				return nil, err
 			}
 			if _, markErr := s.store.MarkRefused(ctx, binding, refusal.Code); markErr != nil {
 				return nil, fmt.Errorf("persist Ring 6 verifier refusal: %w", markErr)
 			}
+			return nil, err
 		}
-		return nil, err
-	}
-	if stored.State == "BOUND" {
 		stored, err = s.store.MarkHSMRequested(ctx, binding)
 		if err != nil {
 			return nil, err

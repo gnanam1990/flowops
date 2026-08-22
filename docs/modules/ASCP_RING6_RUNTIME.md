@@ -28,6 +28,9 @@ After `HSM_REQUESTED`, an ambiguous call may have created a signature, so no
 later verifier refusal is classified as permanent. The action stays recoverable
 through the same HSM idempotency key. A refusal is exposed to the caller only
 after its `REFUSED` journal transition is fsynced successfully.
+The one-minute intake freshness bound is retained for new and `BOUND` actions.
+An exact persisted `HSM_REQUESTED` or `SIGNED` operation is recovered without
+repeating verifier work and remains replayable only until `ValidUntil`.
 
 ## Trust boundaries
 
@@ -36,6 +39,9 @@ HSM dependencies are pre-existing, different `0600` Unix sockets in owner-only
 directories. Their paths and device/inode identities must differ. Each exposes
 exact health JSON using `ASCP_RING6_COMPONENT_V1` and boundary `verifier` or
 `hsm`.
+The runtime pins each component socket's startup device/inode identity and
+requires that identity before every call; replacing a socket at the same path
+requires an explicit runtime restart.
 
 - `POST /v1/verify` receives `{protocol,input,inputHash}` and returns
   `{verified:true,inputHash}`. Exact HTTP `422` `{code}` is the only permanent
@@ -75,8 +81,13 @@ between signing and journal terminalization.
 | `FLOWOPS_RING6_HSM_SOCKET` | Existing, distinct private HSM component socket |
 | `FLOWOPS_RING6_DEPENDENCY_TIMEOUT` | Optional `1s` through `10s`; default `3s` |
 
-Every path must be clean, absolute, non-root, and distinct. Startup requires
-both component sockets and exact health identities before journal replay.
+Every path must be clean, absolute, non-root, and distinct; socket paths must
+fit the platform Unix address bound. Startup gives component health checks a
+ten-second deadline, then replays the journal under the process lifecycle
+context so journal size does not inherit the health timeout. The listener
+refuses any startup path that already exists. Graceful shutdown unlinks only
+the device/inode created by that process, allowing safe same-path restart while
+preserving a replacement path for operator inspection.
 
 ## Verification and production gates
 
