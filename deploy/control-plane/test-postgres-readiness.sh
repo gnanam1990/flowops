@@ -16,6 +16,8 @@ for required in \
     'GRANT SELECT, INSERT ON ascp_intents, ascp_policy_decisions, ascp_execution_authorizations' \
 	'GRANT SELECT, INSERT ON ascp_adaptation_grants' \
 	'GRANT UPDATE (state, remaining_attempts, consumed_operation_id, consumed_at)' \
+	'GRANT SELECT, INSERT ON ascp_proposal_workflows, ascp_workflow_actions' \
+	'GRANT UPDATE (state, approved_by, approver_role, approver_step_up_at, approver_step_up_until, approved_at' \
 	'GRANT SELECT, INSERT, UPDATE ON ascp_approvals, ascp_budget_reservations' \
 	'GRANT SELECT ON ascp_bearer_handles, ascp_bearer_registry' \
 	'GRANT SELECT, INSERT ON ascp_sign_requests, ascp_signer_outbox' \

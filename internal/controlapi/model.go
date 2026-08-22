@@ -30,14 +30,18 @@ const (
 type Role string
 
 const (
-	RoleOwner     Role = "OWNER"
-	RoleAdmin     Role = "ADMIN"
-	RoleDeveloper Role = "DEVELOPER"
-	RoleFinance   Role = "FINANCE"
-	RoleApprover  Role = "APPROVER"
-	RoleAuditor   Role = "AUDITOR"
-	RoleViewer    Role = "VIEWER"
-	RoleAgent     Role = "AGENT"
+	RoleOwner             Role = "OWNER"
+	RoleAdmin             Role = "ADMIN"
+	RoleDeveloper         Role = "DEVELOPER"
+	RoleFinance           Role = "FINANCE"
+	RoleApprover          Role = "APPROVER"
+	RoleAuditor           Role = "AUDITOR"
+	RoleViewer            Role = "VIEWER"
+	RoleAgent             Role = "AGENT"
+	RoleOrgAdmin          Role = "ORG_ADMIN"
+	RoleSellerAdmin       Role = "SELLER_ADMIN"
+	RoleSignerOperator    Role = "SIGNER_OPERATOR"
+	RoleIncidentResponder Role = "INCIDENT_RESPONDER"
 )
 
 type Permission string
@@ -61,6 +65,7 @@ type Principal struct {
 	AgentID        string        `json:"agentId,omitempty"`
 	Scopes         []string      `json:"scopes,omitempty"`
 	StepUpUntil    time.Time     `json:"stepUpUntil,omitempty"`
+	StepUpAt       time.Time     `json:"stepUpAt,omitempty"`
 	ReadOnly       bool          `json:"readOnly,omitempty"`
 }
 
@@ -75,7 +80,8 @@ func (p Principal) Valid() bool {
 		return false
 	}
 	switch p.Role {
-	case RoleOwner, RoleAdmin, RoleDeveloper, RoleFinance, RoleApprover, RoleAuditor, RoleViewer:
+	case RoleOwner, RoleAdmin, RoleDeveloper, RoleFinance, RoleApprover, RoleAuditor, RoleViewer,
+		RoleOrgAdmin, RoleSellerAdmin, RoleSignerOperator, RoleIncidentResponder:
 		return true
 	default:
 		return false
@@ -88,7 +94,12 @@ func (p Principal) Can(permission Permission) bool {
 	}
 	switch permission {
 	case PermissionRead, PermissionReadCommand:
-		return true
+		switch p.Role {
+		case RoleOrgAdmin, RoleSellerAdmin, RoleSignerOperator, RoleIncidentResponder:
+			return false
+		default:
+			return true
+		}
 	case PermissionCreateIntent, PermissionIssue, PermissionDecide, PermissionPause, PermissionRegisterEscrowTransition, PermissionManageSignerBinding:
 		if p.ReadOnly {
 			return false

@@ -23,6 +23,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
 	"github.com/gnanam1990/flowops/internal/ascpsignerbinding"
+	"github.com/gnanam1990/flowops/internal/ascpworkflow"
 	"github.com/gnanam1990/flowops/internal/controlplane"
 	"github.com/gnanam1990/flowops/internal/directoryreader"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
@@ -75,6 +76,13 @@ type ASCPSignerBindingService interface {
 	Current(context.Context, string, string) (ascpsignerbinding.Binding, error)
 }
 
+type ASCPWorkflowService interface {
+	Create(context.Context, ascpworkflow.Actor, string, ascpworkflow.CreateRequest) (ascpworkflow.Workflow, error)
+	Get(context.Context, ascpworkflow.Actor, string) (ascpworkflow.Workflow, error)
+	Approve(context.Context, ascpworkflow.Actor, string, string) (ascpworkflow.Workflow, error)
+	Cancel(context.Context, ascpworkflow.Actor, string, string) (ascpworkflow.Workflow, error)
+}
+
 type ASCPSettlementAttemptRequest struct {
 	OperationID     string `json:"operationId"`
 	Action          string `json:"action"`
@@ -118,6 +126,7 @@ type ServerConfig struct {
 	ASCPFlow                 ASCPFlowService
 	ASCPActivation           ASCPActivationService
 	ASCPSignerBindings       ASCPSignerBindingService
+	ASCPWorkflows            ASCPWorkflowService
 	ASCPSettlement           ASCPSettlementRegistrar
 	KeeperCallbackKey        []byte
 }
@@ -139,6 +148,7 @@ type Server struct {
 	ascpFlow                 ASCPFlowService
 	ascpActivation           ASCPActivationService
 	ascpSignerBindings       ASCPSignerBindingService
+	ascpWorkflows            ASCPWorkflowService
 	ascpSettlement           ASCPSettlementRegistrar
 	keeperCallbackKey        []byte
 	handler                  http.Handler
@@ -174,6 +184,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		ascpFlow:               cfg.ASCPFlow,
 		ascpActivation:         cfg.ASCPActivation,
 		ascpSignerBindings:     cfg.ASCPSignerBindings,
+		ascpWorkflows:          cfg.ASCPWorkflows,
 		ascpSettlement:         cfg.ASCPSettlement,
 		keeperCallbackKey:      append([]byte(nil), cfg.KeeperCallbackKey...),
 	}
@@ -209,6 +220,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST /v1/agents/{agentID}/pause", s.authenticate(http.HandlerFunc(s.handlePauseAgent)))
 	mux.Handle("PUT /v1/agents/{agentID}/signer-binding", s.authenticate(http.HandlerFunc(s.handlePutASCPSignerBinding)))
 	mux.Handle("GET /v1/agents/{agentID}/signer-binding", s.authenticate(http.HandlerFunc(s.handleGetASCPSignerBinding)))
+	mux.Handle("POST /v1/workflows", s.authenticate(http.HandlerFunc(s.handleCreateASCPWorkflow)))
+	mux.Handle("GET /v1/workflows/{workflowID}", s.authenticate(http.HandlerFunc(s.handleGetASCPWorkflow)))
+	mux.Handle("POST /v1/workflows/{workflowID}/approve", s.authenticate(http.HandlerFunc(s.handleApproveASCPWorkflow)))
+	mux.Handle("POST /v1/workflows/{workflowID}/cancel", s.authenticate(http.HandlerFunc(s.handleCancelASCPWorkflow)))
 	mux.Handle("POST /v1/organization/pause", s.authenticate(http.HandlerFunc(s.handlePauseOrganization)))
 	mux.Handle("GET /v1/commands/{commandID}", s.authenticate(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("GET /v1/dashboard/snapshot", s.authenticate(http.HandlerFunc(s.handleDashboardSnapshot)))
@@ -364,7 +379,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"principalId": principal.ID, "organizationId": principal.OrganizationID,
 		"kind": principal.Kind, "role": principal.Role, "readOnly": principal.ReadOnly,
-		"stepUpUntil": principal.StepUpUntil,
+		"stepUpAt": principal.StepUpAt, "stepUpUntil": principal.StepUpUntil,
 	})
 }
 
@@ -1234,6 +1249,129 @@ func (s *Server) handleGetASCPSignerBinding(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"binding": binding})
+}
+
+func (s *Server) handleCreateASCPWorkflow(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	actor, ok := s.workflowActor(w, r)
+	if !ok {
+		return
+	}
+	key, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var request ascpworkflow.CreateRequest
+	if decodeJSON(w, r, &request) != nil {
+		return
+	}
+	workflow, err := s.ascpWorkflows.Create(r.Context(), actor, key, request)
+	if err != nil {
+		s.writeWorkflowError(w, err)
+		return
+	}
+	status := http.StatusCreated
+	if workflow.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"correlationId": correlationID, "workflow": workflow})
+}
+
+func (s *Server) handleGetASCPWorkflow(w http.ResponseWriter, r *http.Request) {
+	correlationID := s.correlationID(w)
+	actor, ok := s.workflowActor(w, r)
+	if !ok {
+		return
+	}
+	workflow, err := s.ascpWorkflows.Get(r.Context(), actor, r.PathValue("workflowID"))
+	if err != nil {
+		s.writeWorkflowError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "workflow": workflow})
+}
+
+func (s *Server) handleApproveASCPWorkflow(w http.ResponseWriter, r *http.Request) {
+	s.handleASCPWorkflowDecision(w, r, true)
+}
+
+func (s *Server) handleCancelASCPWorkflow(w http.ResponseWriter, r *http.Request) {
+	s.handleASCPWorkflowDecision(w, r, false)
+}
+
+func (s *Server) handleASCPWorkflowDecision(w http.ResponseWriter, r *http.Request, approve bool) {
+	correlationID := s.correlationID(w)
+	actor, ok := s.workflowActor(w, r)
+	if !ok {
+		return
+	}
+	key, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct{}
+	if decodeJSON(w, r, &body) != nil {
+		return
+	}
+	var workflow ascpworkflow.Workflow
+	var err error
+	if approve {
+		workflow, err = s.ascpWorkflows.Approve(r.Context(), actor, r.PathValue("workflowID"), key)
+	} else {
+		workflow, err = s.ascpWorkflows.Cancel(r.Context(), actor, r.PathValue("workflowID"), key)
+	}
+	if err != nil {
+		s.writeWorkflowError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"correlationId": correlationID, "workflow": workflow})
+}
+
+func (s *Server) workflowActor(w http.ResponseWriter, r *http.Request) (ascpworkflow.Actor, bool) {
+	if s.ascpWorkflows == nil {
+		writeError(w, http.StatusServiceUnavailable, "WORKFLOW_UNAVAILABLE", errors.New("durable proposal workflows are not configured"), true, "")
+		return ascpworkflow.Actor{}, false
+	}
+	principal := principalFrom(r.Context())
+	if principal.Kind != PrincipalHuman || principal.ReadOnly {
+		writeError(w, http.StatusForbidden, "HUMAN_GOVERNANCE_REQUIRED", ErrForbidden, false, "")
+		return ascpworkflow.Actor{}, false
+	}
+	var role ascpworkflow.Role
+	switch principal.Role {
+	case RoleOwner, RoleAdmin, RoleOrgAdmin:
+		role = ascpworkflow.OrgAdmin
+	case RoleSellerAdmin:
+		role = ascpworkflow.SellerAdmin
+	case RoleSignerOperator:
+		role = ascpworkflow.SignerOperator
+	case RoleIncidentResponder:
+		role = ascpworkflow.IncidentResponder
+	default:
+		writeError(w, http.StatusForbidden, "WORKFLOW_ROLE_REQUIRED", ErrForbidden, false, "")
+		return ascpworkflow.Actor{}, false
+	}
+	return ascpworkflow.Actor{OrganizationID: principal.OrganizationID, PrincipalID: principal.ID, Role: role,
+		StepUpAt: principal.StepUpAt, StepUpUntil: principal.StepUpUntil}, true
+}
+
+func (s *Server) writeWorkflowError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ascpworkflow.ErrNotFound):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+	case errors.Is(err, ascpworkflow.ErrForbiddenRole), errors.Is(err, ascpworkflow.ErrSamePrincipal):
+		writeError(w, http.StatusForbidden, "WORKFLOW_DUAL_CONTROL_REQUIRED", err, false, "")
+	case errors.Is(err, ascpworkflow.ErrStepUpRequired):
+		writeError(w, http.StatusForbidden, "FRESH_STEP_UP_REQUIRED", err, false, "")
+	case errors.Is(err, ascpworkflow.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", err, false, "")
+	case errors.Is(err, ascpworkflow.ErrStateConflict):
+		writeError(w, http.StatusConflict, "WORKFLOW_STATE_CONFLICT", err, false, "")
+	case errors.Is(err, ascpworkflow.ErrInvalidWorkflow):
+		writeError(w, http.StatusBadRequest, "INVALID_WORKFLOW", err, false, "")
+	default:
+		writeError(w, http.StatusServiceUnavailable, "WORKFLOW_NOT_COMMITTED", err, true, "")
+	}
 }
 
 func (s *Server) writeASCPSignerBindingError(w http.ResponseWriter, err error) {
