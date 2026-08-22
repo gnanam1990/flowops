@@ -29,6 +29,8 @@ mistakenly scheduled key can therefore be neutralized before permissionless
 activation without allowing a later lower-epoch replacement. Revocation is
 permanent for that verifier address; a later rotation must use a different key
 address and cannot revive a revoked key during its activation delay.
+The Go verifier builders require the caller's exact revoked-state snapshot and
+refuse to construct either add or revoke payloads when that snapshot is true.
 
 The action fields include current-state preconditions as well as proposed
 values. This makes an approval stale if verifier state, authorizer epoch,

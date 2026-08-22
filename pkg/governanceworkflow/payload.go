@@ -55,9 +55,11 @@ type DirectoryProposal struct {
 func CallEscrowAddVerifier(
 	chainID uint64,
 	contractAddress, workflowID, key string,
-	activeEpoch, pendingEpoch, pendingActivatesAt, nextEpoch uint64,
+	activeEpoch, pendingEpoch, pendingActivatesAt uint64,
+	revoked bool,
+	nextEpoch uint64,
 ) (common.Hash, error) {
-	if !address(key) || nextEpoch == 0 || nextEpoch <= activeEpoch ||
+	if !address(key) || revoked || nextEpoch == 0 || nextEpoch <= activeEpoch ||
 		(pendingEpoch == 0) != (pendingActivatesAt == 0) || (pendingEpoch != 0 && nextEpoch <= pendingEpoch) {
 		return common.Hash{}, ErrInvalidPayload
 	}
@@ -71,8 +73,9 @@ func CallEscrowRevokeVerifier(
 	chainID uint64,
 	contractAddress, workflowID, key string,
 	activeEpoch, pendingEpoch, pendingActivatesAt uint64,
+	revoked bool,
 ) (common.Hash, error) {
-	if !address(key) || (activeEpoch == 0 && pendingEpoch == 0) ||
+	if !address(key) || revoked || (activeEpoch == 0 && pendingEpoch == 0) ||
 		(pendingEpoch == 0) != (pendingActivatesAt == 0) {
 		return common.Hash{}, ErrInvalidPayload
 	}

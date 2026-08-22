@@ -495,7 +495,7 @@ contract ASCPCallEscrowTest is Test {
 
         vm.expectRevert(ASCPCallEscrow.InvalidWorkflowBinding.selector);
         vm.prank(address(settlementGovernor));
-        escrow.addVerifier(verifier, 10, keccak256("stale-workflow"), staleNextHash);
+        escrow.addVerifier(verifier, 10, workflowId, staleNextHash);
     }
 
     function testPendingVerifierCanBeRevokedBeforeActivation() public {
@@ -517,6 +517,43 @@ contract ASCPCallEscrowTest is Test {
         vm.expectRevert(ASCPCallEscrow.InvalidVerifier.selector);
         settlementGovernor.addVerifier(escrow, verifier, 8);
         assertTrue(escrow.verifierRevoked(verifier));
+    }
+
+    function testRevokedVerifierCannotReturnAfterRotation() public {
+        uint256 verifierAKey = 0xA11CE;
+        uint256 verifierBKey = 0xB0B;
+        address verifierA = vm.addr(verifierAKey);
+        address verifierB = vm.addr(verifierBKey);
+
+        settlementGovernor.addVerifier(escrow, verifierA, 7);
+        vm.warp(block.timestamp + escrow.VERIFIER_ACTIVATION_DELAY());
+        escrow.activateVerifier(verifierA);
+        settlementGovernor.addVerifier(escrow, verifierA, 9);
+        settlementGovernor.revokeVerifier(escrow, verifierA);
+
+        (uint64 pendingEpoch, uint64 pendingActivatesAt) = escrow.pendingVerifier(verifierA);
+        assertEq(pendingEpoch, 0);
+        assertEq(pendingActivatesAt, 0);
+        assertEq(escrow.activeVerifierEpoch(verifierA), 9);
+        assertTrue(escrow.verifierRevoked(verifierA));
+
+        settlementGovernor.addVerifier(escrow, verifierB, 7);
+        vm.warp(block.timestamp + escrow.VERIFIER_ACTIVATION_DELAY());
+        escrow.activateVerifier(verifierB);
+        assertEq(escrow.activeVerifierEpoch(verifierB), 7);
+        assertFalse(escrow.verifierRevoked(verifierB));
+
+        vm.expectRevert(ASCPCallEscrow.InvalidVerifier.selector);
+        settlementGovernor.addVerifier(escrow, verifierA, 10);
+
+        ASCPCallEscrow.ExecutionCommitment memory c = _commitment();
+        bytes32 callId =
+            keccak256(abi.encodePacked(escrow.executionCommitmentDigest(c, address(escrow), block.chainid)));
+        buyer.lock(escrow, c, seller, resource, new bytes32[](0), new bytes32[](0));
+        ASCPCallEscrow.VerdictAttestation memory a = _releaseAttestation(callId, c, 7, 33);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(verifierBKey, escrow.verdictAttestationDigest(a));
+        escrow.release(callId, a, abi.encodePacked(r, s, v));
+        assertEq(uint8(escrow.getCall(callId).state), uint8(ASCPCallEscrow.State.Released));
     }
 
     function testGovernancePayloadMatchesPublishedGoGoldenVector() public {

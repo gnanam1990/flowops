@@ -13,10 +13,10 @@ const vectorWorkflow = "0x000000000000000000000000000000000000000000000000000000
 func TestGovernancePayloadGoldenVectors(t *testing.T) {
 	values := map[string]string{
 		"add verifier": mustHash(t, func() (common.Hash, error) {
-			return CallEscrowAddVerifier(8453, vectorContract, vectorWorkflow, "0x2222222222222222222222222222222222222222", 0, 0, 0, 7)
+			return CallEscrowAddVerifier(8453, vectorContract, vectorWorkflow, "0x2222222222222222222222222222222222222222", 0, 0, 0, false, 7)
 		}),
 		"revoke verifier": mustHash(t, func() (common.Hash, error) {
-			return CallEscrowRevokeVerifier(8453, vectorContract, vectorWorkflow, "0x2222222222222222222222222222222222222222", 7, 0, 0)
+			return CallEscrowRevokeVerifier(8453, vectorContract, vectorWorkflow, "0x2222222222222222222222222222222222222222", 7, 0, 0, false)
 		}),
 		"escrow pause": mustHash(t, func() (common.Hash, error) {
 			return CallEscrowPause(8453, vectorContract, vectorWorkflow)
@@ -135,7 +135,15 @@ func TestGovernancePayloadRejectsDomainAndValueSubstitution(t *testing.T) {
 		},
 		"invalid pending verifier tuple": func() (common.Hash, error) {
 			return CallEscrowRevokeVerifier(8453, vectorContract, vectorWorkflow,
-				"0x2222222222222222222222222222222222222222", 0, 7, 0)
+				"0x2222222222222222222222222222222222222222", 0, 7, 0, false)
+		},
+		"revoked add verifier": func() (common.Hash, error) {
+			return CallEscrowAddVerifier(8453, vectorContract, vectorWorkflow,
+				"0x2222222222222222222222222222222222222222", 9, 0, 0, true, 10)
+		},
+		"revoked verifier": func() (common.Hash, error) {
+			return CallEscrowRevokeVerifier(8453, vectorContract, vectorWorkflow,
+				"0x2222222222222222222222222222222222222222", 9, 0, 0, true)
 		},
 		"unchanged pause": func() (common.Hash, error) {
 			return SpendPause(8453, vectorContract, vectorWorkflow, true, true)

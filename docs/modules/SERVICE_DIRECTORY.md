@@ -3,10 +3,11 @@
 ## Why and entry
 
 `contracts/src/ServiceDirectory.sol` is the governed source of active seller
-and resource roots. A future escrow/signer checks its current root and proves
-the exact seller/resource leaves before any money lock. The contract's entry
-points are proposal, governor approval/cancellation, delayed activation, and
-one-way protective overlay calls.
+and resource roots. `ASCPCallEscrow` checks its current root and proves the exact
+seller/resource leaves before every new money lock; the legacy `CallEscrow`
+does not consume this directory. The contract's entry points are proposal,
+governor approval/cancellation, delayed activation, and one-way protective
+overlay calls.
 
 ## Inputs, outputs, and boundaries
 
