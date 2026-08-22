@@ -16,6 +16,7 @@ type runtimeMemoryStore struct {
 	retries     int
 	completions int
 	expirations int
+	refusals    int
 	proof       UnactivatedProof
 }
 
@@ -95,6 +96,18 @@ func (s *runtimeMemoryStore) RetryLease(context.Context, RuntimeLease, string, t
 	return nil
 }
 
+func (s *runtimeMemoryStore) Refuse(_ context.Context, _ RuntimeLease, code string) (ActivationRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if code != "SIGNER_REFUSED" || s.request.State != SignRequested {
+		return ActivationRequest{}, ErrActivationState
+	}
+	s.request.State = SignerRefused
+	s.claimed = false
+	s.refusals++
+	return s.request, nil
+}
+
 func (s *runtimeMemoryStore) ExpireUnactivated(_ context.Context, _ RuntimeLease, proof UnactivatedProof) (ActivationRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,12 +177,36 @@ func TestRuntimeServiceContainsRetryableBoundaryFailure(t *testing.T) {
 	}
 }
 
+func TestRuntimeServicePermanentlyRefusesOnlyExplicitSignerRefusal(t *testing.T) {
+	now := time.Now().UTC()
+	store := &runtimeMemoryStore{request: runtimeRequest(now)}
+	signer := &runtimeTestSigner{prepareErr: &RuntimeBoundaryError{Boundary: "signer", Code: "SIGNER_REFUSED", StatusCode: 422}}
+	step, ok, err := runtimeServiceForTest(t, store, signer).AdvanceOnce(context.Background())
+	if err != nil || !ok || !step.Refused || step.State != SignerRefused || store.refusals != 1 || store.retries != 0 {
+		t.Fatalf("step=%+v ok=%t refusals=%d retries=%d err=%v", step, ok, store.refusals, store.retries, err)
+	}
+	for _, code := range []string{"BINDING_MISMATCH", "STATE_CONFLICT", "VERIFICATION_UNAVAILABLE"} {
+		store := &runtimeMemoryStore{request: runtimeRequest(now)}
+		signer := &runtimeTestSigner{prepareErr: &RuntimeBoundaryError{Boundary: "signer", Code: code}}
+		step, ok, err := runtimeServiceForTest(t, store, signer).AdvanceOnce(context.Background())
+		if err != nil || !ok || !step.Retried || store.refusals != 0 || store.retries != 1 || store.request.State != SignRequested {
+			t.Fatalf("code=%s step=%+v refusals=%d retries=%d state=%s err=%v", code, step, store.refusals, store.retries, store.request.State, err)
+		}
+	}
+	store = &runtimeMemoryStore{request: runtimeRequest(now)}
+	signer = &runtimeTestSigner{prepareErr: &RuntimeBoundaryError{Boundary: "signer", Code: "SIGNER_REFUSED", StatusCode: 503}}
+	step, ok, err = runtimeServiceForTest(t, store, signer).AdvanceOnce(context.Background())
+	if err != nil || !ok || !step.Retried || store.refusals != 0 || store.retries != 1 || store.request.State != SignRequested {
+		t.Fatalf("wrong status permanently refused: step=%+v refusals=%d retries=%d state=%s err=%v", step, store.refusals, store.retries, store.request.State, err)
+	}
+}
+
 func TestRuntimeServiceExpiresOnlyWithExactSignerProof(t *testing.T) {
 	now := time.Now().UTC()
 	request := runtimeRequest(now)
 	request.ValidUntil = now.Add(-time.Second)
 	proof := UnactivatedProof{
-		RequestID: request.RequestID, ActionID: request.ActionID, InputHash: request.InputHash,
+		RequestID: request.RequestID, OperationID: request.OperationID, ActionID: request.ActionID, InputHash: request.InputHash,
 		Status: "EXPIRED_UNACTIVATED", ProvenAt: now,
 	}
 	proof.ProofDigest, _ = UnactivatedProofDigest(proof)

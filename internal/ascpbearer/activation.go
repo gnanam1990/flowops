@@ -39,6 +39,7 @@ var (
 	ErrActivationBinding  = errors.New("signer activation binding mismatch")
 	ErrActivationState    = errors.New("invalid signer activation state")
 	ErrActivationNotFound = errors.New("signer activation request not found")
+	ErrSignerRefused      = errors.New("isolated signer permanently refused request")
 )
 
 type ActivationInput struct {
@@ -673,6 +674,11 @@ func activationInputHash(input ActivationInput) (string, error) {
 	digest := sha256.Sum256(append([]byte("ASCP_SIGN_REQUEST_V1\n"), encoded...))
 	return "0x" + hex.EncodeToString(digest[:]), nil
 }
+
+// ActivationInputHash returns the permanent logical signer-request hash. The
+// attempt RequestID is deliberately excluded; AuthorizationID remains the
+// durable idempotency identity.
+func ActivationInputHash(input ActivationInput) (string, error) { return activationInputHash(input) }
 
 // RegistryMirrorBytes is the exact immutable object written to WORM. Mirror
 // implementation retries must use these bytes and reject an existing object

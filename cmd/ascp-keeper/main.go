@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net/url"
@@ -33,6 +36,7 @@ type startupConfig struct {
 	batchSize, expiryLimit, maxFeeBumps                    int
 	maxGasLimit                                            uint64
 	feeCap                                                 ascpkeeper.Fee
+	signerTokenPath                                        string
 }
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
@@ -54,6 +58,11 @@ func run(ctx context.Context) error {
 	if err := ascpkeeper.ValidateDistinctSockets(config.sockets); err != nil {
 		return fmt.Errorf("validate keeper boundary sockets: %w", err)
 	}
+	signerCapability, err := loadSignerCapability(config.signerTokenPath)
+	if err != nil {
+		return err
+	}
+	defer clear(signerCapability)
 	db, err := sql.Open("pgx", config.databaseURL)
 	if err != nil {
 		return fmt.Errorf("open keeper PostgreSQL: %w", err)
@@ -73,7 +82,12 @@ func run(ctx context.Context) error {
 	}
 	boundaries := make(map[string]*ascpkeeper.UnixBoundary, len(config.sockets))
 	for name, path := range config.sockets {
-		boundary, err := ascpkeeper.NewUnixBoundary(name, path, config.boundaryTimeout)
+		var boundary *ascpkeeper.UnixBoundary
+		if name == "artifact" {
+			boundary, err = ascpkeeper.NewAuthenticatedUnixBoundary(name, path, config.boundaryTimeout, signerCapability)
+		} else {
+			boundary, err = ascpkeeper.NewUnixBoundary(name, path, config.boundaryTimeout)
+		}
 		if err != nil {
 			return fmt.Errorf("configure %s boundary: %w", name, err)
 		}
@@ -171,10 +185,11 @@ func checkBoundaries(ctx context.Context, boundaries map[string]*ascpkeeper.Unix
 
 func loadConfig() (startupConfig, error) {
 	config := startupConfig{
-		databaseURL: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_DATABASE_URL")),
-		keeperID:    strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_ID")),
-		gasPayer:    strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_GAS_PAYER")),
-		interval:    time.Minute, cycleTimeout: 50 * time.Second, leaseDuration: 55 * time.Second, boundaryTimeout: 3 * time.Second,
+		databaseURL:     strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_DATABASE_URL")),
+		keeperID:        strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_ID")),
+		gasPayer:        strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_GAS_PAYER")),
+		signerTokenPath: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_SIGNER_TOKEN_FILE")),
+		interval:        time.Minute, cycleTimeout: 50 * time.Second, leaseDuration: 55 * time.Second, boundaryTimeout: 3 * time.Second,
 		batchSize: 20, expiryLimit: 100, maxFeeBumps: 3, maxGasLimit: 1_000_000,
 		feeCap:  ascpkeeper.Fee{MaxFeePerGasWei: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_MAX_FEE_PER_GAS_WEI")), MaxPriorityFeePerGasWei: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_MAX_PRIORITY_FEE_PER_GAS_WEI"))},
 		sockets: map[string]string{},
@@ -184,6 +199,9 @@ func loadConfig() (startupConfig, error) {
 	}
 	if !identifierPattern.MatchString(config.keeperID) {
 		return startupConfig{}, errors.New("FLOWOPS_KEEPER_ID is invalid")
+	}
+	if !filepath.IsAbs(config.signerTokenPath) || filepath.Clean(config.signerTokenPath) != config.signerTokenPath || config.signerTokenPath == "/" {
+		return startupConfig{}, errors.New("FLOWOPS_KEEPER_SIGNER_TOKEN_FILE must be a clean absolute path")
 	}
 	if !common.IsHexAddress(config.gasPayer) || strings.ToLower(common.HexToAddress(config.gasPayer).Hex()) != config.gasPayer || common.HexToAddress(config.gasPayer) == (common.Address{}) {
 		return startupConfig{}, errors.New("FLOWOPS_KEEPER_GAS_PAYER must be a lowercase nonzero address")
@@ -236,6 +254,51 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, errors.New("ASCP keeper timing, batch, gas, or fee configuration is outside safe bounds")
 	}
 	return config, nil
+}
+
+func loadSignerCapability(path string) ([]byte, error) {
+	parent, err := os.Lstat(filepath.Dir(path))
+	if err != nil || parent.Mode()&os.ModeSymlink != 0 || !parent.IsDir() || parent.Mode().Perm()&0o022 != 0 {
+		return nil, errors.New("keeper signer-capability parent must be a secured non-symlink directory")
+	}
+	parentStat, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok || parentStat.Uid != uint32(os.Geteuid()) && parentStat.Uid != 0 {
+		return nil, errors.New("keeper signer-capability parent must be owned by the runtime user or root")
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, errors.New("keeper signer capability is unavailable")
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 1024 {
+		return nil, errors.New("keeper signer capability must be a private regular file")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {
+		return nil, errors.New("keeper signer capability must be owned by the runtime user or root")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, 1025))
+	defer clear(raw)
+	if err != nil || len(raw) > 1024 {
+		return nil, errors.New("read keeper signer capability")
+	}
+	encoded := bytes.TrimSpace(raw)
+	decoded := make([]byte, base64.StdEncoding.DecodedLen(len(encoded)))
+	n, err := base64.StdEncoding.Decode(decoded, encoded)
+	decoded = decoded[:n]
+	canonical := make([]byte, base64.StdEncoding.EncodedLen(len(decoded)))
+	base64.StdEncoding.Encode(canonical, decoded)
+	defer clear(canonical)
+	nonzero := byte(0)
+	for _, value := range decoded {
+		nonzero |= value
+	}
+	if err != nil || len(decoded) != 32 || !bytes.Equal(canonical, encoded) || nonzero == 0 {
+		clear(decoded)
+		return nil, errors.New("keeper signer capability must be canonical base64 for 32 nonzero bytes")
+	}
+	return decoded, nil
 }
 
 func validateDatabaseURL(raw string) error {

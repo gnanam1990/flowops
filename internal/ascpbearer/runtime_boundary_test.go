@@ -95,16 +95,17 @@ func TestRuntimeSignerAndMirrorEnforceExactResponseBindings(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/prove-unactivated", func(writer http.ResponseWriter, request *http.Request) {
 		var body struct {
-			Protocol  string `json:"protocol"`
-			RequestID string `json:"requestId"`
-			ActionID  string `json:"actionId"`
-			InputHash string `json:"inputHash"`
+			Protocol    string `json:"protocol"`
+			RequestID   string `json:"requestId"`
+			OperationID string `json:"operationId"`
+			ActionID    string `json:"actionId"`
+			InputHash   string `json:"inputHash"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body.Protocol != runtimeBoundaryProtocol {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		proof := UnactivatedProof{RequestID: body.RequestID, ActionID: body.ActionID, InputHash: body.InputHash, Status: "EXPIRED_UNACTIVATED", ProvenAt: time.Now().UTC()}
+		proof := UnactivatedProof{RequestID: body.RequestID, OperationID: body.OperationID, ActionID: body.ActionID, InputHash: body.InputHash, Status: "EXPIRED_UNACTIVATED", ProvenAt: time.Now().UTC()}
 		proof.ProofDigest, _ = UnactivatedProofDigest(proof)
 		encoded, _ := json.Marshal(struct {
 			Proof UnactivatedProof `json:"proof"`

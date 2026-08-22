@@ -21,7 +21,8 @@ production Base value as part of this procedure.
 The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/flowops-admin`, `/flowops/flowops-operator`,
 `/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`,
-`/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`, `/flowops/ascp-bearer-worker`, and
+`/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`,
+`/flowops/ascp-bearer-worker`, `/flowops/ascp-signer-runtime`, and
 `/flowops/postgres-readiness`. `railway.json` selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
@@ -291,6 +292,7 @@ execution from `PUBLIC`.
 |---|---|
 | `FLOWOPS_KEEPER_DATABASE_URL` | Dedicated keeper-role PostgreSQL URL with exactly one `sslmode=verify-full`; effective schema must be `public` |
 | `FLOWOPS_KEEPER_ID` | Stable keeper deployment identifier |
+| `FLOWOPS_KEEPER_SIGNER_TOKEN_FILE` | Private canonical base64 32-byte capability shared only with the isolated signer artifact boundary |
 | `FLOWOPS_KEEPER_GAS_PAYER` | Canonical lowercase dedicated nonzero EOA address |
 | `FLOWOPS_KEEPER_CHAIN_ID` | Exact pinned Base chain, `8453` or `84532` |
 | `FLOWOPS_KEEPER_ARTIFACT_SOCKET` | Absolute Unix socket for activated signer release |
@@ -354,6 +356,34 @@ Alert on retry count, lease age, oldest eligible request, prepared-to-active
 latency, active-to-primary-mirror latency, acknowledgment latency, expiry lag,
 proof failures, and reservation/request/outbox state divergence. A running
 worker does not prove signer HSM custody, WORM retention, or sidecar durability.
+
+Run `/flowops/ascp-signer-runtime` as the isolated encrypted-ledger process. It
+has no database or TCP access requirement and must not receive the spend
+authorizer private key. Give it one owner-only data volume and four distinct
+Unix paths: two new listener paths and two existing dependency sockets.
+
+| Variable | Requirement |
+|---|---|
+| `FLOWOPS_SIGNER_KEY_ID` | Signer/HSM key identifier; must equal the worker shard |
+| `FLOWOPS_SIGNER_KEY_EPOCH` | Positive canonical epoch; must equal the worker shard |
+| `FLOWOPS_SIGNER_ADDRESS` | Canonical module-registered signer address used to recover-check every returned signature |
+| `FLOWOPS_SIGNER_KEEPER_ID` | Sole keeper identity accepted by artifact release |
+| `FLOWOPS_SIGNER_LEDGER_PATH` | Append-only ledger path in an owner-only directory |
+| `FLOWOPS_SIGNER_ARTIFACT_KEY_FILE` | Distinct `0600` base64 32-byte AES key file in the same volume |
+| `FLOWOPS_SIGNER_KEEPER_TOKEN_FILE` | Distinct `0600` canonical base64 32-byte keeper capability file, mounted only into signer and keeper runtimes and never equal to the artifact key |
+| `FLOWOPS_SIGNER_RUNTIME_SOCKET` | New signer-protocol socket path |
+| `FLOWOPS_SIGNER_ARTIFACT_SOCKET` | New keeper artifact socket path |
+| `FLOWOPS_SIGNER_RING6_SOCKET` | Existing `ASCP_SIGNER_DEPENDENCY_V1` Ring 6/HSM socket |
+| `FLOWOPS_SIGNER_ACTIVATION_SOCKET` | Existing, distinct activation-authority socket |
+| `FLOWOPS_SIGNER_DEPENDENCY_TIMEOUT` | Optional `1s` through `10s`, default `3s` |
+
+The process refuses an existing listener path instead of deleting it. Its
+socket parents and ledger volume must be owned by UID 10001 or root and not
+writable by group or other users. Both dependency services must pass exact
+health identity before ledger replay; active records then revalidate their
+activation proof. A running process proves local protocol and ledger startup,
+not HSM custody, independent Ring 6 RPC reads, activation-authority correctness,
+or WORM retention.
 
 Signer receipt keys are public material but remain tenant-scoped security
 configuration. Each JSON item must contain exactly `organizationId`,

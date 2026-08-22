@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const signerLedgerVersion = 1
+const signerLedgerVersion = 2
 
 type signerLedgerEvent struct {
 	Version      int             `json:"version"`
@@ -98,7 +98,7 @@ func OpenFileSignerStore(path string, artifactCipher ArtifactCipher, verifier Ac
 			}
 		}
 		store.byID[id] = cloneSignerRecord(record)
-		store.byAction[record.Handle.ActionID] = id
+		store.byAction[signerActionKey(record.Handle.OperationID, record.Handle.ActionID)] = id
 	}
 	return store, nil
 }
@@ -107,12 +107,15 @@ func openSignerJournal(path string) (*signerJournal, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("signer ledger path is required")
 	}
-	directoryInfo, err := os.Stat(filepath.Dir(path))
+	directoryInfo, err := os.Lstat(filepath.Dir(path))
 	if err != nil {
 		return nil, fmt.Errorf("inspect signer ledger directory: %w", err)
 	}
-	if !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o022 != 0 {
-		return nil, errors.New("signer ledger directory must not be writable by group or other users")
+	if directoryInfo.Mode()&os.ModeSymlink != 0 || !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o022 != 0 {
+		return nil, errors.New("signer ledger directory must be a non-symlink directory not writable by group or other users")
+	}
+	if !signerOwnerAllowed(directoryInfo) {
+		return nil, errors.New("signer ledger directory must be owned by the runtime user or root")
 	}
 	file, created, err := openSignerLedgerFile(path)
 	if err != nil {
@@ -159,7 +162,16 @@ func openSignerLedgerFile(path string) (*os.File, bool, error) {
 		_ = file.Close()
 		return nil, false, errors.New("signer ledger must be a regular file inaccessible to group and other users")
 	}
+	if !signerOwnerAllowed(info) {
+		_ = file.Close()
+		return nil, false, errors.New("signer ledger must be owned by the runtime user or root")
+	}
 	return file, created, nil
+}
+
+func signerOwnerAllowed(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && (stat.Uid == uint32(os.Geteuid()) || stat.Uid == 0)
 }
 
 func syncSignerLedgerDirectory(path string) error {
@@ -269,7 +281,7 @@ func (j *signerJournal) validateTransition(next signerRecord) error {
 			return errors.New("first signer ledger state must be PREPARED")
 		}
 		for _, record := range j.records {
-			if record.Handle.ActionID == next.Handle.ActionID {
+			if record.Handle.OperationID == next.Handle.OperationID && record.Handle.ActionID == next.Handle.ActionID {
 				return ErrMismatch
 			}
 		}
@@ -292,7 +304,8 @@ func (j *signerJournal) validateTransition(next signerRecord) error {
 
 func validateSignerRecord(record signerRecord) error {
 	handle := record.Handle
-	if !opaqueHandle(handle.ID) || !identifier(handle.ActionID) || !hash(handle.OperationID) || !hash(handle.SignerRequestHash) ||
+	if !opaqueHandle(handle.ID) || !hash(handle.RequestID) || !hash(handle.AuthorizationID) || !hash(handle.ReservationID) ||
+		!identifier(handle.ActionID) || !hash(handle.OperationID) || !hash(handle.SignerRequestHash) ||
 		!hash(handle.CanonicalPayloadHash) || !hash(handle.Digest) || !hash(handle.Nonce) ||
 		!identifier(handle.SignerKeyID) || handle.KeyEpoch == 0 || !identifier(handle.KeeperID) ||
 		handle.ValidAfter.IsZero() || !handle.ValidAfter.Before(handle.ValidUntil) ||
@@ -315,7 +328,8 @@ func validateSignerRecord(record signerRecord) error {
 }
 
 func sameHandleIdentity(current, next Handle) bool {
-	return current.ID == next.ID && current.ActionID == next.ActionID && current.OperationID == next.OperationID &&
+	return current.ID == next.ID && current.RequestID == next.RequestID && current.AuthorizationID == next.AuthorizationID &&
+		current.ReservationID == next.ReservationID && current.ActionID == next.ActionID && current.OperationID == next.OperationID &&
 		current.SignerRequestHash == next.SignerRequestHash && current.CanonicalPayloadHash == next.CanonicalPayloadHash && current.Digest == next.Digest &&
 		current.Nonce == next.Nonce && current.SignerKeyID == next.SignerKeyID && current.KeyEpoch == next.KeyEpoch &&
 		current.KeeperID == next.KeeperID && current.ValidAfter.Equal(next.ValidAfter) && current.ValidUntil.Equal(next.ValidUntil)

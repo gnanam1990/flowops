@@ -25,12 +25,13 @@ const (
 )
 
 type RuntimeBoundaryError struct {
-	Boundary string
-	Code     string
+	Boundary   string
+	Code       string
+	StatusCode int
 }
 
 func (e *RuntimeBoundaryError) Error() string {
-	return fmt.Sprintf("bearer %s boundary failed with code %s", e.Boundary, e.Code)
+	return fmt.Sprintf("bearer %s boundary failed with HTTP %d code %s", e.Boundary, e.StatusCode, e.Code)
 }
 
 func (e *RuntimeBoundaryError) Unwrap() error { return ErrRuntimeBoundary }
@@ -120,7 +121,7 @@ func (b *RuntimeUnixBoundary) call(ctx context.Context, method, endpoint string,
 		if decodeStrictRuntimeJSON(raw, &failure) != nil || !identifier(failure.Code) {
 			failure.Code = "UNCLASSIFIED"
 		}
-		return &RuntimeBoundaryError{Boundary: b.name, Code: failure.Code}
+		return &RuntimeBoundaryError{Boundary: b.name, Code: failure.Code, StatusCode: response.StatusCode}
 	}
 	if output == nil {
 		return errors.Join(ErrRuntimeBoundary, errors.New("bearer boundary output contract is missing"))
@@ -299,15 +300,16 @@ func (s *RuntimeUnixSigner) AcknowledgeActivation(ctx context.Context, proof Act
 }
 
 func (s *RuntimeUnixSigner) ProveUnactivated(ctx context.Context, activation ActivationRequest) (UnactivatedProof, error) {
-	if !hash(activation.RequestID) || !identifier(activation.ActionID) || !hash(activation.InputHash) {
+	if !hash(activation.RequestID) || !hash(activation.OperationID) || !identifier(activation.ActionID) || !hash(activation.InputHash) {
 		return UnactivatedProof{}, ErrActivationInput
 	}
 	request := struct {
-		Protocol  string `json:"protocol"`
-		RequestID string `json:"requestId"`
-		ActionID  string `json:"actionId"`
-		InputHash string `json:"inputHash"`
-	}{runtimeBoundaryProtocol, activation.RequestID, activation.ActionID, activation.InputHash}
+		Protocol    string `json:"protocol"`
+		RequestID   string `json:"requestId"`
+		OperationID string `json:"operationId"`
+		ActionID    string `json:"actionId"`
+		InputHash   string `json:"inputHash"`
+	}{runtimeBoundaryProtocol, activation.RequestID, activation.OperationID, activation.ActionID, activation.InputHash}
 	var response struct {
 		Proof UnactivatedProof `json:"proof"`
 	}

@@ -278,4 +278,7 @@ func TestLedgerPreparedSignerSerializesConcurrentExactPrepare(t *testing.T) {
 	if first.err != nil || second.err != nil || first.handle == "" || first.handle != second.handle || engine.callCount() != 1 {
 		t.Fatalf("first=%+v second=%+v engine calls=%d", first, second, engine.callCount())
 	}
+	if len(signer.actionLocks) != 0 {
+		t.Fatalf("completed action locks were retained: %d", len(signer.actionLocks))
+	}
 }

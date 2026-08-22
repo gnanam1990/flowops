@@ -110,7 +110,7 @@ func run(ctx context.Context) error {
 		OnCycle: func(cycle ascpbearer.RuntimeCycle) {
 			slog.Info("ASCP bearer cycle completed", "processed", cycle.Processed, "advanced", cycle.Advanced, "prepared", cycle.Prepared,
 				"activated", cycle.Activated, "mirrored", cycle.Mirrored, "acknowledged", cycle.Acknowledged,
-				"expired", cycle.Expired, "retried", cycle.Retried)
+				"expired", cycle.Expired, "refused", cycle.Refused, "retried", cycle.Retried)
 		},
 	})
 	if err != nil {

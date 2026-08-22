@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/base64"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,8 +27,36 @@ func validEnvironment(t *testing.T) {
 	t.Setenv("FLOWOPS_KEEPER_CHAIN_ID", "84532")
 	t.Setenv("FLOWOPS_KEEPER_MAX_FEE_PER_GAS_WEI", "100000000000")
 	t.Setenv("FLOWOPS_KEEPER_MAX_PRIORITY_FEE_PER_GAS_WEI", "2000000000")
+	t.Setenv("FLOWOPS_KEEPER_SIGNER_TOKEN_FILE", "/run/flowops/keeper-signer.token")
 	for index, name := range []string{"ARTIFACT", "ASSEMBLER", "VERIFIER", "WALLET", "SEALER", "BROADCAST", "CHAIN"} {
 		t.Setenv("FLOWOPS_KEEPER_"+name+"_SOCKET", "/run/flowops/keeper-"+strings.ToLower(name)+string(rune('a'+index))+".sock")
+	}
+}
+
+func TestLoadSignerCapabilityRequiresPrivateCanonicalNonzeroFile(t *testing.T) {
+	directory := t.TempDir()
+	valid := make([]byte, 32)
+	valid[0] = 1
+	path := filepath.Join(directory, "signer.token")
+	if err := os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(valid)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadSignerCapability(path)
+	if err != nil || len(loaded) != 32 || loaded[0] != 1 {
+		t.Fatalf("loaded=%x err=%v", loaded, err)
+	}
+	zeroPath := filepath.Join(directory, "zero.token")
+	if err := os.WriteFile(zeroPath, []byte(base64.StdEncoding.EncodeToString(make([]byte, 32))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSignerCapability(zeroPath); err == nil {
+		t.Fatal("zero keeper capability was accepted")
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSignerCapability(path); err == nil {
+		t.Fatal("public keeper capability was accepted")
 	}
 }
 
