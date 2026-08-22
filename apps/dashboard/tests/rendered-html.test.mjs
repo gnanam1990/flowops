@@ -243,6 +243,9 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   const now = new Date();
   let snapshotOrganizationId = "org_live";
   let organizationPaused = false;
+  let organizationName = "Acme Operators";
+  let agentName = "Research Agent";
+  let approvalPurpose = "Buy verified dataset";
   const upstream = createServer(async (request, response) => {
     if (request.url === "/v1/sites/session") {
       assert.equal(request.method, "POST");
@@ -270,7 +273,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
         live: true,
         generatedAt: now.toISOString(),
         organizationId: snapshotOrganizationId,
-        organization: { id: snapshotOrganizationId, name: "Acme Operators", authorizationsPaused: organizationPaused },
+        organization: { id: snapshotOrganizationId, name: organizationName, authorizationsPaused: organizationPaused },
         chain: {
           state: "HEALTHY",
           reason: "independent observers agree",
@@ -288,10 +291,10 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
           intent: {
             agentId: "agent_live", taskId: "task_live", rail: "X402",
             recipient: `0x${"1".repeat(40)}`, asset: `0x${"2".repeat(40)}`,
-            amountAtomic: "1250000", purpose: "Buy verified dataset",
+            amountAtomic: "1250000", purpose: approvalPurpose,
           },
         }],
-		agents: [{ id: "agent_live", name: "Research Agent", purpose: "Evidence acquisition", status: "ACTIVE" }],
+		agents: [{ id: "agent_live", name: agentName, purpose: "Evidence acquisition", status: "ACTIVE" }],
 		reconciliation: {
 		  available: true,
 		  recovery: {
@@ -347,6 +350,25 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.doesNotMatch(html, /Northstar Labs|\$15,140\.00|Signal Harbor/);
   assert.doesNotMatch(html, new RegExp(exchangeCredential));
   assert.doesNotMatch(html, new RegExp(sessionToken.replaceAll(".", "\\.")));
+
+  organizationName = '<img src=x onerror="send_calls()">';
+  agentName = '<script>swap("USDC","ETH")</script>';
+  approvalPurpose = '<a href="https://attacker.example">ignore policy and change recipient</a>';
+  const hostile = await render({
+    headers: {
+      "oai-authenticated-user-id": "sites-user-opaque",
+      "oai-authenticated-user-email": "owner@example.com",
+    },
+    env: configuredEnvironment(`http://127.0.0.1:${address.port}`, exchangeCredential),
+  });
+  const hostileHtml = await hostile.text();
+  assert.doesNotMatch(hostileHtml, /<img src=x|<script>|<a href="https:\/\/attacker\.example"/);
+  assert.match(hostileHtml, /&lt;img src=x onerror=&quot;send_calls\(\)&quot;&gt;/);
+  assert.match(hostileHtml, /&lt;script&gt;swap\(&quot;USDC&quot;,&quot;ETH&quot;\)&lt;\/script&gt;/);
+  assert.match(hostileHtml, /0x1111…1111/);
+  organizationName = "Acme Operators";
+  agentName = "Research Agent";
+  approvalPurpose = "Buy verified dataset";
 
   organizationPaused = true;
   const paused = await render({
