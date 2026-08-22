@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -51,6 +52,97 @@ func (*refusingRuntimeSigner) AcknowledgeActivation(context.Context, ascpbearer.
 
 func (*refusingRuntimeSigner) ProveUnactivated(context.Context, ascpbearer.ActivationRequest) (ascpbearer.UnactivatedProof, error) {
 	return ascpbearer.UnactivatedProof{}, errors.New("expiry must not run for refused work")
+}
+
+func TestASCPSignerRefusalMigrationReconcilesOnlyUnambiguousLegacyRows(t *testing.T) {
+	script, err := migrationFiles.ReadFile("migrations/0025_ascp_signer_refusal_shape.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("reconciles pre-signature refusal", func(t *testing.T) {
+		db := ascpRawIntegrationDatabase(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		createLegacyRefusalTables(t, ctx, db)
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO ascp_budget_reservations VALUES ('reservation-1','RESERVED');
+			INSERT INTO ascp_sign_requests (request_id,reservation_id,state,last_error)
+			VALUES ('request-1','reservation-1','REFUSED',NULL);
+			INSERT INTO ascp_signer_outbox (request_id,kind,state)
+			VALUES ('request-1','SIGN_PREPARE_REQUESTED','PENDING')`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, string(script)); err != nil {
+			t.Fatalf("upgrade refused an unambiguous legacy refusal: %v", err)
+		}
+		var reservationState, requestState, requestError, outboxState, outboxError string
+		var cancelled bool
+		if err := db.QueryRowContext(ctx, `SELECT reservation.state,request.state,request.last_error,outbox.state,outbox.last_error,outbox.cancelled_at IS NOT NULL
+			FROM ascp_sign_requests request
+			JOIN ascp_budget_reservations reservation ON reservation.reservation_id=request.reservation_id
+			JOIN ascp_signer_outbox outbox ON outbox.request_id=request.request_id`).
+			Scan(&reservationState, &requestState, &requestError, &outboxState, &outboxError, &cancelled); err != nil {
+			t.Fatal(err)
+		}
+		if reservationState != "RELEASED" || requestState != "REFUSED" || requestError != "SIGNER_REFUSED" ||
+			outboxState != "CANCELLED" || outboxError != "SIGNER_REFUSED" || !cancelled {
+			t.Fatalf("reservation=%s request=%s/%s outbox=%s/%s cancelled=%t", reservationState, requestState, requestError, outboxState, outboxError, cancelled)
+		}
+	})
+	t.Run("blocks progressed refusal", func(t *testing.T) {
+		db := ascpRawIntegrationDatabase(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		createLegacyRefusalTables(t, ctx, db)
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO ascp_budget_reservations VALUES ('reservation-2','AUTHORIZATION_LIVE');
+			INSERT INTO ascp_sign_requests (request_id,reservation_id,state,prepared_handle,last_error)
+			VALUES ('request-2','reservation-2','REFUSED','asph_progressed',NULL);
+			INSERT INTO ascp_signer_outbox (request_id,kind,state,delivered_at)
+			VALUES ('request-2','SIGN_PREPARE_REQUESTED','DELIVERED',now())`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, string(script)); err == nil || !strings.Contains(err.Error(), "reconcile them before migration") {
+			t.Fatalf("progressed refusal migration error=%v", err)
+		}
+	})
+}
+
+func createLegacyRefusalTables(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE ascp_budget_reservations (
+			reservation_id text PRIMARY KEY,
+			state text NOT NULL
+		);
+		CREATE TABLE ascp_sign_requests (
+			request_id text PRIMARY KEY,
+			reservation_id text NOT NULL REFERENCES ascp_budget_reservations(reservation_id),
+			state text NOT NULL,
+			prepared_handle text,
+			prepared_at timestamptz,
+			activated_at timestamptz,
+			mirrored_at timestamptz,
+			acknowledged_at timestamptz,
+			primary_mirror_digest text,
+			lease_owner text,
+			lease_token text,
+			lease_expires_at timestamptz,
+			next_attempt_at timestamptz NOT NULL DEFAULT '-infinity',
+			last_error text,
+			unactivated_proof jsonb,
+			expired_at timestamptz
+		);
+		CREATE TABLE ascp_signer_outbox (
+			request_id text NOT NULL REFERENCES ascp_sign_requests(request_id),
+			kind text NOT NULL,
+			state text NOT NULL,
+			delivered_at timestamptz,
+			cancelled_at timestamptz,
+			last_error text
+		)`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically(t *testing.T) {

@@ -49,6 +49,8 @@ func NewLedgerPreparedSigner(ledger *SignerStore, engine IndependentSigningEngin
 func (s *LedgerPreparedSigner) Prepare(ctx context.Context, input ActivationInput) (string, error) {
 	input.CanonicalPayload = append([]byte(nil), input.CanonicalPayload...)
 	input.EvidenceBundle = append([]byte(nil), input.EvidenceBundle...)
+	defer clear(input.CanonicalPayload)
+	defer clear(input.EvidenceBundle)
 	input.ValidAfter, input.ValidUntil = input.ValidAfter.UTC(), input.ValidUntil.UTC()
 	if err := validateActivationInput(input, s.ledger.clock().UTC()); err != nil {
 		return "", err

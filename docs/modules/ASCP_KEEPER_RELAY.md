@@ -101,11 +101,6 @@ Every sidecar implements `ASCP_KEEPER_BOUNDARY_V1`, returns strict JSON with no
 unknown fields, and bounds each body to 2 MiB. `GET /healthz` returns exactly
 `protocol`, `boundary`, and `status`. The operation routes are:
 
-The artifact sidecar additionally requires the canonical base64 32-byte Bearer
-capability loaded from `FLOWOPS_KEEPER_SIGNER_TOKEN_FILE` for health and
-release. The same value is mounted into the isolated signer through
-`FLOWOPS_SIGNER_KEEPER_TOKEN_FILE`; it is never the artifact encryption key.
-
 - artifact: `POST /v1/release`;
 - assembler: `POST /v1/assemble`;
 - verifier: `POST /v1/verify`;
@@ -114,6 +109,11 @@ release. The same value is mounted into the isolated signer through
 - broadcaster: `POST /v1/broadcast`; and
 - chain: `POST /v1/fees/initial`, `/v1/fees/bump`,
   `/v1/nonce`, `/v1/replacement`, `/v1/outcome`, and `/v1/expiries`.
+
+The artifact sidecar additionally requires the canonical base64 32-byte Bearer
+capability loaded from `FLOWOPS_KEEPER_SIGNER_TOKEN_FILE` for health and
+release. The same value is mounted into the isolated signer through
+`FLOWOPS_SIGNER_KEEPER_TOKEN_FILE`; it is never the artifact encryption key.
 
 The chain sidecar is the independently operated read-only quorum/evidence
 adapter and cannot broadcast. Its

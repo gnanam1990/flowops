@@ -138,6 +138,8 @@ type testIndependentSigningEngine struct {
 func (e *testIndependentSigningEngine) VerifyAndSign(_ context.Context, input ActivationInput) ([]byte, error) {
 	e.calls++
 	e.seen = input
+	e.seen.CanonicalPayload = append([]byte(nil), input.CanonicalPayload...)
+	e.seen.EvidenceBundle = append([]byte(nil), input.EvidenceBundle...)
 	if e.err != nil {
 		return nil, e.err
 	}

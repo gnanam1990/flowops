@@ -34,7 +34,15 @@ func validEnvironment(t *testing.T) {
 }
 
 func TestLoadSignerCapabilityRequiresPrivateCanonicalNonzeroFile(t *testing.T) {
-	directory := t.TempDir()
+	base, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp(base, "ascp-keeper-secret-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
 	valid := make([]byte, 32)
 	valid[0] = 1
 	path := filepath.Join(directory, "signer.token")

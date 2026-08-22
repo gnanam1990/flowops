@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -22,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpsignerruntime"
+	"github.com/gnanam1990/flowops/internal/securefile"
 )
 
 type startupConfig struct {
@@ -90,7 +88,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ledger, err := ascpbearer.OpenFileSignerStore(config.ledgerPath, cipher, activationVerifier, time.Now, rand.Reader)
+	ledger, err := ascpbearer.OpenFileSignerStoreContext(startupCtx, config.ledgerPath, cipher, activationVerifier, time.Now, rand.Reader)
 	if err != nil {
 		return fmt.Errorf("open isolated signer ledger: %w", err)
 	}
@@ -189,46 +187,9 @@ func loadKeeperToken(path string) ([]byte, error) {
 }
 
 func loadPrivateSecret(path, purpose string) ([]byte, error) {
-	parent, err := os.Lstat(filepath.Dir(path))
-	if err != nil || parent.Mode()&os.ModeSymlink != 0 || !parent.IsDir() || parent.Mode().Perm()&0o022 != 0 {
-		return nil, fmt.Errorf("signer %s parent must be a secured non-symlink directory", purpose)
-	}
-	parentStat, ok := parent.Sys().(*syscall.Stat_t)
-	if !ok || parentStat.Uid != uint32(os.Geteuid()) && parentStat.Uid != 0 {
-		return nil, fmt.Errorf("signer %s parent must be owned by the runtime user or root", purpose)
-	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	secret, err := securefile.ReadCanonicalBase64Secret(path)
 	if err != nil {
-		return nil, fmt.Errorf("signer %s is unavailable", purpose)
+		return nil, fmt.Errorf("load signer %s: %w", purpose, err)
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 1024 {
-		return nil, fmt.Errorf("signer %s must be a private regular file", purpose)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {
-		return nil, fmt.Errorf("signer %s must be owned by the runtime user or root", purpose)
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, 1025))
-	defer clear(raw)
-	if err != nil || len(raw) > 1024 {
-		return nil, fmt.Errorf("read signer %s", purpose)
-	}
-	encoded := bytes.TrimSpace(raw)
-	decoded := make([]byte, base64.StdEncoding.DecodedLen(len(encoded)))
-	n, err := base64.StdEncoding.Decode(decoded, encoded)
-	decoded = decoded[:n]
-	canonical := make([]byte, base64.StdEncoding.EncodedLen(len(decoded)))
-	base64.StdEncoding.Encode(canonical, decoded)
-	defer clear(canonical)
-	nonzero := false
-	for _, value := range decoded {
-		nonzero = nonzero || value != 0
-	}
-	if err != nil || len(decoded) != 32 || !bytes.Equal(encoded, canonical) || !nonzero {
-		clear(decoded)
-		return nil, fmt.Errorf("signer %s must be canonical base64 for 32 nonzero bytes", purpose)
-	}
-	return decoded, nil
+	return secret, nil
 }

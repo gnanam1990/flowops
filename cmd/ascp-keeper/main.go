@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/big"
 	"net/url"
@@ -23,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gnanam1990/flowops/internal/ascpkeeper"
 	"github.com/gnanam1990/flowops/internal/ascpleadership"
+	"github.com/gnanam1990/flowops/internal/securefile"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -257,48 +255,11 @@ func loadConfig() (startupConfig, error) {
 }
 
 func loadSignerCapability(path string) ([]byte, error) {
-	parent, err := os.Lstat(filepath.Dir(path))
-	if err != nil || parent.Mode()&os.ModeSymlink != 0 || !parent.IsDir() || parent.Mode().Perm()&0o022 != 0 {
-		return nil, errors.New("keeper signer-capability parent must be a secured non-symlink directory")
-	}
-	parentStat, ok := parent.Sys().(*syscall.Stat_t)
-	if !ok || parentStat.Uid != uint32(os.Geteuid()) && parentStat.Uid != 0 {
-		return nil, errors.New("keeper signer-capability parent must be owned by the runtime user or root")
-	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	secret, err := securefile.ReadCanonicalBase64Secret(path)
 	if err != nil {
-		return nil, errors.New("keeper signer capability is unavailable")
+		return nil, fmt.Errorf("load keeper signer capability: %w", err)
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 1024 {
-		return nil, errors.New("keeper signer capability must be a private regular file")
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {
-		return nil, errors.New("keeper signer capability must be owned by the runtime user or root")
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, 1025))
-	defer clear(raw)
-	if err != nil || len(raw) > 1024 {
-		return nil, errors.New("read keeper signer capability")
-	}
-	encoded := bytes.TrimSpace(raw)
-	decoded := make([]byte, base64.StdEncoding.DecodedLen(len(encoded)))
-	n, err := base64.StdEncoding.Decode(decoded, encoded)
-	decoded = decoded[:n]
-	canonical := make([]byte, base64.StdEncoding.EncodedLen(len(decoded)))
-	base64.StdEncoding.Encode(canonical, decoded)
-	defer clear(canonical)
-	nonzero := byte(0)
-	for _, value := range decoded {
-		nonzero |= value
-	}
-	if err != nil || len(decoded) != 32 || !bytes.Equal(canonical, encoded) || nonzero == 0 {
-		clear(decoded)
-		return nil, errors.New("keeper signer capability must be canonical base64 for 32 nonzero bytes")
-	}
-	return decoded, nil
+	return secret, nil
 }
 
 func validateDatabaseURL(raw string) error {

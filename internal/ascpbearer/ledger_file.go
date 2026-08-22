@@ -17,6 +17,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gnanam1990/flowops/internal/securefile"
+	"golang.org/x/sys/unix"
 )
 
 const signerLedgerVersion = 2
@@ -52,10 +55,19 @@ type signerJournal struct {
 // OpenFileSignerStore opens a process-locked, 0600, append-only, hash-chained
 // signer ledger. Each transition is fsynced before the method can return.
 func OpenFileSignerStore(path string, artifactCipher ArtifactCipher, verifier ActivationVerifier, clock func() time.Time, random io.Reader) (*SignerStore, error) {
+	return OpenFileSignerStoreContext(context.Background(), path, artifactCipher, verifier, clock, random)
+}
+
+// OpenFileSignerStoreContext additionally bounds ledger replay and persisted
+// artifact revalidation by the caller's startup/shutdown context.
+func OpenFileSignerStoreContext(ctx context.Context, path string, artifactCipher ArtifactCipher, verifier ActivationVerifier, clock func() time.Time, random io.Reader) (*SignerStore, error) {
+	if ctx == nil {
+		return nil, errors.New("signer ledger startup context is required")
+	}
 	if artifactCipher == nil || verifier == nil {
 		return nil, errors.New("artifact cipher and activation verifier are required")
 	}
-	journal, err := openSignerJournal(path)
+	journal, err := openSignerJournal(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -66,11 +78,15 @@ func OpenFileSignerStore(path string, artifactCipher ArtifactCipher, verifier Ac
 	}
 	store.journal = journal
 	for id, record := range journal.records {
+		if err := ctx.Err(); err != nil {
+			_ = journal.Close()
+			return nil, fmt.Errorf("revalidate signer ledger: %w", err)
+		}
 		if id != record.Handle.ID {
 			_ = journal.Close()
 			return nil, fmt.Errorf("authenticate signer ledger artifact %s: event and record handle differ", id)
 		}
-		artifact, err := artifactCipher.Decrypt(context.Background(), artifactAAD(record.Handle), record.Encrypted)
+		artifact, err := artifactCipher.Decrypt(ctx, artifactAAD(record.Handle), record.Encrypted)
 		if err != nil {
 			_ = journal.Close()
 			return nil, fmt.Errorf("authenticate signer ledger artifact %s: %w", id, err)
@@ -83,7 +99,7 @@ func OpenFileSignerStore(path string, artifactCipher ArtifactCipher, verifier Ac
 		clear(artifact)
 		switch record.Handle.State {
 		case Active, Released, Terminal:
-			if err := verifier.VerifyActivation(context.Background(), record.Handle, *record.Activation); err != nil {
+			if err := verifier.VerifyActivation(ctx, record.Handle, *record.Activation); err != nil {
 				_ = journal.Close()
 				return nil, fmt.Errorf("revalidate signer ledger activation %s: %w", id, err)
 			}
@@ -92,7 +108,7 @@ func OpenFileSignerStore(path string, artifactCipher ArtifactCipher, verifier Ac
 				_ = journal.Close()
 				return nil, fmt.Errorf("revalidate signer ledger expiry %s: validity window has not elapsed", id)
 			}
-			if err := verifier.ProveUnactivated(context.Background(), record.Handle, store.clock().UTC()); err != nil {
+			if err := verifier.ProveUnactivated(ctx, record.Handle, store.clock().UTC()); err != nil {
 				_ = journal.Close()
 				return nil, fmt.Errorf("revalidate signer ledger expiry %s: %w", id, err)
 			}
@@ -103,26 +119,28 @@ func OpenFileSignerStore(path string, artifactCipher ArtifactCipher, verifier Ac
 	return store, nil
 }
 
-func openSignerJournal(path string) (*signerJournal, error) {
-	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("signer ledger path is required")
+func openSignerJournal(ctx context.Context, path string) (*signerJournal, error) {
+	if strings.TrimSpace(path) == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
+		return nil, errors.New("signer ledger path must be a clean absolute file path")
 	}
-	directoryInfo, err := os.Lstat(filepath.Dir(path))
+	directory, err := securefile.OpenDirectory(filepath.Dir(path))
 	if err != nil {
-		return nil, fmt.Errorf("inspect signer ledger directory: %w", err)
+		return nil, fmt.Errorf("open signer ledger directory without following symlinks: %w", err)
 	}
-	if directoryInfo.Mode()&os.ModeSymlink != 0 || !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o022 != 0 {
+	defer directory.Close()
+	directoryInfo, err := directory.Stat()
+	if err != nil || !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o022 != 0 {
 		return nil, errors.New("signer ledger directory must be a non-symlink directory not writable by group or other users")
 	}
-	if !signerOwnerAllowed(directoryInfo) {
+	if !securefile.OwnerAllowed(directoryInfo) {
 		return nil, errors.New("signer ledger directory must be owned by the runtime user or root")
 	}
-	file, created, err := openSignerLedgerFile(path)
+	file, created, err := openSignerLedgerFile(directory, filepath.Base(path), path)
 	if err != nil {
 		return nil, fmt.Errorf("open signer ledger: %w", err)
 	}
 	if created {
-		if err := syncSignerLedgerDirectory(path); err != nil {
+		if err := directory.Sync(); err != nil {
 			_ = file.Close()
 			return nil, fmt.Errorf("sync signer ledger directory: %w", err)
 		}
@@ -132,7 +150,7 @@ func openSignerJournal(path string) (*signerJournal, error) {
 		return nil, fmt.Errorf("lock signer ledger (another signer may be active): %w", err)
 	}
 	journal := &signerJournal{file: file, records: make(map[string]signerRecord)}
-	if err := journal.replay(); err != nil {
+	if err := journal.replay(ctx); err != nil {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
 		return nil, err
@@ -144,15 +162,16 @@ func openSignerJournal(path string) (*signerJournal, error) {
 	return journal, nil
 }
 
-func openSignerLedgerFile(path string) (*os.File, bool, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+func openSignerLedgerFile(directory *os.File, name, displayPath string) (*os.File, bool, error) {
+	fd, err := unix.Openat(int(directory.Fd()), name, unix.O_CREAT|unix.O_EXCL|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	created := err == nil
-	if errors.Is(err, os.ErrExist) {
-		file, err = os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, unix.EEXIST) {
+		fd, err = unix.Openat(int(directory.Fd()), name, unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	}
 	if err != nil {
 		return nil, false, err
 	}
+	file := os.NewFile(uintptr(fd), displayPath)
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
@@ -162,34 +181,23 @@ func openSignerLedgerFile(path string) (*os.File, bool, error) {
 		_ = file.Close()
 		return nil, false, errors.New("signer ledger must be a regular file inaccessible to group and other users")
 	}
-	if !signerOwnerAllowed(info) {
+	if !securefile.OwnerAllowed(info) {
 		_ = file.Close()
 		return nil, false, errors.New("signer ledger must be owned by the runtime user or root")
 	}
 	return file, created, nil
 }
 
-func signerOwnerAllowed(info os.FileInfo) bool {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && (stat.Uid == uint32(os.Geteuid()) || stat.Uid == 0)
-}
-
-func syncSignerLedgerDirectory(path string) error {
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
-}
-
-func (j *signerJournal) replay() error {
+func (j *signerJournal) replay(ctx context.Context) error {
 	if _, err := j.file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seek signer ledger for replay: %w", err)
 	}
 	scanner := bufio.NewScanner(j.file)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("replay signer ledger: %w", err)
+		}
 		if j.sequence == math.MaxUint64 {
 			return errors.New("signer ledger sequence exhausted")
 		}
