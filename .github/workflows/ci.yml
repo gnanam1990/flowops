@@ -31,6 +31,8 @@ jobs:
         run: go vet ./cmd/... ./internal/... ./pkg/...
       - name: Test with race detector
         run: go test -race ./cmd/... ./internal/... ./pkg/...
+      - name: Validate ASCP v3.4 acceptance inventory
+        run: make acceptance-manifest-check
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
         with:
           version: v1.7.1
