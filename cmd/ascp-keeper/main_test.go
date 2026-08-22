@@ -87,6 +87,19 @@ func TestLoadConfigRejectsSharedAssemblerVerifierBoundary(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsWhitespacePaddedCapabilityAndSocketPaths(t *testing.T) {
+	validEnvironment(t)
+	t.Setenv("FLOWOPS_KEEPER_SIGNER_TOKEN_FILE", " /run/flowops/keeper-signer.token")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("whitespace-padded keeper capability path was accepted")
+	}
+	validEnvironment(t)
+	t.Setenv("FLOWOPS_KEEPER_ARTIFACT_SOCKET", "/run/flowops/keeper-artifact.sock ")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("whitespace-padded keeper socket path was accepted")
+	}
+}
+
 func TestLoadConfigRejectsUnsafeDatabaseOverridesAndTiming(t *testing.T) {
 	validEnvironment(t)
 	t.Setenv("FLOWOPS_KEEPER_DATABASE_URL", databaseURL("sslmode=verify-full&search_path=evil"))

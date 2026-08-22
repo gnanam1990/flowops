@@ -106,8 +106,10 @@ func (s *Service) prepare(w http.ResponseWriter, r *http.Request) {
 		Protocol string                     `json:"protocol"`
 		Input    ascpbearer.ActivationInput `json:"input"`
 	}
-	defer clear(request.Input.CanonicalPayload)
-	defer clear(request.Input.EvidenceBundle)
+	defer func() {
+		clear(request.Input.CanonicalPayload)
+		clear(request.Input.EvidenceBundle)
+	}()
 	if decodeRequest(w, r, &request) != nil || request.Protocol != SignerProtocol {
 		writeFailure(w, http.StatusBadRequest, "INVALID_REQUEST")
 		return

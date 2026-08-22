@@ -273,4 +273,14 @@ func TestConfigDoesNotAcceptWhitespaceOrRelativePaths(t *testing.T) {
 	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("relative path error=%v", err)
 	}
+	setValidEnvironment(t, directory)
+	t.Setenv("FLOWOPS_SIGNER_ARTIFACT_KEY_FILE", " "+filepath.Join(directory, "artifact.key"))
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("whitespace-padded signer private-file path was accepted")
+	}
+	setValidEnvironment(t, directory)
+	t.Setenv("FLOWOPS_SIGNER_RUNTIME_SOCKET", filepath.Join(directory, "signer.sock")+" ")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("whitespace-padded signer socket path was accepted")
+	}
 }

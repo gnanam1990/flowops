@@ -131,10 +131,10 @@ func checkDependencies(ctx context.Context, boundaries ...*ascpsignerruntime.Dep
 func loadConfig() (startupConfig, error) {
 	config := startupConfig{
 		keyID: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_KEY_ID")), keeperID: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_KEEPER_ID")), signerAddress: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_ADDRESS")),
-		ledgerPath: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_LEDGER_PATH")), artifactKeyPath: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_ARTIFACT_KEY_FILE")),
-		keeperTokenPath: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_KEEPER_TOKEN_FILE")),
-		signerSocket:    strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_RUNTIME_SOCKET")), artifactSocket: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_ARTIFACT_SOCKET")),
-		ring6Socket: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_RING6_SOCKET")), activationSocket: strings.TrimSpace(os.Getenv("FLOWOPS_SIGNER_ACTIVATION_SOCKET")),
+		ledgerPath: os.Getenv("FLOWOPS_SIGNER_LEDGER_PATH"), artifactKeyPath: os.Getenv("FLOWOPS_SIGNER_ARTIFACT_KEY_FILE"),
+		keeperTokenPath: os.Getenv("FLOWOPS_SIGNER_KEEPER_TOKEN_FILE"),
+		signerSocket:    os.Getenv("FLOWOPS_SIGNER_RUNTIME_SOCKET"), artifactSocket: os.Getenv("FLOWOPS_SIGNER_ARTIFACT_SOCKET"),
+		ring6Socket: os.Getenv("FLOWOPS_SIGNER_RING6_SOCKET"), activationSocket: os.Getenv("FLOWOPS_SIGNER_ACTIVATION_SOCKET"),
 		dependencyTimeout: 3 * time.Second,
 	}
 	if !identifierPattern.MatchString(config.keyID) || !identifierPattern.MatchString(config.keeperID) {

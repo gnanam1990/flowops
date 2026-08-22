@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -62,7 +63,9 @@ func TestSignerAndArtifactBoundariesEnforcePrepareActivateRelease(t *testing.T) 
 	service, engine := testService(t, func() time.Time { return now })
 	input := validInput(now, 1)
 	prepare := signerRequest(t, service.SignerHandler(), "/v1/prepare", map[string]any{"protocol": SignerProtocol, "input": input})
-	if prepare.Code != http.StatusOK || bytes.Contains(prepare.Body.Bytes(), engine.sig) || bytes.Contains(prepare.Body.Bytes(), []byte("artifact")) {
+	encodedSignature := []byte(base64.StdEncoding.EncodeToString(engine.sig))
+	if prepare.Code != http.StatusOK || bytes.Contains(prepare.Body.Bytes(), engine.sig) ||
+		bytes.Contains(prepare.Body.Bytes(), encodedSignature) || bytes.Contains(prepare.Body.Bytes(), []byte("artifact")) {
 		t.Fatalf("prepare status=%d body=%s", prepare.Code, prepare.Body.String())
 	}
 	var prepared struct {
@@ -156,10 +159,18 @@ func TestSignerBoundaryReturnsOnlyExplicitPermanentRefusalCode(t *testing.T) {
 
 func TestArtifactBoundaryRequiresOneExactCapability(t *testing.T) {
 	service, _ := testService(t, time.Now)
+	noncanonical := base64.StdEncoding.EncodeToString(testArtifactToken)
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	lastValue := strings.IndexByte(alphabet, noncanonical[len(noncanonical)-2])
+	if lastValue < 0 || lastValue%4 != 0 || lastValue+1 >= len(alphabet) {
+		t.Fatalf("test token does not end in canonical two-bit padding: %q", noncanonical)
+	}
+	noncanonical = noncanonical[:len(noncanonical)-2] + string(alphabet[lastValue+1]) + "="
 	for name, headers := range map[string][]string{
-		"missing": nil,
-		"wrong":   {"Bearer " + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x12}, 32))},
-		"short":   {"Bearer YQ=="},
+		"missing":      nil,
+		"wrong":        {"Bearer " + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x12}, 32))},
+		"short":        {"Bearer YQ=="},
+		"noncanonical": {"Bearer " + noncanonical},
 		"duplicate": {
 			"Bearer " + base64.StdEncoding.EncodeToString(testArtifactToken),
 			"Bearer " + base64.StdEncoding.EncodeToString(testArtifactToken),

@@ -186,7 +186,7 @@ func loadConfig() (startupConfig, error) {
 		databaseURL:     strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_DATABASE_URL")),
 		keeperID:        strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_ID")),
 		gasPayer:        strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_GAS_PAYER")),
-		signerTokenPath: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_SIGNER_TOKEN_FILE")),
+		signerTokenPath: os.Getenv("FLOWOPS_KEEPER_SIGNER_TOKEN_FILE"),
 		interval:        time.Minute, cycleTimeout: 50 * time.Second, leaseDuration: 55 * time.Second, boundaryTimeout: 3 * time.Second,
 		batchSize: 20, expiryLimit: 100, maxFeeBumps: 3, maxGasLimit: 1_000_000,
 		feeCap:  ascpkeeper.Fee{MaxFeePerGasWei: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_MAX_FEE_PER_GAS_WEI")), MaxPriorityFeePerGasWei: strings.TrimSpace(os.Getenv("FLOWOPS_KEEPER_MAX_PRIORITY_FEE_PER_GAS_WEI"))},
@@ -198,7 +198,7 @@ func loadConfig() (startupConfig, error) {
 	if !identifierPattern.MatchString(config.keeperID) {
 		return startupConfig{}, errors.New("FLOWOPS_KEEPER_ID is invalid")
 	}
-	if !filepath.IsAbs(config.signerTokenPath) || filepath.Clean(config.signerTokenPath) != config.signerTokenPath || config.signerTokenPath == "/" {
+	if strings.TrimSpace(config.signerTokenPath) != config.signerTokenPath || !filepath.IsAbs(config.signerTokenPath) || filepath.Clean(config.signerTokenPath) != config.signerTokenPath || config.signerTokenPath == "/" {
 		return startupConfig{}, errors.New("FLOWOPS_KEEPER_SIGNER_TOKEN_FILE must be a clean absolute path")
 	}
 	if !common.IsHexAddress(config.gasPayer) || strings.ToLower(common.HexToAddress(config.gasPayer).Hex()) != config.gasPayer || common.HexToAddress(config.gasPayer) == (common.Address{}) {
@@ -210,8 +210,8 @@ func loadConfig() (startupConfig, error) {
 	}
 	for _, name := range []string{"artifact", "assembler", "verifier", "wallet", "sealer", "broadcast", "chain"} {
 		envName := "FLOWOPS_KEEPER_" + strings.ToUpper(name) + "_SOCKET"
-		path := strings.TrimSpace(os.Getenv(envName))
-		if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
+		path := os.Getenv(envName)
+		if strings.TrimSpace(path) != path || !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
 			return startupConfig{}, fmt.Errorf("%s must be a clean absolute path", envName)
 		}
 		config.sockets[name] = path

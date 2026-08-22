@@ -11,6 +11,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/gnanam1990/flowops/internal/securefile"
+	"golang.org/x/sys/unix"
 )
 
 type UnixConfig struct {
@@ -52,7 +55,7 @@ func (s *Service) ServeUnix(ctx context.Context, config UnixConfig) error {
 	}
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), min(5*time.Second, config.RequestTimeout))
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		var shutdownErr error
 		shutdownResults := make(chan error, len(servers))
@@ -116,13 +119,19 @@ func validateUnixConfig(config UnixConfig) error {
 }
 
 func cleanAbsoluteSocket(path string) bool {
-	return strings.TrimSpace(path) == path && filepath.IsAbs(path) && filepath.Clean(path) == path && path != "/"
+	return strings.TrimSpace(path) == path && filepath.IsAbs(path) && filepath.Clean(path) == path && path != "/" &&
+		len(path) <= len(unix.RawSockaddrUnix{}.Path)-1
 }
 
 func validateSocketParent(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
-		return errors.New("signer socket parent must be a non-symlink directory not writable by group or other users")
+	directory, err := securefile.OpenDirectory(path)
+	if err != nil {
+		return errors.New("signer socket parent path must contain no symlinks")
+	}
+	defer func() { _ = directory.Close() }()
+	info, err := directory.Stat()
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return errors.New("signer socket parent must be an owner-only non-symlink directory")
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0 {

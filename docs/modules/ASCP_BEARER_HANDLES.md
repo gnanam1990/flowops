@@ -189,7 +189,7 @@ rotation ceremony rather than silently reinterpreted.
 ## Verification
 
 ```sh
-go test -race ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/controlapi ./internal/mcp ./cmd/ascp-keeper ./cmd/ascp-signer-runtime
+go test -race ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker ./cmd/ascp-keeper ./cmd/ascp-signer-runtime
 go vet ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker ./cmd/ascp-keeper ./cmd/ascp-signer-runtime
 FLOWOPS_TEST_DATABASE_URL=... go test -race ./internal/controlapi \
   -run 'TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically|TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveAtomically|TestASCPSignerBindingRealPostgresIdempotencyTenantAndVersionRaces|TestASCPSignerBindingRotationCannotRaceOldBindingIntoSignRequested' -count=1

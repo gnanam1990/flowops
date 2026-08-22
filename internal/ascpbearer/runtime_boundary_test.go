@@ -119,7 +119,7 @@ func TestRuntimeSignerAndMirrorEnforceExactResponseBindings(t *testing.T) {
 	signer, _ := NewRuntimeUnixSigner(boundary)
 	request := runtimeRequest(time.Now().UTC())
 	proof, err := signer.ProveUnactivated(context.Background(), request)
-	if err != nil || proof.RequestID != request.RequestID || proof.InputHash != request.InputHash {
+	if err != nil || proof.RequestID != request.RequestID || proof.OperationID != request.OperationID || proof.InputHash != request.InputHash {
 		t.Fatalf("proof=%+v err=%v", proof, err)
 	}
 

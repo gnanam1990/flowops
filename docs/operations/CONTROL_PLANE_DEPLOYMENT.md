@@ -378,7 +378,8 @@ Unix paths: two new listener paths and two existing dependency sockets.
 | `FLOWOPS_SIGNER_DEPENDENCY_TIMEOUT` | Optional `1s` through `10s`, default `3s` |
 
 The process refuses an existing listener path instead of deleting it. Its
-socket parents and ledger volume must be owned by UID 10001 or root and not
+socket parents must be non-symlink, owner-only (`0700`) directories owned by
+UID 10001 or root; the ledger volume must also be owner controlled and not
 writable by group or other users. Both dependency services must pass exact
 health identity before ledger replay; active records then revalidate their
 activation proof. A running process proves local protocol and ledger startup,

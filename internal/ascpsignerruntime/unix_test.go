@@ -3,14 +3,17 @@ package ascpsignerruntime
 import (
 	"context"
 	"encoding/base64"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/ascpkeeper"
+	"golang.org/x/sys/unix"
 )
 
 func TestServeUnixExposesDistinctExactHealthIdentitiesAndShutsDown(t *testing.T) {
@@ -45,11 +48,10 @@ func TestServeUnixExposesDistinctExactHealthIdentitiesAndShutsDown(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		body := make([]byte, 256)
-		count, _ := response.Body.Read(body)
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 4096))
 		_ = response.Body.Close()
-		if response.StatusCode != http.StatusOK || !contains(string(body[:count]), want) {
-			t.Fatalf("path=%s status=%d body=%s", path, response.StatusCode, body[:count])
+		if readErr != nil || response.StatusCode != http.StatusOK || !strings.Contains(string(body), want) {
+			t.Fatalf("path=%s status=%d body=%s err=%v", path, response.StatusCode, body, readErr)
 		}
 		info, err := os.Lstat(path)
 		if err != nil || info.Mode().Perm() != 0o600 || info.Mode()&os.ModeSocket == 0 {
@@ -91,11 +93,35 @@ func TestServeUnixRefusesExistingPathAndInsecureParentWithoutRemovingEither(t *t
 	if err := service.ServeUnix(context.Background(), UnixConfig{SignerSocket: filepath.Join(insecure, "one.sock"), ArtifactSocket: filepath.Join(insecure, "two.sock"), RequestTimeout: time.Second}); err == nil {
 		t.Fatal("insecure socket parent was accepted")
 	}
+	traversable := filepath.Join(shortTempDir(t), "traversable")
+	if err := os.Mkdir(traversable, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ServeUnix(context.Background(), UnixConfig{SignerSocket: filepath.Join(traversable, "one.sock"), ArtifactSocket: filepath.Join(traversable, "two.sock"), RequestTimeout: time.Second}); err == nil {
+		t.Fatal("group/other-traversable socket parent was accepted")
+	}
+	target := shortTempDir(t)
+	ancestor := shortTempDir(t)
+	linked := filepath.Join(ancestor, "linked")
+	if err := os.Symlink(target, linked); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ServeUnix(context.Background(), UnixConfig{SignerSocket: filepath.Join(linked, "one.sock"), ArtifactSocket: filepath.Join(linked, "two.sock"), RequestTimeout: time.Second}); err == nil {
+		t.Fatal("symlinked socket ancestor was accepted")
+	}
+	tooLong := "/" + strings.Repeat("a", len(unix.RawSockaddrUnix{}.Path))
+	if cleanAbsoluteSocket(tooLong) {
+		t.Fatal("overlong Unix socket path was accepted")
+	}
 }
 
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	directory, err := os.MkdirTemp("/tmp", "asr-")
+	base, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp(base, "asr-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,13 +146,4 @@ func unixClient(path string) *http.Client {
 		return (&net.Dialer{}).DialContext(ctx, "unix", path)
 	}}
 	return &http.Client{Transport: transport, Timeout: time.Second}
-}
-
-func contains(value, substring string) bool {
-	for index := 0; index+len(substring) <= len(value); index++ {
-		if value[index:index+len(substring)] == substring {
-			return true
-		}
-	}
-	return false
 }

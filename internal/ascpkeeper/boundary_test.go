@@ -121,6 +121,33 @@ func TestUnixBoundaryRejectsUnknownResponseFields(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedArtifactBoundaryRejectsCapabilitySubstitution(t *testing.T) {
+	capability := bytes.Repeat([]byte{0xa7}, 32)
+	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		if request.Header.Get("Authorization") != "Bearer "+base64.StdEncoding.EncodeToString(capability) {
+			writer.WriteHeader(http.StatusUnauthorized)
+			_, _ = writer.Write([]byte(`{"code":"ARTIFACT_UNAUTHORIZED"}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"handle":{"id":"expected-handle"},"artifact":"c2VjcmV0"}`))
+	})
+	path := unixBoundaryServer(t, healthHandler("artifact", handler))
+	wrongCapability := bytes.Repeat([]byte{0xb8}, 32)
+	boundary, err := NewAuthenticatedUnixBoundary("artifact", path, time.Second, wrongCapability)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewUnixArtifactClient(boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, artifact, err := client.Release(context.Background(), "handle", "keeper")
+	if err == nil || handle.ID != "" || artifact != nil {
+		t.Fatalf("substituted capability output: handle=%+v artifact=%q err=%v", handle, artifact, err)
+	}
+}
+
 func TestUnixBoundaryErrorNeverReturnsDecodedSecretBuffers(t *testing.T) {
 	t.Run("artifact", func(t *testing.T) {
 		capability := bytes.Repeat([]byte{0xa7}, 32)

@@ -16,8 +16,9 @@ and allowed unrelated operations with the same action label to collide.
 - Add `cmd/ascp-signer-runtime` with no TCP listener and no private signing key.
 - Serve `ASCP_BEARER_RUNTIME_V1` and the keeper `artifact` subset of
   `ASCP_KEEPER_BOUNDARY_V1` on distinct new `0600` Unix sockets.
-- Refuse existing socket paths, symlinks, insecure or unowned parents, shared
-  paths, wrong protocol identities, oversized or non-strict JSON, and
+- Refuse existing socket paths, any symlinked path component, parents that are
+  not owner-only (`0700`) or unowned, shared paths, wrong protocol identities,
+  oversized or non-strict JSON, and
   dependency redirects.
 - Retain signature ciphertext only in the existing process-locked, fsynced,
   hash-chained signer ledger. Load its AES-GCM key only from a private regular

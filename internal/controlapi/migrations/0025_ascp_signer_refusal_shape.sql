@@ -32,7 +32,7 @@ BEGIN
               )
           )
     ) THEN
-        RAISE EXCEPTION 'legacy REFUSED signer rows contain progressed signing or live-budget evidence; reconcile them before migration'
+        RAISE EXCEPTION 'legacy REFUSED signer rows contain progressed signing, live-budget evidence, or a missing/invalid prepare outbox; reconcile them before migration'
             USING ERRCODE = '23514';
     END IF;
 END;
