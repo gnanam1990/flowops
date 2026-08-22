@@ -3,10 +3,13 @@
 package spendauthorization
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"math/big"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -14,8 +17,8 @@ import (
 )
 
 const (
-	LockTypeString              = "LockAuthorization(bytes32 orgDomain,address safe,bytes32 operationId,bytes32 commitmentHash,bytes32 calldataHash,address escrow,uint256 amount,uint64 validAfter,uint64 validBefore,bytes32 nonce,uint64 leadershipEpoch,uint64 authorizerEpoch)"
-	AllowanceTypeString         = "AllowanceAuthorization(bytes32 orgDomain,address safe,bytes32 adminOperationId,address token,address spender,uint256 expectedCurrentAllowance,uint256 newAllowance,uint64 validAfter,uint64 validBefore,bytes32 nonce,uint64 authorizerEpoch)"
+	LockTypeString              = "LockAuthorization(bytes32 orgDomain,address safe,address module,bytes32 operationId,bytes32 commitmentHash,bytes32 calldataHash,address escrow,uint256 amount,uint256 nonce,uint64 validAfter,uint64 validBefore,uint64 leadershipEpoch,uint64 authorizerEpoch)"
+	AllowanceTypeString         = "AllowanceAuthorization(bytes32 orgDomain,address safe,address module,bytes32 adminOperationId,address token,address spender,uint256 expectedAllowance,uint256 newAllowance,uint256 nonce,uint64 validAfter,uint64 validBefore,uint64 leadershipEpoch,uint64 authorizerEpoch)"
 	MaximumWindowSeconds uint64 = 600
 )
 
@@ -24,51 +27,62 @@ var (
 	decimalPattern          = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 	domainTypeHash          = crypto.Keccak256Hash([]byte("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"))
 	nameHash                = crypto.Keccak256Hash([]byte("ASCP"))
-	versionHash             = crypto.Keccak256Hash([]byte("3"))
+	versionHash             = crypto.Keccak256Hash([]byte("4"))
 	lockTypeHash            = crypto.Keccak256Hash([]byte(LockTypeString))
 	allowanceTypeHash       = crypto.Keccak256Hash([]byte(AllowanceTypeString))
 )
 
 type LockAuthorization struct {
-	OrgDomain       string
-	Safe            string
-	OperationID     string
-	CommitmentHash  string
-	CalldataHash    string
-	Escrow          string
-	Amount          string
-	ValidAfter      uint64
-	ValidBefore     uint64
-	Nonce           string
-	LeadershipEpoch uint64
-	AuthorizerEpoch uint64
+	OrgDomain       string `json:"orgDomain"`
+	Safe            string `json:"safe"`
+	Module          string `json:"module"`
+	OperationID     string `json:"operationId"`
+	CommitmentHash  string `json:"commitmentHash"`
+	CalldataHash    string `json:"calldataHash"`
+	Escrow          string `json:"escrow"`
+	Amount          string `json:"amount"`
+	Nonce           string `json:"nonce"`
+	ValidAfter      uint64 `json:"validAfter"`
+	ValidBefore     uint64 `json:"validBefore"`
+	LeadershipEpoch uint64 `json:"leadershipEpoch"`
+	AuthorizerEpoch uint64 `json:"authorizerEpoch"`
 }
 
 type AllowanceAuthorization struct {
-	OrgDomain                string
-	Safe                     string
-	AdminOperationID         string
-	Token                    string
-	Spender                  string
-	ExpectedCurrentAllowance string
-	NewAllowance             string
-	ValidAfter               uint64
-	ValidBefore              uint64
-	Nonce                    string
-	AuthorizerEpoch          uint64
+	OrgDomain         string `json:"orgDomain"`
+	Safe              string `json:"safe"`
+	Module            string `json:"module"`
+	AdminOperationID  string `json:"adminOperationId"`
+	Token             string `json:"token"`
+	Spender           string `json:"spender"`
+	ExpectedAllowance string `json:"expectedAllowance"`
+	NewAllowance      string `json:"newAllowance"`
+	Nonce             string `json:"nonce"`
+	ValidAfter        uint64 `json:"validAfter"`
+	ValidBefore       uint64 `json:"validBefore"`
+	LeadershipEpoch   uint64 `json:"leadershipEpoch"`
+	AuthorizerEpoch   uint64 `json:"authorizerEpoch"`
+}
+
+func (a LockAuthorization) EncodedData() ([]byte, error) {
+	amount, nonce, err := validateLock(a)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.Join([][]byte{
+		lockTypeHash[:], hashWord(a.OrgDomain), addressWord(a.Safe), addressWord(a.Module), hashWord(a.OperationID),
+		hashWord(a.CommitmentHash), hashWord(a.CalldataHash), addressWord(a.Escrow), uintWord(amount),
+		uintWord(nonce), uint64Word(a.ValidAfter), uint64Word(a.ValidBefore),
+		uint64Word(a.LeadershipEpoch), uint64Word(a.AuthorizerEpoch),
+	}, nil), nil
 }
 
 func (a LockAuthorization) StructHash() (common.Hash, error) {
-	amount, err := validateLock(a)
+	encoded, err := a.EncodedData()
 	if err != nil {
 		return common.Hash{}, err
 	}
-	return crypto.Keccak256Hash(
-		lockTypeHash[:], hashWord(a.OrgDomain), addressWord(a.Safe), hashWord(a.OperationID),
-		hashWord(a.CommitmentHash), hashWord(a.CalldataHash), addressWord(a.Escrow), uintWord(amount),
-		uint64Word(a.ValidAfter), uint64Word(a.ValidBefore), hashWord(a.Nonce),
-		uint64Word(a.LeadershipEpoch), uint64Word(a.AuthorizerEpoch),
-	), nil
+	return crypto.Keccak256Hash(encoded), nil
 }
 
 func (a LockAuthorization) Digest(chainID, module string) (common.Hash, error) {
@@ -76,25 +90,40 @@ func (a LockAuthorization) Digest(chainID, module string) (common.Hash, error) {
 	if err != nil {
 		return common.Hash{}, err
 	}
+	if !strings.EqualFold(module, a.Module) {
+		return common.Hash{}, ErrInvalidAuthorization
+	}
 	return digest(chainID, module, structHash)
 }
 
+func (a AllowanceAuthorization) EncodedData() ([]byte, error) {
+	expected, next, nonce, err := validateAllowance(a)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.Join([][]byte{
+		allowanceTypeHash[:], hashWord(a.OrgDomain), addressWord(a.Safe), addressWord(a.Module), hashWord(a.AdminOperationID),
+		addressWord(a.Token), addressWord(a.Spender), uintWord(expected), uintWord(next),
+		uintWord(nonce), uint64Word(a.ValidAfter), uint64Word(a.ValidBefore),
+		uint64Word(a.LeadershipEpoch), uint64Word(a.AuthorizerEpoch),
+	}, nil), nil
+}
+
 func (a AllowanceAuthorization) StructHash() (common.Hash, error) {
-	expected, next, err := validateAllowance(a)
+	encoded, err := a.EncodedData()
 	if err != nil {
 		return common.Hash{}, err
 	}
-	return crypto.Keccak256Hash(
-		allowanceTypeHash[:], hashWord(a.OrgDomain), addressWord(a.Safe), hashWord(a.AdminOperationID),
-		addressWord(a.Token), addressWord(a.Spender), uintWord(expected), uintWord(next),
-		uint64Word(a.ValidAfter), uint64Word(a.ValidBefore), hashWord(a.Nonce), uint64Word(a.AuthorizerEpoch),
-	), nil
+	return crypto.Keccak256Hash(encoded), nil
 }
 
 func (a AllowanceAuthorization) Digest(chainID, module string) (common.Hash, error) {
 	structHash, err := a.StructHash()
 	if err != nil {
 		return common.Hash{}, err
+	}
+	if !strings.EqualFold(module, a.Module) {
+		return common.Hash{}, ErrInvalidAuthorization
 	}
 	return digest(chainID, module, structHash)
 }
@@ -117,35 +146,92 @@ func digest(chainID, module string, structHash common.Hash) (common.Hash, error)
 	return crypto.Keccak256Hash([]byte{0x19, 0x01}, domain[:], structHash[:]), nil
 }
 
-func validateLock(a LockAuthorization) (*big.Int, error) {
+func validateLock(a LockAuthorization) (*big.Int, *big.Int, error) {
 	if !validHash(a.OrgDomain) || !validHash(a.OperationID) || !validHash(a.CommitmentHash) ||
-		!validHash(a.CalldataHash) || !validHash(a.Nonce) || !validAddress(a.Safe) || !validAddress(a.Escrow) ||
+		!validHash(a.CalldataHash) || !validAddress(a.Safe) || !validAddress(a.Module) || !validAddress(a.Escrow) ||
 		!validWindow(a.ValidAfter, a.ValidBefore) || a.LeadershipEpoch == 0 || a.AuthorizerEpoch == 0 {
-		return nil, ErrInvalidAuthorization
+		return nil, nil, ErrInvalidAuthorization
 	}
 	amount, err := decimal(a.Amount, true)
 	if err != nil {
-		return nil, ErrInvalidAuthorization
-	}
-	return amount, nil
-}
-
-func validateAllowance(a AllowanceAuthorization) (*big.Int, *big.Int, error) {
-	if !validHash(a.OrgDomain) || !validHash(a.AdminOperationID) || !validHash(a.Nonce) ||
-		!validAddress(a.Safe) || !validAddress(a.Token) || !validAddress(a.Spender) ||
-		!validWindow(a.ValidAfter, a.ValidBefore) || a.AuthorizerEpoch == 0 {
 		return nil, nil, ErrInvalidAuthorization
 	}
-	expected, err := decimal(a.ExpectedCurrentAllowance, false)
+	nonce, err := decimal(a.Nonce, true)
 	if err != nil {
 		return nil, nil, ErrInvalidAuthorization
+	}
+	return amount, nonce, nil
+}
+
+func validateAllowance(a AllowanceAuthorization) (*big.Int, *big.Int, *big.Int, error) {
+	if !validHash(a.OrgDomain) || !validHash(a.AdminOperationID) ||
+		!validAddress(a.Safe) || !validAddress(a.Module) || !validAddress(a.Token) || !validAddress(a.Spender) ||
+		!validWindow(a.ValidAfter, a.ValidBefore) || a.LeadershipEpoch == 0 || a.AuthorizerEpoch == 0 {
+		return nil, nil, nil, ErrInvalidAuthorization
+	}
+	expected, err := decimal(a.ExpectedAllowance, false)
+	if err != nil {
+		return nil, nil, nil, ErrInvalidAuthorization
 	}
 	next, err := decimal(a.NewAllowance, false)
 	if err != nil {
-		return nil, nil, ErrInvalidAuthorization
+		return nil, nil, nil, ErrInvalidAuthorization
 	}
-	return expected, next, nil
+	nonce, err := decimal(a.Nonce, true)
+	if err != nil {
+		return nil, nil, nil, ErrInvalidAuthorization
+	}
+	return expected, next, nonce, nil
 }
+
+func (a LockAuthorization) CanonicalJSON() ([]byte, error) {
+	if _, _, err := validateLock(a); err != nil {
+		return nil, err
+	}
+	return canonicalObject(map[string]string{
+		"amount": quote(a.Amount), "authorizerEpoch": strconv.FormatUint(a.AuthorizerEpoch, 10),
+		"calldataHash": quote(a.CalldataHash), "commitmentHash": quote(a.CommitmentHash),
+		"escrow": quote(a.Escrow), "leadershipEpoch": strconv.FormatUint(a.LeadershipEpoch, 10),
+		"module": quote(a.Module), "nonce": quote(a.Nonce), "operationId": quote(a.OperationID),
+		"orgDomain": quote(a.OrgDomain), "safe": quote(a.Safe), "validAfter": strconv.FormatUint(a.ValidAfter, 10),
+		"validBefore": strconv.FormatUint(a.ValidBefore, 10),
+	}), nil
+}
+
+func (a AllowanceAuthorization) CanonicalJSON() ([]byte, error) {
+	if _, _, _, err := validateAllowance(a); err != nil {
+		return nil, err
+	}
+	return canonicalObject(map[string]string{
+		"adminOperationId": quote(a.AdminOperationID), "authorizerEpoch": strconv.FormatUint(a.AuthorizerEpoch, 10),
+		"expectedAllowance": quote(a.ExpectedAllowance), "leadershipEpoch": strconv.FormatUint(a.LeadershipEpoch, 10),
+		"module": quote(a.Module), "newAllowance": quote(a.NewAllowance), "nonce": quote(a.Nonce),
+		"orgDomain": quote(a.OrgDomain), "safe": quote(a.Safe), "spender": quote(a.Spender), "token": quote(a.Token),
+		"validAfter": strconv.FormatUint(a.ValidAfter, 10), "validBefore": strconv.FormatUint(a.ValidBefore, 10),
+	}), nil
+}
+
+func canonicalObject(fields map[string]string) []byte {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var output strings.Builder
+	output.WriteByte('{')
+	for index, key := range keys {
+		if index != 0 {
+			output.WriteByte(',')
+		}
+		output.WriteString(quote(key))
+		output.WriteByte(':')
+		output.WriteString(fields[key])
+	}
+	output.WriteByte('}')
+	return []byte(output.String())
+}
+
+func quote(value string) string { return strconv.Quote(value) }
 
 func validWindow(after, before uint64) bool {
 	return before > after && before-after <= MaximumWindowSeconds

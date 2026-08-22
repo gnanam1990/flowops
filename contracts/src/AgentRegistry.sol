@@ -11,6 +11,8 @@ contract AgentRegistry is EIP712 {
     using ECDSA for bytes32;
 
     bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("AGENT_REGISTRY_GOVERNANCE_V1");
+    bytes32 public constant TYPED_DATA_MANIFEST_SHA256 =
+        0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5;
     bytes32 public constant REGISTRY_ADMIN_ROLE = keccak256("ASCP_REGISTRY_ADMIN");
     bytes32 public constant AGENT_ID_DOMAIN = keccak256("ASCP_AGENT_ID_V1");
     bytes32 public constant ADMIN_ACTION_TYPEHASH = keccak256(

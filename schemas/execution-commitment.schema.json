@@ -15,9 +15,9 @@
     "purchaseSpecHash": {"$ref": "#/$defs/hash"},
     "quoteHash": {"$ref": "#/$defs/hash"},
     "verificationSpecHash": {"$ref": "#/$defs/hash"},
-    "declaredWorkTime": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
-    "verificationBudgetSeconds": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
-    "directoryVersion": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
+    "declaredWorkTime": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "verificationBudgetSeconds": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "directoryVersion": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
     "sellerId": {"$ref": "#/$defs/hash"},
     "resourceId": {"$ref": "#/$defs/hash"},
     "payTo": {"$ref": "#/$defs/address"},
@@ -25,10 +25,10 @@
     "amount": {"$ref": "#/$defs/uint256"},
     "chainId": {"$ref": "#/$defs/uint256"},
     "asset": {"$ref": "#/$defs/address"},
-    "quoteExpiresAt": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
-    "acceptBy": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
-    "deliverBy": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615},
-    "settleBy": {"type": "integer", "minimum": 1, "maximum": 18446744073709551615}
+    "quoteExpiresAt": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "acceptBy": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "deliverBy": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "settleBy": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
   },
   "$defs": {
     "hash": {"type": "string", "pattern": "^0x[0-9a-f]{64}$"},

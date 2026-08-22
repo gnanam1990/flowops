@@ -229,6 +229,9 @@ contract ServiceDirectoryTest is Test {
     }
 
     function testGovernancePayloadMatchesPublishedGoGoldenVector() public {
+        assertEq(
+            directory.TYPED_DATA_MANIFEST_SHA256(), 0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5
+        );
         address fixedDirectory = 0x1111111111111111111111111111111111111111;
         vm.etch(fixedDirectory, address(directory).code);
         vm.chainId(8453);

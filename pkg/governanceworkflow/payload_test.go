@@ -36,7 +36,7 @@ func TestGovernancePayloadGoldenVectors(t *testing.T) {
 			return SpendPause(8453, vectorContract, vectorWorkflow, false, true)
 		}),
 		"invalidate": mustHash(t, func() (common.Hash, error) {
-			return SpendInvalidateNonces(8453, vectorContract, vectorWorkflow, []string{hashValue(3), hashValue(4)})
+			return SpendInvalidateNonces(8453, vectorContract, vectorWorkflow, []string{"3", "4"})
 		}),
 		"directory publish": mustHash(t, func() (common.Hash, error) {
 			return DirectoryPublish(8453, vectorContract, vectorWorkflow, DirectoryProposal{
@@ -56,7 +56,7 @@ func TestGovernancePayloadGoldenVectors(t *testing.T) {
 		"allowlist":         "0x584236800edc934197628ebfb3f2148ea00694291c6a6e74565208bbd3533544",
 		"caps":              "0x0064db44b287bf57c4b40240ea6588aa2bd230d6349aae90da6f03f0c59833d4",
 		"module pause":      "0x92c84c2ef61ba58353d2bbf13cec02f789e014c8a076923dc2b22011c106e890",
-		"invalidate":        "0xc3b8f091400426a9302ded1fb80763d7bffe24744781106fa9a70af9487be863",
+		"invalidate":        "0x9401eab51918e1bfd4c27edcded7ddcd71080d4d959796c42f0d8d730c6d24ac",
 		"directory publish": "0xf577289b92b129c625813d0725e72da6c048a94651ad07508083ecc3a01f24b9",
 		"directory cancel":  "0xdffa3dea6724afbc06b8e60d4306cd37fd64c84cf20c506aa29f188791eb2b08",
 	}
@@ -100,7 +100,7 @@ func TestGovernancePayloadRejectsDomainAndValueSubstitution(t *testing.T) {
 			t.Fatalf("mutation %d value=%s err=%v", index, value.Hex(), err)
 		}
 	}
-	if _, err := SpendInvalidateNonces(8453, vectorContract, vectorWorkflow, []string{hashValue(1), hashValue(1)}); !errors.Is(err, ErrInvalidPayload) {
+	if _, err := SpendInvalidateNonces(8453, vectorContract, vectorWorkflow, []string{"1", "1"}); !errors.Is(err, ErrInvalidPayload) {
 		t.Fatalf("duplicate nonce error=%v", err)
 	}
 	if _, err := SpendCaps(8453, vectorContract, vectorWorkflow, Caps{"01", "2", "3"}, Caps{"1", "2", "3"}); !errors.Is(err, ErrInvalidPayload) {
