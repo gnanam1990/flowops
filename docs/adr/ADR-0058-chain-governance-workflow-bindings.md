@@ -12,9 +12,10 @@ workflow ID and the exact payload hash approved by the control plane. They are
 verifier add/revoke and emergency pause on `ASCPCallEscrow`; authorizer,
 allowlist, cap, pause, and nonce governance on `ASCPSpendModule`; and directory
 version approval/cancellation on `ServiceDirectory`. The contract recomputes
-that hash from a versioned domain, chain ID, its own address, the concrete
-function selector, and ABI-encoded action values. A mismatch reverts before
-state changes.
+that hash from a versioned domain, chain ID, its own address, the exact workflow
+ID, the concrete function selector, and ABI-encoded action values. A mismatch
+reverts before state changes; a correct action payload cannot be relabelled as
+a different workflow.
 
 Successful calls emit the action-specific event and the shared
 `GovernanceWorkflowBound(workflowId, workflowPayloadHash, functionSelector)`
@@ -38,8 +39,11 @@ domain, chain, and contract-address drift.
   incompatible and must not be promoted; reviewed successors must be deployed,
   verified, and reconfigured through the Safe ceremony.
 - A receipt observer can require both the exact action event and the shared
-  binding event before closing `APPROVED_PENDING_CHAIN`. This change does not
-  itself implement that observer or accept caller-supplied receipts.
+  binding event before closing `APPROVED_PENDING_CHAIN`. It must obtain a
+  canonical finalized receipt from the configured independent RPC quorum,
+  verify chain/contract/transaction/log identity and one-time receipt ownership,
+  and reject disagreement, reorg, or replay. This change does not itself
+  implement that observer or accept caller-supplied receipts.
 - Verifier addition, cap scheduling, and directory approval receipts prove the
   scheduled mutation, not later activation. The observer must apply
   selector-specific completion semantics and separately reconcile activation

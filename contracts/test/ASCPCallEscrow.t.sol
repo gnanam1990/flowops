@@ -64,25 +64,30 @@ contract EscrowDirectoryGovernor {
         bytes32 workflowId = keccak256(abi.encode("add-verifier", key, epoch));
         (uint64 pendingEpoch, uint64 pendingActivatesAt) = escrow.pendingVerifier(key);
         bytes32 payloadHash = escrow.governancePayloadHash(
+            workflowId,
             escrow.addVerifier.selector,
-            keccak256(abi.encode(key, escrow.activeVerifierEpoch(key), pendingEpoch, pendingActivatesAt, epoch))
+            keccak256(abi.encode(key, escrow.activeVerifierEpoch(key), pendingEpoch, pendingActivatesAt, false, epoch))
         );
         escrow.addVerifier(key, epoch, workflowId, payloadHash);
     }
 
     function revokeVerifier(ASCPCallEscrow escrow, address key) external {
-        uint64 epoch = escrow.activeVerifierEpoch(key);
-        bytes32 workflowId = keccak256(abi.encode("revoke-verifier", key, epoch));
+        uint64 activeEpoch = escrow.activeVerifierEpoch(key);
+        (uint64 pendingEpoch, uint64 pendingActivatesAt) = escrow.pendingVerifier(key);
+        bytes32 workflowId = keccak256(abi.encode("revoke-verifier", key, activeEpoch, pendingEpoch));
         bytes32 payloadHash = escrow.governancePayloadHash(
-            escrow.revokeVerifier.selector, keccak256(abi.encode(key, epoch, false, true))
+            workflowId,
+            escrow.revokeVerifier.selector,
+            keccak256(abi.encode(key, activeEpoch, pendingEpoch, pendingActivatesAt, false, true))
         );
         escrow.revokeVerifier(key, workflowId, payloadHash);
     }
 
     function pause(ASCPCallEscrow escrow) external {
         bytes32 workflowId = keccak256("pause-verifier");
-        bytes32 payloadHash =
-            escrow.governancePayloadHash(escrow.setEmergencyPause.selector, keccak256(abi.encode(false, true)));
+        bytes32 payloadHash = escrow.governancePayloadHash(
+            workflowId, escrow.setEmergencyPause.selector, keccak256(abi.encode(false, true))
+        );
         escrow.setEmergencyPause(workflowId, payloadHash);
     }
 }
@@ -461,15 +466,23 @@ contract ASCPCallEscrowTest is Test {
         address verifier = makeAddr("bound-verifier");
         bytes32 workflowId = keccak256("verifier-workflow");
         bytes32 payloadHash = escrow.governancePayloadHash(
-            escrow.addVerifier.selector, keccak256(abi.encode(verifier, uint64(0), uint64(0), uint64(0), uint64(9)))
+            workflowId,
+            escrow.addVerifier.selector,
+            keccak256(abi.encode(verifier, uint64(0), uint64(0), uint64(0), false, uint64(9)))
         );
         bytes32 staleNextHash = escrow.governancePayloadHash(
-            escrow.addVerifier.selector, keccak256(abi.encode(verifier, uint64(0), uint64(0), uint64(0), uint64(10)))
+            workflowId,
+            escrow.addVerifier.selector,
+            keccak256(abi.encode(verifier, uint64(0), uint64(0), uint64(0), false, uint64(10)))
         );
 
         vm.expectRevert(ASCPCallEscrow.InvalidWorkflowBinding.selector);
         vm.prank(address(settlementGovernor));
         escrow.addVerifier(verifier, 10, workflowId, payloadHash);
+
+        vm.expectRevert(ASCPCallEscrow.InvalidWorkflowBinding.selector);
+        vm.prank(address(settlementGovernor));
+        escrow.addVerifier(verifier, 9, keccak256("wrong-workflow"), payloadHash);
 
         vm.expectEmit(true, true, true, true);
         emit ASCPCallEscrow.GovernanceWorkflowBound(workflowId, payloadHash, escrow.addVerifier.selector);
@@ -481,30 +494,60 @@ contract ASCPCallEscrowTest is Test {
         escrow.addVerifier(verifier, 10, keccak256("stale-workflow"), staleNextHash);
     }
 
+    function testPendingVerifierCanBeRevokedBeforeActivation() public {
+        address verifier = makeAddr("pending-verifier");
+        settlementGovernor.addVerifier(escrow, verifier, 7);
+        settlementGovernor.revokeVerifier(escrow, verifier);
+
+        (uint64 pendingEpoch, uint64 pendingActivatesAt) = escrow.pendingVerifier(verifier);
+        assertEq(pendingEpoch, 0);
+        assertEq(pendingActivatesAt, 0);
+        assertEq(escrow.activeVerifierEpoch(verifier), 7);
+        assertTrue(escrow.verifierRevoked(verifier));
+        vm.warp(block.timestamp + escrow.VERIFIER_ACTIVATION_DELAY());
+        vm.expectRevert(abi.encodeWithSelector(ASCPCallEscrow.VerifierActivationPending.selector, verifier));
+        escrow.activateVerifier(verifier);
+
+        vm.expectRevert(ASCPCallEscrow.InvalidVerifier.selector);
+        settlementGovernor.addVerifier(escrow, verifier, 7);
+        vm.expectRevert(ASCPCallEscrow.InvalidVerifier.selector);
+        settlementGovernor.addVerifier(escrow, verifier, 8);
+        assertTrue(escrow.verifierRevoked(verifier));
+    }
+
     function testGovernancePayloadMatchesPublishedGoGoldenVector() public {
         address fixedEscrow = 0x1111111111111111111111111111111111111111;
         vm.etch(fixedEscrow, address(escrow).code);
         vm.chainId(8453);
         ASCPCallEscrow target = ASCPCallEscrow(fixedEscrow);
+        bytes32 workflowId = bytes32(uint256(10));
         assertEq(
             target.governancePayloadHash(
+                workflowId,
                 target.addVerifier.selector,
                 keccak256(
-                    abi.encode(0x2222222222222222222222222222222222222222, uint64(0), uint64(0), uint64(0), uint64(7))
+                    abi.encode(
+                        0x2222222222222222222222222222222222222222, uint64(0), uint64(0), uint64(0), false, uint64(7)
+                    )
                 )
             ),
-            0x0f19082ff9903ba033a08ccbb3b8528aecf73085f137c7525e75edfd3eb82ae5
+            0x9b0c7f4e567efee6a00679ec82a130cd533033556778b4714954ae33c5e21a9a
         );
         assertEq(
             target.governancePayloadHash(
+                workflowId,
                 target.revokeVerifier.selector,
-                keccak256(abi.encode(0x2222222222222222222222222222222222222222, uint64(7), false, true))
+                keccak256(
+                    abi.encode(0x2222222222222222222222222222222222222222, uint64(7), uint64(0), uint64(0), false, true)
+                )
             ),
-            0xc495ef0524c5118be2b3f5212e30d052b96b53e213fe6ad459612e0acff0837b
+            0x01309d6736691a730ed69edebe6de0947eb2e3cca8644bfc0f7d95c73f4cf9aa
         );
         assertEq(
-            target.governancePayloadHash(target.setEmergencyPause.selector, keccak256(abi.encode(false, true))),
-            0xd392524af9b81440a6267a4b8b84939e061dc4df4a9d1133258dc88dc857001a
+            target.governancePayloadHash(
+                workflowId, target.setEmergencyPause.selector, keccak256(abi.encode(false, true))
+            ),
+            0x9ac44345065eface2da788044bb90eeba3677169074860e43fb034a8cb8d1daf
         );
     }
 

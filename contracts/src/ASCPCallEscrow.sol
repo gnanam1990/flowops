@@ -153,7 +153,7 @@ contract ASCPCallEscrow is ReentrancyGuard {
     );
     event VerifierAdded(address indexed key, uint64 epoch, uint64 activatesAt);
     event VerifierActivated(address indexed key, uint64 epoch);
-    event VerifierRevoked(address indexed key, uint64 epoch);
+    event VerifierRevoked(address indexed key, uint64 activeEpoch, uint64 pendingEpoch);
     event EmergencyPauseSet();
     event GovernanceWorkflowBound(
         bytes32 indexed workflowId, bytes32 indexed workflowPayloadHash, bytes4 indexed functionSelector
@@ -279,19 +279,20 @@ contract ASCPCallEscrow is ReentrancyGuard {
         if (msg.sender != governor) revert NotGovernor(msg.sender);
         PendingVerifier memory currentPending = pendingVerifier[key];
         if (
-            key == address(0) || epoch == 0 || epoch <= activeVerifierEpoch[key]
+            key == address(0) || verifierRevoked[key] || epoch == 0 || epoch <= activeVerifierEpoch[key]
                 || (currentPending.epoch != 0 && epoch <= currentPending.epoch)
         ) revert InvalidVerifier();
         _requireGovernanceWorkflow(
             this.addVerifier.selector,
             keccak256(
-                abi.encode(key, activeVerifierEpoch[key], currentPending.epoch, currentPending.activatesAt, epoch)
+                abi.encode(
+                    key, activeVerifierEpoch[key], currentPending.epoch, currentPending.activatesAt, false, epoch
+                )
             ),
             workflowId,
             workflowPayloadHash
         );
         pendingVerifier[key] = PendingVerifier(epoch, uint64(block.timestamp) + VERIFIER_ACTIVATION_DELAY);
-        verifierRevoked[key] = false;
         emit VerifierAdded(key, epoch, uint64(block.timestamp) + VERIFIER_ACTIVATION_DELAY);
         emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.addVerifier.selector);
     }
@@ -306,16 +307,21 @@ contract ASCPCallEscrow is ReentrancyGuard {
 
     function revokeVerifier(address key, bytes32 workflowId, bytes32 workflowPayloadHash) external {
         if (msg.sender != governor) revert NotGovernor(msg.sender);
-        uint64 epoch = activeVerifierEpoch[key];
-        if (key == address(0) || epoch == 0 || verifierRevoked[key]) revert InvalidVerifier();
+        uint64 activeEpoch = activeVerifierEpoch[key];
+        PendingVerifier memory currentPending = pendingVerifier[key];
+        if (key == address(0) || (activeEpoch == 0 && currentPending.epoch == 0) || verifierRevoked[key]) {
+            revert InvalidVerifier();
+        }
         _requireGovernanceWorkflow(
             this.revokeVerifier.selector,
-            keccak256(abi.encode(key, epoch, false, true)),
+            keccak256(abi.encode(key, activeEpoch, currentPending.epoch, currentPending.activatesAt, false, true)),
             workflowId,
             workflowPayloadHash
         );
+        if (currentPending.epoch > activeEpoch) activeVerifierEpoch[key] = currentPending.epoch;
+        delete pendingVerifier[key];
         verifierRevoked[key] = true;
-        emit VerifierRevoked(key, epoch);
+        emit VerifierRevoked(key, activeEpoch, currentPending.epoch);
         emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.revokeVerifier.selector);
     }
 
@@ -330,11 +336,16 @@ contract ASCPCallEscrow is ReentrancyGuard {
         emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setEmergencyPause.selector);
     }
 
-    function governancePayloadHash(bytes4 functionSelector, bytes32 argumentsHash) public view returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), functionSelector, argumentsHash)
-            );
+    function governancePayloadHash(bytes32 workflowId, bytes4 functionSelector, bytes32 argumentsHash)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), workflowId, functionSelector, argumentsHash
+            )
+        );
     }
 
     function _requireGovernanceWorkflow(
@@ -345,7 +356,7 @@ contract ASCPCallEscrow is ReentrancyGuard {
     ) private view {
         if (
             workflowId == bytes32(0) || workflowPayloadHash == bytes32(0)
-                || workflowPayloadHash != governancePayloadHash(functionSelector, argumentsHash)
+                || workflowPayloadHash != governancePayloadHash(workflowId, functionSelector, argumentsHash)
         ) revert InvalidWorkflowBinding();
     }
 

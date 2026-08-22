@@ -448,6 +448,7 @@ contract ServiceDirectory {
 
     function directoryProposalWorkflowPayloadHash(DirectoryProposal memory proposal) public view returns (bytes32) {
         return governancePayloadHash(
+            proposal.workflowId,
             this.approveVersion.selector,
             keccak256(
                 abi.encode(
@@ -464,11 +465,16 @@ contract ServiceDirectory {
         );
     }
 
-    function governancePayloadHash(bytes4 functionSelector, bytes32 argumentsHash) public view returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), functionSelector, argumentsHash)
-            );
+    function governancePayloadHash(bytes32 workflowId, bytes4 functionSelector, bytes32 argumentsHash)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), workflowId, functionSelector, argumentsHash
+            )
+        );
     }
 
     function _requireGovernanceWorkflow(
@@ -479,7 +485,7 @@ contract ServiceDirectory {
     ) private view {
         if (
             workflowId == bytes32(0) || workflowPayloadHash == bytes32(0)
-                || workflowPayloadHash != governancePayloadHash(functionSelector, argumentsHash)
+                || workflowPayloadHash != governancePayloadHash(workflowId, functionSelector, argumentsHash)
         ) revert InvalidWorkflowBinding();
     }
 

@@ -23,7 +23,7 @@ output is `currentVersion()` plus `currentRoot()`. `verifySeller` and
 
 The proposal's `workflowPayloadHash` is recomputed on-chain from the exact
 version predecessor, roots, blob/location hashes, change class, activation
-request, Base chain, directory address, and approval selector. Governor
+request, Base chain, directory address, workflow ID, and approval selector. Governor
 approval emits `GovernanceWorkflowBound` with the immutable workflow ID and
 payload hash. `cancelVersion` requires a separate exact `DIRECTORY_CANCEL`
 workflow binding and emits the same receipt event beside `VersionCancelled`.

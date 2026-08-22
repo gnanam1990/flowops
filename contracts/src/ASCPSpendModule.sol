@@ -132,6 +132,7 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     error InvalidCaps();
     error CapsNotReady(uint64 activatesAt);
     error CapsAlreadyPending(uint64 activatesAt);
+    error CapsUnchanged();
     error EscrowAllowlistUnchanged(address escrow, bytes32 runtimeCodeHash);
     error InvalidNonceInvalidationCount(uint256 count);
     error InvalidWorkflowBinding();
@@ -323,6 +324,10 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     function scheduleCaps(Caps calldata newCaps, bytes32 workflowId, bytes32 workflowPayloadHash) external onlySafe {
         _validateCaps(newCaps);
         if (pendingCaps.activatesAt != 0) revert CapsAlreadyPending(pendingCaps.activatesAt);
+        if (
+            newCaps.perTransaction == caps.perTransaction && newCaps.perDay == caps.perDay
+                && newCaps.allowanceCeiling == caps.allowanceCeiling
+        ) revert CapsUnchanged();
         _requireGovernanceWorkflow(
             this.scheduleCaps.selector,
             keccak256(
@@ -387,11 +392,16 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
         emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.invalidateNonces.selector);
     }
 
-    function governancePayloadHash(bytes4 functionSelector, bytes32 argumentsHash) public view returns (bytes32) {
-        return
-            keccak256(
-                abi.encode(GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), functionSelector, argumentsHash)
-            );
+    function governancePayloadHash(bytes32 workflowId, bytes4 functionSelector, bytes32 argumentsHash)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), workflowId, functionSelector, argumentsHash
+            )
+        );
     }
 
     function _requireGovernanceWorkflow(
@@ -402,7 +412,7 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     ) private view {
         if (
             workflowId == bytes32(0) || workflowPayloadHash == bytes32(0)
-                || workflowPayloadHash != governancePayloadHash(functionSelector, argumentsHash)
+                || workflowPayloadHash != governancePayloadHash(workflowId, functionSelector, argumentsHash)
         ) revert InvalidWorkflowBinding();
     }
 

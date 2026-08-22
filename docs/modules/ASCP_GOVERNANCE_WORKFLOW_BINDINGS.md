@@ -9,6 +9,7 @@ keccak256(abi.encode(
   keccak256(domain),
   chainId,
   contractAddress,
+  workflowId,
   functionSelector,
   keccak256(abi.encode(action fields...))
 ))
@@ -22,6 +23,12 @@ ambiguous decimals, invalid state tuples, duplicate nonce invalidations, and
 unsupported directory change classes are rejected. No-op allowlist/pause
 changes, invalid caps, and empty or greater-than-100 nonce batches are also
 rejected, so a binding event always accompanies an actual bounded mutation.
+Verifier revocation binds and cancels both active and pending epoch state, and
+retains the highest cancelled epoch as a revoked monotonic tombstone. A
+mistakenly scheduled key can therefore be neutralized before permissionless
+activation without allowing a later lower-epoch replacement. Revocation is
+permanent for that verifier address; a later rotation must use a different key
+address and cannot revive a revoked key during its activation delay.
 
 The action fields include current-state preconditions as well as proposed
 values. This makes an approval stale if verifier state, authorizer epoch,

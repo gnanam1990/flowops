@@ -389,6 +389,7 @@ contract ASCPSpendModuleTest is Test {
         address next = vm.addr(AUTHOR_B_KEY);
         bytes32 workflowId = keccak256("module-workflow");
         bytes32 payloadHash = module.governancePayloadHash(
+            workflowId,
             module.setSpendAuthorizer.selector,
             keccak256(abi.encode(module.spendAuthorizer(), module.authorizerEpoch(), next))
         );
@@ -397,6 +398,12 @@ contract ASCPSpendModuleTest is Test {
         _ownerCall(
             address(module),
             abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (vm.addr(0xC0FFEE), workflowId, payloadHash))
+        );
+
+        vm.expectRevert("OWNER_CALL_FAILED");
+        _ownerCall(
+            address(module),
+            abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (next, keccak256("wrong-workflow"), payloadHash))
         );
 
         vm.expectEmit(true, true, true, true);
@@ -409,7 +416,9 @@ contract ASCPSpendModuleTest is Test {
         bytes32 currentCodeHash = module.escrowAllowlist(target);
         bytes32 workflowId = keccak256("noop-allowlist-workflow");
         bytes32 payloadHash = module.governancePayloadHash(
-            module.setEscrowAllowlist.selector, keccak256(abi.encode(target, currentCodeHash, currentCodeHash))
+            workflowId,
+            module.setEscrowAllowlist.selector,
+            keccak256(abi.encode(target, currentCodeHash, currentCodeHash))
         );
         vm.expectRevert(
             abi.encodeWithSelector(ASCPSpendModule.EscrowAllowlistUnchanged.selector, target, currentCodeHash)
@@ -418,18 +427,33 @@ contract ASCPSpendModuleTest is Test {
         module.setEscrowAllowlist(target, currentCodeHash, workflowId, payloadHash);
 
         bytes32[] memory empty = new bytes32[](0);
-        payloadHash = module.governancePayloadHash(module.invalidateNonces.selector, keccak256(abi.encode(empty)));
+        payloadHash =
+            module.governancePayloadHash(workflowId, module.invalidateNonces.selector, keccak256(abi.encode(empty)));
         vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.InvalidNonceInvalidationCount.selector, 0));
         vm.prank(address(safe));
         module.invalidateNonces(empty, workflowId, payloadHash);
 
         bytes32[] memory oversized = new bytes32[](module.MAX_GOVERNANCE_NONCE_INVALIDATIONS() + 1);
-        payloadHash = module.governancePayloadHash(module.invalidateNonces.selector, keccak256(abi.encode(oversized)));
+        payloadHash = module.governancePayloadHash(
+            workflowId, module.invalidateNonces.selector, keccak256(abi.encode(oversized))
+        );
         vm.expectRevert(
             abi.encodeWithSelector(ASCPSpendModule.InvalidNonceInvalidationCount.selector, oversized.length)
         );
         vm.prank(address(safe));
         module.invalidateNonces(oversized, workflowId, payloadHash);
+
+        (uint256 perTransaction, uint256 perDay, uint256 allowanceCeiling) = module.caps();
+        ASCPSpendModule.Caps memory unchangedCaps =
+            ASCPSpendModule.Caps({perTransaction: perTransaction, perDay: perDay, allowanceCeiling: allowanceCeiling});
+        payloadHash = module.governancePayloadHash(
+            workflowId,
+            module.scheduleCaps.selector,
+            keccak256(abi.encode(perTransaction, perDay, allowanceCeiling, perTransaction, perDay, allowanceCeiling))
+        );
+        vm.expectRevert(ASCPSpendModule.CapsUnchanged.selector);
+        vm.prank(address(safe));
+        module.scheduleCaps(unchangedCaps, workflowId, payloadHash);
     }
 
     function testGovernancePayloadMatchesPublishedGoGoldenVector() public {
@@ -437,8 +461,10 @@ contract ASCPSpendModuleTest is Test {
         vm.etch(fixedModule, address(module).code);
         vm.chainId(8453);
         ASCPSpendModule target = ASCPSpendModule(fixedModule);
+        bytes32 workflowId = bytes32(uint256(10));
         assertEq(
             target.governancePayloadHash(
+                workflowId,
                 target.setSpendAuthorizer.selector,
                 keccak256(
                     abi.encode(
@@ -448,33 +474,36 @@ contract ASCPSpendModuleTest is Test {
                     )
                 )
             ),
-            0xcbfaa0eb15e9f0bbfd62fb7e9aec03630ed5341a82826c795ff379b37eb3c6e7
+            0x3c4e6de0140852b75b2db79942976748a0d8b0cee3249a5c39044a9675ab720c
         );
         assertEq(
             target.governancePayloadHash(
+                workflowId,
                 target.setEscrowAllowlist.selector,
                 keccak256(
                     abi.encode(0x3333333333333333333333333333333333333333, bytes32(uint256(1)), bytes32(uint256(2)))
                 )
             ),
-            0x0b62fea6f1b5ce4ba038893f1648b2a094a09f40df7e55618961cc15df717973
+            0x584236800edc934197628ebfb3f2148ea00694291c6a6e74565208bbd3533544
         );
         assertEq(
             target.governancePayloadHash(
-                target.scheduleCaps.selector, keccak256(abi.encode(uint256(400), 800, 1000, 500, 900, 1200))
+                workflowId, target.scheduleCaps.selector, keccak256(abi.encode(uint256(400), 800, 1000, 500, 900, 1200))
             ),
-            0x31232f6aa50156b95bf23de30b201dae965c824d12d6ff0997dfddbd91ff5b6c
+            0x0064db44b287bf57c4b40240ea6588aa2bd230d6349aae90da6f03f0c59833d4
         );
         assertEq(
-            target.governancePayloadHash(target.setEmergencyPause.selector, keccak256(abi.encode(false, true))),
-            0xaae2725657863db70a99d73ed88ced5a073de3ff26b20de56afa922417966969
+            target.governancePayloadHash(
+                workflowId, target.setEmergencyPause.selector, keccak256(abi.encode(false, true))
+            ),
+            0x92c84c2ef61ba58353d2bbf13cec02f789e014c8a076923dc2b22011c106e890
         );
         bytes32[] memory nonces = new bytes32[](2);
         nonces[0] = bytes32(uint256(3));
         nonces[1] = bytes32(uint256(4));
         assertEq(
-            target.governancePayloadHash(target.invalidateNonces.selector, keccak256(abi.encode(nonces))),
-            0xbbd33343b45306654ce8246f2aa753f2d1ed7126a15acc99cf83c9837eef9937
+            target.governancePayloadHash(workflowId, target.invalidateNonces.selector, keccak256(abi.encode(nonces))),
+            0xc3b8f091400426a9302ded1fb80763d7bffe24744781106fa9a70af9487be863
         );
     }
 
@@ -631,6 +660,7 @@ contract ASCPSpendModuleTest is Test {
     function _setAuthorizer(address next, uint256 sequence) internal {
         bytes32 workflowId = keccak256(abi.encode("authorizer-workflow", sequence));
         bytes32 payloadHash = module.governancePayloadHash(
+            workflowId,
             module.setSpendAuthorizer.selector,
             keccak256(abi.encode(module.spendAuthorizer(), module.authorizerEpoch(), next))
         );
@@ -640,6 +670,7 @@ contract ASCPSpendModuleTest is Test {
     function _setAllowlist(address target, bytes32 nextCodeHash, uint256 sequence) internal {
         bytes32 workflowId = keccak256(abi.encode("allowlist-workflow", sequence));
         bytes32 payloadHash = module.governancePayloadHash(
+            workflowId,
             module.setEscrowAllowlist.selector,
             keccak256(abi.encode(target, module.escrowAllowlist(target), nextCodeHash))
         );
@@ -653,6 +684,7 @@ contract ASCPSpendModuleTest is Test {
         (uint256 perTransaction, uint256 perDay, uint256 allowanceCeiling) = module.caps();
         bytes32 workflowId = keccak256(abi.encode("caps-workflow", sequence));
         bytes32 payloadHash = module.governancePayloadHash(
+            workflowId,
             module.scheduleCaps.selector,
             keccak256(
                 abi.encode(
@@ -666,7 +698,7 @@ contract ASCPSpendModuleTest is Test {
     function _setPause(bool paused, uint256 sequence) internal {
         bytes32 workflowId = keccak256(abi.encode("pause-workflow", sequence));
         bytes32 payloadHash = module.governancePayloadHash(
-            module.setEmergencyPause.selector, keccak256(abi.encode(module.emergencyPaused(), paused))
+            workflowId, module.setEmergencyPause.selector, keccak256(abi.encode(module.emergencyPaused(), paused))
         );
         _ownerCall(
             address(module), abi.encodeCall(ASCPSpendModule.setEmergencyPause, (paused, workflowId, payloadHash))
@@ -676,7 +708,7 @@ contract ASCPSpendModuleTest is Test {
     function _invalidateNonces(bytes32[] memory nonces, uint256 sequence) internal {
         bytes32 workflowId = keccak256(abi.encode("invalidate-workflow", sequence));
         bytes32 payloadHash =
-            module.governancePayloadHash(module.invalidateNonces.selector, keccak256(abi.encode(nonces)));
+            module.governancePayloadHash(workflowId, module.invalidateNonces.selector, keccak256(abi.encode(nonces)));
         _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.invalidateNonces, (nonces, workflowId, payloadHash)));
     }
 
@@ -804,6 +836,7 @@ contract ASCPSpendModuleInvariantTest is StdInvariant, Test {
         safe.setModule(address(module));
         bytes32 workflowId = keccak256("invariant-allowlist-workflow");
         bytes32 payloadHash = module.governancePayloadHash(
+            workflowId,
             module.setEscrowAllowlist.selector,
             keccak256(abi.encode(address(escrow), bytes32(0), address(escrow).codehash))
         );

@@ -12,7 +12,7 @@ contract DirectoryGovernor {
     function cancel(ServiceDirectory directory, uint64 versionId, bytes32 proposalHash) external {
         bytes32 workflowId = keccak256(abi.encode("cancel-workflow", versionId, proposalHash));
         bytes32 payloadHash = directory.governancePayloadHash(
-            directory.cancelVersion.selector, keccak256(abi.encode(versionId, proposalHash))
+            workflowId, directory.cancelVersion.selector, keccak256(abi.encode(versionId, proposalHash))
         );
         directory.cancelVersion(versionId, proposalHash, workflowId, payloadHash);
     }
@@ -156,11 +156,18 @@ contract ServiceDirectoryTest is Test {
         bytes32 proposalHash = _propose(proposal, PUBLISHER_KEY, 26);
         bytes32 cancelWorkflowId = keccak256("cancel-workflow");
         bytes32 wrong = directory.governancePayloadHash(
-            directory.cancelVersion.selector, keccak256(abi.encode(uint64(1), bytes32(uint256(1))))
+            cancelWorkflowId, directory.cancelVersion.selector, keccak256(abi.encode(uint64(1), bytes32(uint256(1))))
         );
         vm.expectRevert(ServiceDirectory.InvalidWorkflowBinding.selector);
         vm.prank(address(governor));
         directory.cancelVersion(1, proposalHash, cancelWorkflowId, wrong);
+
+        bytes32 exact = directory.governancePayloadHash(
+            cancelWorkflowId, directory.cancelVersion.selector, keccak256(abi.encode(uint64(1), proposalHash))
+        );
+        vm.expectRevert(ServiceDirectory.InvalidWorkflowBinding.selector);
+        vm.prank(address(governor));
+        directory.cancelVersion(1, proposalHash, keccak256("wrong-workflow"), exact);
     }
 
     function testGovernancePayloadMatchesPublishedGoGoldenVector() public {
@@ -181,24 +188,17 @@ contract ServiceDirectoryTest is Test {
             proposerNonce: 11
         });
         assertEq(
-            ServiceDirectory(fixedDirectory)
-                .governancePayloadHash(
-                    ServiceDirectory(fixedDirectory).approveVersion.selector,
-                    0x3d7750db9a436e48ce12156f8040304eb7804cc09233fc747dec5bc944026077
-                ),
-            0x27f8338902f257554f07e7429e2d8f16796ae7726502d65f8a84ccf23e0b9921
-        );
-        assertEq(
             ServiceDirectory(fixedDirectory).directoryProposalWorkflowPayloadHash(proposal),
-            0x9860e21d489d18d298b85887a6c2156d36f4a4da8e9d0673d9945343e7774b98
+            0xf577289b92b129c625813d0725e72da6c048a94651ad07508083ecc3a01f24b9
         );
         assertEq(
             ServiceDirectory(fixedDirectory)
                 .governancePayloadHash(
+                    proposal.workflowId,
                     ServiceDirectory(fixedDirectory).cancelVersion.selector,
                     keccak256(abi.encode(uint64(2), bytes32(uint256(9))))
                 ),
-            0x85edd7f9038e2ed38c3e577fbd5fa3c36dc48403b29ccabc0d6ea755aa5f0770
+            0xdffa3dea6724afbc06b8e60d4306cd37fd64c84cf20c506aa29f188791eb2b08
         );
     }
 
