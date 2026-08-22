@@ -19,6 +19,7 @@ const (
 	CallEscrowDomain       = "ASCP_CALL_ESCROW_GOVERNANCE_V1"
 	SpendModuleDomain      = "ASCP_SPEND_MODULE_GOVERNANCE_V1"
 	ServiceDirectoryDomain = "SERVICE_DIRECTORY_GOVERNANCE_V1"
+	AgentRegistryDomain    = "AGENT_REGISTRY_GOVERNANCE_V1"
 	// MaxGovernanceNonceInvalidations mirrors ASCPSpendModule.MAX_GOVERNANCE_NONCE_INVALIDATIONS.
 	MaxGovernanceNonceInvalidations = 100
 )
@@ -180,6 +181,95 @@ func DirectoryCancel(chainID uint64, contractAddress, workflowID string, version
 	return bind(ServiceDirectoryDomain, chainID, contractAddress, workflowID,
 		selector("cancelVersion(uint64,bytes32,bytes32,bytes32)"),
 		[]abi.Argument{{Type: uint64Type}, {Type: bytes32Type}}, versionID, common.HexToHash(proposalHash))
+}
+
+func DirectorySetPublisher(
+	chainID uint64,
+	contractAddress, workflowID, current string,
+	currentEpoch uint64,
+	next string,
+) (common.Hash, error) {
+	return authorityRotation(
+		ServiceDirectoryDomain,
+		"setDirectoryPublisher(address,bytes32,bytes32)",
+		chainID,
+		contractAddress,
+		workflowID,
+		current,
+		currentEpoch,
+		next,
+	)
+}
+
+func DirectorySetPauser(
+	chainID uint64,
+	contractAddress, workflowID, current string,
+	currentEpoch uint64,
+	next string,
+) (common.Hash, error) {
+	return authorityRotation(
+		ServiceDirectoryDomain,
+		"setPauser(address,bytes32,bytes32)",
+		chainID,
+		contractAddress,
+		workflowID,
+		current,
+		currentEpoch,
+		next,
+	)
+}
+
+func DirectoryPauseSeller(chainID uint64, contractAddress, workflowID, sellerID string, current, next bool) (common.Hash, error) {
+	if !hash(sellerID, false) || current == next {
+		return common.Hash{}, ErrInvalidPayload
+	}
+	return bind(ServiceDirectoryDomain, chainID, contractAddress, workflowID,
+		selector("pauseSeller(bytes32,bool,bytes32,bytes32,(bytes32,address,uint256,bytes32,bytes4,bytes32,bytes32,uint256,uint64,uint64,uint64,bytes32),bytes)"),
+		[]abi.Argument{{Type: bytes32Type}, {Type: boolType}, {Type: boolType}},
+		common.HexToHash(sellerID), current, next)
+}
+
+func DirectoryQuoteKeyRevocation(chainID uint64, contractAddress, workflowID, key string, current, next bool) (common.Hash, error) {
+	if !address(key) || current == next {
+		return common.Hash{}, ErrInvalidPayload
+	}
+	return bind(ServiceDirectoryDomain, chainID, contractAddress, workflowID,
+		selector("setQuoteKeyRevoked(address,bool,bytes32,bytes32,(bytes32,address,uint256,bytes32,bytes4,bytes32,bytes32,uint256,uint64,uint64,uint64,bytes32),bytes)"),
+		[]abi.Argument{{Type: addressType}, {Type: boolType}, {Type: boolType}},
+		common.HexToAddress(key), current, next)
+}
+
+func AgentSetRegistryAdmin(
+	chainID uint64,
+	contractAddress, workflowID, current string,
+	currentEpoch uint64,
+	next string,
+) (common.Hash, error) {
+	return authorityRotation(
+		AgentRegistryDomain,
+		"setRegistryAdmin(address,bytes32,bytes32)",
+		chainID,
+		contractAddress,
+		workflowID,
+		current,
+		currentEpoch,
+		next,
+	)
+}
+
+func authorityRotation(
+	domain, signature string,
+	chainID uint64,
+	contractAddress, workflowID, current string,
+	currentEpoch uint64,
+	next string,
+) (common.Hash, error) {
+	if !address(current) || !address(next) || currentEpoch == 0 || current == next {
+		return common.Hash{}, ErrInvalidPayload
+	}
+	return bind(domain, chainID, contractAddress, workflowID, selector(signature),
+		[]abi.Argument{{Type: addressType}, {Type: uint64Type}, {Type: addressType}},
+		common.HexToAddress(current), currentEpoch, common.HexToAddress(next))
 }
 
 func bind(domain string, chainID uint64, contractAddress, workflowID string, functionSelector [4]byte, types []abi.Argument, values ...any) (common.Hash, error) {

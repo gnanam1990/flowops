@@ -78,6 +78,7 @@ type Workflow struct {
 	WorkflowID          string          `json:"workflowId"`
 	OrganizationID      string          `json:"organizationId"`
 	Kind                Kind            `json:"kind"`
+	ChainAction         ChainAction     `json:"chainAction,omitempty"`
 	PayloadHash         string          `json:"payloadHash"`
 	ProposedBy          string          `json:"proposedBy"`
 	ProposerRole        Role            `json:"proposerRole"`
@@ -101,25 +102,32 @@ type Workflow struct {
 }
 
 type CreateRequest struct {
-	Kind        Kind   `json:"kind"`
-	PayloadHash string `json:"payloadHash"`
+	Kind        Kind        `json:"kind"`
+	ChainAction ChainAction `json:"chainAction,omitempty"`
+	PayloadHash string      `json:"payloadHash"`
 }
 
 type CompletionReceipt struct {
-	WorkflowID      string `json:"workflowId"`
-	PayloadHash     string `json:"payloadHash"`
-	ChainID         uint64 `json:"chainId"`
-	TransactionHash string `json:"transactionHash"`
-	BlockNumber     uint64 `json:"blockNumber"`
-	BlockHash       string `json:"blockHash"`
-	LogIndex        uint64 `json:"logIndex"`
-	ContractAddress string `json:"contractAddress"`
-	EventSignature  string `json:"eventSignature"`
-	Finality        string `json:"finality"`
+	WorkflowID      string                 `json:"workflowId"`
+	PayloadHash     string                 `json:"payloadHash"`
+	ChainAction     ChainAction            `json:"chainAction,omitempty"`
+	ChainID         uint64                 `json:"chainId"`
+	TransactionHash string                 `json:"transactionHash"`
+	BlockNumber     uint64                 `json:"blockNumber"`
+	BlockHash       string                 `json:"blockHash"`
+	LogIndex        uint64                 `json:"logIndex"`
+	ContractAddress string                 `json:"contractAddress"`
+	EventSignature  string                 `json:"eventSignature"`
+	Finality        string                 `json:"finality"`
+	AuthorityProof  []AuthorityObservation `json:"authorityProof,omitempty"`
 }
 
 type CompletionVerifier interface {
 	VerifyWorkflowCompletion(context.Context, Workflow, CompletionReceipt) error
+}
+
+type CreationAuthorityPolicy interface {
+	ValidateWorkflow(Kind, ChainAction, string) error
 }
 
 type Store interface {
@@ -160,6 +168,15 @@ func (s *Service) Create(ctx context.Context, actor Actor, idempotencyKey string
 	if !canPropose(request.Kind, actor.Role) {
 		return Workflow{}, ErrForbiddenRole
 	}
+	policy, authorityConfigured := s.verifier.(CreationAuthorityPolicy)
+	if request.ChainAction != "" && !authorityConfigured {
+		return Workflow{}, ErrCompletionUnavailable
+	}
+	if authorityConfigured && request.ChainAction != "" {
+		if err := policy.ValidateWorkflow(request.Kind, request.ChainAction, request.PayloadHash); err != nil {
+			return Workflow{}, err
+		}
+	}
 	if !hash(request.PayloadHash) || !idempotency(idempotencyKey) {
 		return Workflow{}, ErrInvalidWorkflow
 	}
@@ -176,7 +193,7 @@ func (s *Service) Create(ctx context.Context, actor Actor, idempotencyKey string
 	}
 	now := observedAt.Truncate(time.Second)
 	workflow := Workflow{
-		WorkflowID: id, OrganizationID: actor.OrganizationID, Kind: request.Kind, PayloadHash: request.PayloadHash,
+		WorkflowID: id, OrganizationID: actor.OrganizationID, Kind: request.Kind, ChainAction: request.ChainAction, PayloadHash: request.PayloadHash,
 		ProposedBy: actor.PrincipalID, ProposerRole: actor.Role, State: Proposed,
 		ProposerStepUpAt: actor.StepUpAt.UTC().Unix(), ProposerStepUpUntil: actor.StepUpUntil.UTC().Unix(), ProposedAt: now.Unix(), ExpiresAt: now.Add(ProposalTTL).Unix(),
 	}
@@ -308,6 +325,10 @@ func canCancel(workflow Workflow, actor Actor) bool {
 }
 
 func requiresChainReceipt(kind Kind) bool { return kind != ProductionGate && kind != RoleAdmin }
+
+func workflowRequiresChainReceipt(workflow Workflow) bool {
+	return workflow.ChainAction != "" || requiresChainReceipt(workflow.Kind)
+}
 
 func validRole(role Role) bool {
 	return role == OrgAdmin || role == SellerAdmin || role == SignerOperator || role == IncidentResponder

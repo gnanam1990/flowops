@@ -30,9 +30,13 @@ payload hash. `cancelVersion` requires a separate exact `DIRECTORY_CANCEL`
 workflow binding and emits the same receipt event beside `VersionCancelled`.
 
 `pauseSeller(true)` and `setQuoteKeyRevoked(true)` require a pauser
-authorization. Their `false` variants require the governor. No directory call
-can transfer assets, choose an escrow recipient, sign a quote, or perform a
-payment.
+authorization. Their `false` variants require the governor. Every overlay
+binds the current and requested state to a nonzero workflow payload, rejects a
+no-op, emits `GovernanceWorkflowBound`, and records signed authority separately
+from transaction relayer. Publisher and pauser rotations likewise bind the
+current authority, current epoch, and next authority; zero or unchanged
+authorities revert. No directory call can transfer assets, choose an escrow
+recipient, sign a quote, or perform a payment.
 
 ## Failure states and acceptance
 

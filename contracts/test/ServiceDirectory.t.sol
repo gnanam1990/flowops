@@ -19,12 +19,44 @@ contract DirectoryGovernor {
 
     function setSellerPaused(ServiceDirectory directory, bytes32 sellerId, bool paused) external {
         ServiceDirectory.AdminActionAuthorization memory authorization;
-        directory.pauseSeller(sellerId, paused, authorization, "");
+        bytes32 workflowId = keccak256(abi.encode("seller-overlay", sellerId, paused));
+        bytes32 payloadHash = directory.governancePayloadHash(
+            workflowId,
+            directory.pauseSeller.selector,
+            keccak256(abi.encode(sellerId, directory.pausedSeller(sellerId), paused))
+        );
+        directory.pauseSeller(sellerId, paused, workflowId, payloadHash, authorization, "");
     }
 
     function setKeyRevoked(ServiceDirectory directory, address key, bool revoked) external {
         ServiceDirectory.AdminActionAuthorization memory authorization;
-        directory.setQuoteKeyRevoked(key, revoked, authorization, "");
+        bytes32 workflowId = keccak256(abi.encode("key-overlay", key, revoked));
+        bytes32 payloadHash = directory.governancePayloadHash(
+            workflowId,
+            directory.setQuoteKeyRevoked.selector,
+            keccak256(abi.encode(key, directory.quoteKeyRevoked(key), revoked))
+        );
+        directory.setQuoteKeyRevoked(key, revoked, workflowId, payloadHash, authorization, "");
+    }
+
+    function setPublisher(ServiceDirectory directory, address publisher) external {
+        bytes32 workflowId = keccak256(abi.encode("publisher-rotation", publisher, directory.directoryPublisherEpoch()));
+        bytes32 payloadHash = directory.governancePayloadHash(
+            workflowId,
+            directory.setDirectoryPublisher.selector,
+            keccak256(abi.encode(directory.directoryPublisher(), directory.directoryPublisherEpoch(), publisher))
+        );
+        directory.setDirectoryPublisher(publisher, workflowId, payloadHash);
+    }
+
+    function setPauser(ServiceDirectory directory, address pauser) external {
+        bytes32 workflowId = keccak256(abi.encode("pauser-rotation", pauser, directory.pauserEpoch()));
+        bytes32 payloadHash = directory.governancePayloadHash(
+            workflowId,
+            directory.setPauser.selector,
+            keccak256(abi.encode(directory.pauser(), directory.pauserEpoch(), pauser))
+        );
+        directory.setPauser(pauser, workflowId, payloadHash);
     }
 }
 
@@ -55,6 +87,24 @@ contract ServiceDirectoryTest is Test {
         new ServiceDirectory(stranger, publisher, pauser, ORG_DOMAIN);
         vm.expectRevert(ServiceDirectory.ZeroAddress.selector);
         new ServiceDirectory(address(governor), address(0), pauser, ORG_DOMAIN);
+    }
+
+    function testAuthorityRotationsRequireExactWorkflowBindingAndRejectNoOp() public {
+        address nextPublisher = makeAddr("next-publisher");
+        vm.expectRevert(ServiceDirectory.InvalidWorkflowBinding.selector);
+        vm.prank(address(governor));
+        directory.setDirectoryPublisher(nextPublisher, bytes32(0), bytes32(0));
+
+        governor.setPublisher(directory, nextPublisher);
+        assertEq(directory.directoryPublisher(), nextPublisher);
+        assertEq(directory.directoryPublisherEpoch(), 2);
+        vm.expectRevert(abi.encodeWithSelector(ServiceDirectory.AuthorityUnchanged.selector, nextPublisher));
+        governor.setPublisher(directory, nextPublisher);
+
+        address nextPauser = makeAddr("next-pauser");
+        governor.setPauser(directory, nextPauser);
+        assertEq(directory.pauser(), nextPauser);
+        assertEq(directory.pauserEpoch(), 2);
     }
 
     function testProposalApprovalActivationAndMerkleLeafBinding() public {
@@ -109,15 +159,16 @@ contract ServiceDirectoryTest is Test {
         vm.prank(relayer);
         directory.proposeVersion(proposal, authorization, signature);
         bytes32 sellerId = keccak256("seller-pause");
-        ServiceDirectory.AdminActionAuthorization memory pauseAuthorization = _pauseAuthorization(sellerId, true, 12);
+        bytes32 pauseWorkflowId = _overlayWorkflow("seller-pause", 12);
+        bytes32 pausePayloadHash = _pauseWorkflowPayload(sellerId, false, true, pauseWorkflowId);
+        ServiceDirectory.AdminActionAuthorization memory pauseAuthorization =
+            _pauseAuthorization(sellerId, false, true, pauseWorkflowId, 12);
         bytes memory pauseSignature = _sign(PAUSER_KEY, pauseAuthorization);
         vm.prank(relayer);
-        directory.pauseSeller(sellerId, true, pauseAuthorization, pauseSignature);
-        vm.expectRevert(
-            abi.encodeWithSelector(ServiceDirectory.AuthorizationUsed.selector, pauseAuthorization.adminOperationId)
-        );
+        directory.pauseSeller(sellerId, true, pauseWorkflowId, pausePayloadHash, pauseAuthorization, pauseSignature);
+        vm.expectRevert(abi.encodeWithSelector(ServiceDirectory.SellerPauseUnchanged.selector, sellerId, true));
         vm.prank(relayer);
-        directory.pauseSeller(sellerId, true, pauseAuthorization, pauseSignature);
+        directory.pauseSeller(sellerId, true, pauseWorkflowId, pausePayloadHash, pauseAuthorization, pauseSignature);
     }
 
     function testGovernorIsRequiredForApprovalAndCancellationReproposalIsBound() public {
@@ -211,22 +262,39 @@ contract ServiceDirectoryTest is Test {
 
     function testProtectiveOverlaysOnlyAllowHotKeyToTighten() public {
         bytes32 sellerId = keccak256("seller-overlay");
-        ServiceDirectory.AdminActionAuthorization memory pauseAuthorization = _pauseAuthorization(sellerId, true, 31);
+        bytes32 pauseWorkflowId = _overlayWorkflow("seller-pause", 31);
+        bytes32 pausePayloadHash = _pauseWorkflowPayload(sellerId, false, true, pauseWorkflowId);
+        ServiceDirectory.AdminActionAuthorization memory pauseAuthorization =
+            _pauseAuthorization(sellerId, false, true, pauseWorkflowId, 31);
         vm.prank(relayer);
-        directory.pauseSeller(sellerId, true, pauseAuthorization, _sign(PAUSER_KEY, pauseAuthorization));
+        directory.pauseSeller(
+            sellerId, true, pauseWorkflowId, pausePayloadHash, pauseAuthorization, _sign(PAUSER_KEY, pauseAuthorization)
+        );
         assertTrue(directory.pausedSeller(sellerId));
 
         ServiceDirectory.AdminActionAuthorization memory unusedAuthorization;
+        bytes32 unpauseWorkflowId = _overlayWorkflow("seller-unpause", 31);
+        bytes32 unpausePayloadHash = _pauseWorkflowPayload(sellerId, true, false, unpauseWorkflowId);
         vm.expectRevert(abi.encodeWithSelector(ServiceDirectory.NotGovernor.selector, stranger));
         vm.prank(stranger);
-        directory.pauseSeller(sellerId, false, unusedAuthorization, "");
+        directory.pauseSeller(sellerId, false, unpauseWorkflowId, unpausePayloadHash, unusedAuthorization, "");
         governor.setSellerPaused(directory, sellerId, false);
         assertFalse(directory.pausedSeller(sellerId));
 
         address quoteKey = makeAddr("quote-key");
-        ServiceDirectory.AdminActionAuthorization memory revokeAuthorization = _revokeAuthorization(quoteKey, true, 32);
+        bytes32 revokeWorkflowId = _overlayWorkflow("quote-revoke", 32);
+        bytes32 revokePayloadHash = _revokeWorkflowPayload(quoteKey, false, true, revokeWorkflowId);
+        ServiceDirectory.AdminActionAuthorization memory revokeAuthorization =
+            _revokeAuthorization(quoteKey, false, true, revokeWorkflowId, 32);
         vm.prank(relayer);
-        directory.setQuoteKeyRevoked(quoteKey, true, revokeAuthorization, _sign(PAUSER_KEY, revokeAuthorization));
+        directory.setQuoteKeyRevoked(
+            quoteKey,
+            true,
+            revokeWorkflowId,
+            revokePayloadHash,
+            revokeAuthorization,
+            _sign(PAUSER_KEY, revokeAuthorization)
+        );
         assertTrue(directory.quoteKeyRevoked(quoteKey));
         governor.setKeyRevoked(directory, quoteKey, false);
         assertFalse(directory.quoteKeyRevoked(quoteKey));
@@ -339,23 +407,33 @@ contract ServiceDirectoryTest is Test {
         });
     }
 
-    function _pauseAuthorization(bytes32 sellerId, bool paused, uint256 nonce)
+    function _pauseAuthorization(bytes32 sellerId, bool current, bool paused, bytes32 workflowId, uint256 nonce)
         internal
         view
         returns (ServiceDirectory.AdminActionAuthorization memory)
     {
-        return _overlayAuthorization(directory.pauseSeller.selector, keccak256(abi.encode(sellerId, paused)), nonce);
+        return _overlayAuthorization(
+            directory.pauseSeller.selector,
+            keccak256(abi.encode(sellerId, current, paused, workflowId)),
+            workflowId,
+            nonce
+        );
     }
 
-    function _revokeAuthorization(address key, bool revoked, uint256 nonce)
+    function _revokeAuthorization(address key, bool current, bool revoked, bytes32 workflowId, uint256 nonce)
         internal
         view
         returns (ServiceDirectory.AdminActionAuthorization memory)
     {
-        return _overlayAuthorization(directory.setQuoteKeyRevoked.selector, keccak256(abi.encode(key, revoked)), nonce);
+        return _overlayAuthorization(
+            directory.setQuoteKeyRevoked.selector,
+            keccak256(abi.encode(key, current, revoked, workflowId)),
+            workflowId,
+            nonce
+        );
     }
 
-    function _overlayAuthorization(bytes4 selector, bytes32 payloadHash, uint256 nonce)
+    function _overlayAuthorization(bytes4 selector, bytes32 payloadHash, bytes32 workflowId, uint256 nonce)
         internal
         view
         returns (ServiceDirectory.AdminActionAuthorization memory)
@@ -372,8 +450,32 @@ contract ServiceDirectoryTest is Test {
             adminEpoch: directory.pauserEpoch(),
             validAfter: uint64(block.timestamp),
             validBefore: uint64(block.timestamp + 60),
-            workflowId: bytes32(0)
+            workflowId: workflowId
         });
+    }
+
+    function _overlayWorkflow(string memory kind, uint256 nonce) internal pure returns (bytes32) {
+        return keccak256(abi.encode(kind, nonce));
+    }
+
+    function _pauseWorkflowPayload(bytes32 sellerId, bool current, bool paused, bytes32 workflowId)
+        internal
+        view
+        returns (bytes32)
+    {
+        return directory.governancePayloadHash(
+            workflowId, directory.pauseSeller.selector, keccak256(abi.encode(sellerId, current, paused))
+        );
+    }
+
+    function _revokeWorkflowPayload(address key, bool current, bool revoked, bytes32 workflowId)
+        internal
+        view
+        returns (bytes32)
+    {
+        return directory.governancePayloadHash(
+            workflowId, directory.setQuoteKeyRevoked.selector, keccak256(abi.encode(key, current, revoked))
+        );
     }
 
     function _propose(ServiceDirectory.DirectoryProposal memory proposal, uint256 signerKey, uint256 authorizationNonce)

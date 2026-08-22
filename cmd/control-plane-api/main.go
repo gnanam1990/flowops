@@ -74,6 +74,7 @@ type startupConfig struct {
 	ascpAdaptationKeyEpoch  uint64
 	ascpAdaptationHSM       string
 	ascpAdaptationTimeout   time.Duration
+	ascpAuthorityRules      []ascpworkflow.AuthorityRule
 }
 
 func main() {
@@ -122,7 +123,14 @@ func run(ctx context.Context) (returnErr error) {
 	if err != nil {
 		return fmt.Errorf("create ASCP proposal workflow store: %w", err)
 	}
-	workflowService, err := ascpworkflow.New(workflowStore, nil, nil, nil)
+	var workflowCompletionVerifier ascpworkflow.CompletionVerifier
+	if len(cfg.ascpAuthorityRules) != 0 {
+		workflowCompletionVerifier, err = ascpworkflow.NewAuthorityVerifier(cfg.ascpAuthorityRules, cfg.observerConfig.ObserverQuorum)
+		if err != nil {
+			return fmt.Errorf("create ASCP chain authority verifier: %w", err)
+		}
+	}
+	workflowService, err := ascpworkflow.New(workflowStore, workflowCompletionVerifier, nil, nil)
 	if err != nil {
 		return fmt.Errorf("create ASCP proposal workflow service: %w", err)
 	}
@@ -494,6 +502,18 @@ func loadConfig() (startupConfig, error) {
 	cfg.observerTimeout = observerRuntime.timeout
 	cfg.reconciliationInterval = observerRuntime.reconciliationInterval
 	cfg.reconciliationTimeout = observerRuntime.reconciliationTimeout
+	authorityRulesRaw := strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON"))
+	if authorityRulesRaw != "" {
+		cfg.ascpAuthorityRules, err = ascpworkflow.ParseAuthorityRules(authorityRulesRaw)
+		if err != nil {
+			return startupConfig{}, fmt.Errorf("FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON: %w", err)
+		}
+		for _, rule := range cfg.ascpAuthorityRules {
+			if rule.ChainID != cfg.observerConfig.ChainID {
+				return startupConfig{}, errors.New("ASCP chain authority rules must use the configured observer chain")
+			}
+		}
+	}
 	if cfg.ascpDirectoryContract != "" {
 		if len(cfg.ascpDirectoryContract) != 42 || !common.IsHexAddress(cfg.ascpDirectoryContract) || common.HexToAddress(cfg.ascpDirectoryContract) == (common.Address{}) {
 			return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_CONTRACT must be a non-zero canonical address")

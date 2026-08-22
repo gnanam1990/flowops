@@ -7,7 +7,13 @@ import {AgentRegistry} from "../src/AgentRegistry.sol";
 
 contract AgentRegistryGovernorHarness {
     function setRegistryAdmin(AgentRegistry registry, address admin) external {
-        registry.setRegistryAdmin(admin);
+        bytes32 workflowId = keccak256(abi.encode("registry-admin", admin, registry.registryAdminEpoch()));
+        bytes32 workflowPayloadHash = registry.governancePayloadHash(
+            workflowId,
+            registry.setRegistryAdmin.selector,
+            keccak256(abi.encode(registry.registryAdmin(), registry.registryAdminEpoch(), admin))
+        );
+        registry.setRegistryAdmin(admin, workflowId, workflowPayloadHash);
     }
 }
 
@@ -170,7 +176,14 @@ contract AgentRegistryTest is Test {
 
     function testOnlyGovernorRotatesAdminAndConstructorRequiresContractGovernor() public {
         vm.expectRevert(abi.encodeWithSelector(AgentRegistry.NotGovernor.selector, address(this)));
-        registry.setRegistryAdmin(vm.addr(ADMIN_B_KEY));
+        registry.setRegistryAdmin(vm.addr(ADMIN_B_KEY), bytes32(0), bytes32(0));
+
+        vm.expectRevert(AgentRegistry.InvalidWorkflowBinding.selector);
+        vm.prank(address(governor));
+        registry.setRegistryAdmin(vm.addr(ADMIN_B_KEY), bytes32(0), bytes32(0));
+
+        vm.expectRevert(abi.encodeWithSelector(AgentRegistry.RegistryAdminUnchanged.selector, vm.addr(ADMIN_KEY)));
+        governor.setRegistryAdmin(registry, vm.addr(ADMIN_KEY));
 
         vm.expectRevert(AgentRegistry.ZeroAddress.selector);
         governor.setRegistryAdmin(registry, address(0));

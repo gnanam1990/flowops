@@ -144,8 +144,8 @@ contract ServiceDirectory {
     event VersionCancelled(bytes32 indexed proposalHash, uint64 indexed versionId, address indexed canceller);
     event DirectoryPublisherSet(address indexed previousPublisher, address indexed publisher, uint64 epoch);
     event PauserSet(address indexed previousPauser, address indexed pauser, uint64 epoch);
-    event SellerPaused(bytes32 indexed sellerId, bool paused, address indexed actor);
-    event QuoteKeyRevoked(address indexed key, bool revoked, address indexed actor);
+    event SellerPaused(bytes32 indexed sellerId, bool paused, address indexed authority, address indexed relayer);
+    event QuoteKeyRevoked(address indexed key, bool revoked, address indexed authority, address indexed relayer);
     event GovernanceWorkflowBound(
         bytes32 indexed workflowId, bytes32 indexed workflowPayloadHash, bytes4 indexed functionSelector
     );
@@ -169,6 +169,9 @@ contract ServiceDirectory {
     error AuthorizationNonceUsed(bytes32 role, uint256 nonce);
     error SellerIdZero();
     error QuoteKeyZero();
+    error SellerPauseUnchanged(bytes32 sellerId, bool paused);
+    error QuoteKeyRevocationUnchanged(address key, bool revoked);
+    error AuthorityUnchanged(address authority);
     error InvalidWorkflowBinding();
 
     constructor(address governor_, address directoryPublisher_, address pauser_, bytes32 orgDomain_) {
@@ -304,33 +307,60 @@ contract ServiceDirectory {
         _activateIfEligible();
     }
 
-    function setDirectoryPublisher(address publisher) external onlyGovernor {
+    function setDirectoryPublisher(address publisher, bytes32 workflowId, bytes32 workflowPayloadHash)
+        external
+        onlyGovernor
+    {
         if (publisher == address(0)) revert ZeroAddress();
         address previous = directoryPublisher;
+        if (publisher == previous) revert AuthorityUnchanged(publisher);
+        _requireGovernanceWorkflow(
+            this.setDirectoryPublisher.selector,
+            keccak256(abi.encode(previous, directoryPublisherEpoch, publisher)),
+            workflowId,
+            workflowPayloadHash
+        );
         directoryPublisher = publisher;
         unchecked {
             ++directoryPublisherEpoch;
         }
         emit DirectoryPublisherSet(previous, publisher, directoryPublisherEpoch);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setDirectoryPublisher.selector);
     }
 
-    function setPauser(address pauser_) external onlyGovernor {
+    function setPauser(address pauser_, bytes32 workflowId, bytes32 workflowPayloadHash) external onlyGovernor {
         if (pauser_ == address(0)) revert ZeroAddress();
         address previous = pauser;
+        if (pauser_ == previous) revert AuthorityUnchanged(pauser_);
+        _requireGovernanceWorkflow(
+            this.setPauser.selector,
+            keccak256(abi.encode(previous, pauserEpoch, pauser_)),
+            workflowId,
+            workflowPayloadHash
+        );
         pauser = pauser_;
         unchecked {
             ++pauserEpoch;
         }
         emit PauserSet(previous, pauser_, pauserEpoch);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setPauser.selector);
     }
 
     function pauseSeller(
         bytes32 sellerId,
         bool paused,
+        bytes32 workflowId,
+        bytes32 workflowPayloadHash,
         AdminActionAuthorization calldata authorization,
         bytes calldata signature
     ) external {
         if (sellerId == bytes32(0)) revert SellerIdZero();
+        bool current = pausedSeller[sellerId];
+        if (current == paused) revert SellerPauseUnchanged(sellerId, paused);
+        _requireGovernanceWorkflow(
+            this.pauseSeller.selector, keccak256(abi.encode(sellerId, current, paused)), workflowId, workflowPayloadHash
+        );
+        address authority = msg.sender;
         if (!paused) {
             if (msg.sender != governor) revert NotGovernor(msg.sender);
         } else {
@@ -339,23 +369,36 @@ contract ServiceDirectory {
                 signature,
                 PAUSER_ROLE,
                 this.pauseSeller.selector,
-                keccak256(abi.encode(sellerId, paused)),
-                bytes32(0),
+                keccak256(abi.encode(sellerId, current, paused, workflowId)),
+                workflowId,
                 pauser,
                 pauserEpoch
             );
+            authority = pauser;
         }
         pausedSeller[sellerId] = paused;
-        emit SellerPaused(sellerId, paused, msg.sender);
+        emit SellerPaused(sellerId, paused, authority, msg.sender);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.pauseSeller.selector);
     }
 
     function setQuoteKeyRevoked(
         address key,
         bool revoked,
+        bytes32 workflowId,
+        bytes32 workflowPayloadHash,
         AdminActionAuthorization calldata authorization,
         bytes calldata signature
     ) external {
         if (key == address(0)) revert QuoteKeyZero();
+        bool current = quoteKeyRevoked[key];
+        if (current == revoked) revert QuoteKeyRevocationUnchanged(key, revoked);
+        _requireGovernanceWorkflow(
+            this.setQuoteKeyRevoked.selector,
+            keccak256(abi.encode(key, current, revoked)),
+            workflowId,
+            workflowPayloadHash
+        );
+        address authority = msg.sender;
         if (!revoked) {
             if (msg.sender != governor) revert NotGovernor(msg.sender);
         } else {
@@ -364,14 +407,16 @@ contract ServiceDirectory {
                 signature,
                 PAUSER_ROLE,
                 this.setQuoteKeyRevoked.selector,
-                keccak256(abi.encode(key, revoked)),
-                bytes32(0),
+                keccak256(abi.encode(key, current, revoked, workflowId)),
+                workflowId,
                 pauser,
                 pauserEpoch
             );
+            authority = pauser;
         }
         quoteKeyRevoked[key] = revoked;
-        emit QuoteKeyRevoked(key, revoked, msg.sender);
+        emit QuoteKeyRevoked(key, revoked, authority, msg.sender);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setQuoteKeyRevoked.selector);
     }
 
     function currentVersion() public view returns (uint64) {
