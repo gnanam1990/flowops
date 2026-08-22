@@ -31,30 +31,37 @@ type LedgerPreparedSigner struct {
 	ledger      *SignerStore
 	engine      IndependentSigningEngine
 	actionsMu   sync.Mutex
-	actionLocks map[string]*sync.Mutex
+	actionLocks map[string]*actionLock
+}
+
+type actionLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func NewLedgerPreparedSigner(ledger *SignerStore, engine IndependentSigningEngine) (*LedgerPreparedSigner, error) {
 	if ledger == nil || engine == nil {
 		return nil, errors.New("signer ledger and independent signing engine are required")
 	}
-	return &LedgerPreparedSigner{ledger: ledger, engine: engine, actionLocks: map[string]*sync.Mutex{}}, nil
+	return &LedgerPreparedSigner{ledger: ledger, engine: engine, actionLocks: map[string]*actionLock{}}, nil
 }
 
 func (s *LedgerPreparedSigner) Prepare(ctx context.Context, input ActivationInput) (string, error) {
 	input.CanonicalPayload = append([]byte(nil), input.CanonicalPayload...)
 	input.EvidenceBundle = append([]byte(nil), input.EvidenceBundle...)
+	defer clear(input.CanonicalPayload)
+	defer clear(input.EvidenceBundle)
 	input.ValidAfter, input.ValidUntil = input.ValidAfter.UTC(), input.ValidUntil.UTC()
 	if err := validateActivationInput(input, s.ledger.clock().UTC()); err != nil {
 		return "", err
 	}
-	unlock := s.lockAction(input.ActionID)
+	unlock := s.lockAction(input.OperationID, input.ActionID)
 	defer unlock()
 	inputHash, err := activationInputHash(input)
 	if err != nil {
 		return "", err
 	}
-	if handle, exists, err := s.ledger.PreparedFor(input.ActionID, inputHash); err != nil {
+	if handle, exists, err := s.ledger.PreparedFor(input.OperationID, input.ActionID, inputHash); err != nil {
 		return "", err
 	} else if exists {
 		return handle.ID, nil
@@ -64,6 +71,7 @@ func (s *LedgerPreparedSigner) Prepare(ctx context.Context, input ActivationInpu
 		return "", fmt.Errorf("independently verify and sign activation payload: %w", err)
 	}
 	handle, err := s.ledger.Prepare(ctx, PrepareInput{
+		RequestID: input.RequestID, AuthorizationID: input.AuthorizationID, ReservationID: input.ReservationID,
 		ActionID: input.ActionID, OperationID: input.OperationID,
 		SignerRequestHash: inputHash, CanonicalPayloadHash: input.CanonicalPayloadHash,
 		Digest: input.Digest, Nonce: input.Nonce,
@@ -77,16 +85,26 @@ func (s *LedgerPreparedSigner) Prepare(ctx context.Context, input ActivationInpu
 	return handle.ID, nil
 }
 
-func (s *LedgerPreparedSigner) lockAction(actionID string) func() {
+func (s *LedgerPreparedSigner) lockAction(operationID, actionID string) func() {
 	s.actionsMu.Lock()
-	lock := s.actionLocks[actionID]
+	key := signerActionKey(operationID, actionID)
+	lock := s.actionLocks[key]
 	if lock == nil {
-		lock = &sync.Mutex{}
-		s.actionLocks[actionID] = lock
+		lock = &actionLock{}
+		s.actionLocks[key] = lock
 	}
+	lock.refs++
 	s.actionsMu.Unlock()
-	lock.Lock()
-	return lock.Unlock
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		s.actionsMu.Lock()
+		lock.refs--
+		if lock.refs == 0 && s.actionLocks[key] == lock {
+			delete(s.actionLocks, key)
+		}
+		s.actionsMu.Unlock()
+	}
 }
 
 func (s *LedgerPreparedSigner) AcknowledgeActivation(ctx context.Context, proof ActivationProof) error {

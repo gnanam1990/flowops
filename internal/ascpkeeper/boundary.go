@@ -3,6 +3,7 @@ package ascpkeeper
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,8 +35,10 @@ func (e *BoundaryError) Error() string {
 }
 
 type UnixBoundary struct {
-	name, socketPath string
-	client           *http.Client
+	name, socketPath    string
+	client              *http.Client
+	bearerCapability    [32]byte
+	hasBearerCapability bool
 }
 
 func NewUnixBoundary(name, socketPath string, timeout time.Duration) (*UnixBoundary, error) {
@@ -57,6 +60,20 @@ func NewUnixBoundary(name, socketPath string, timeout time.Duration) (*UnixBound
 		Timeout: timeout, Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
+}
+
+func NewAuthenticatedUnixBoundary(name, socketPath string, timeout time.Duration, capability []byte) (*UnixBoundary, error) {
+	boundary, err := NewUnixBoundary(name, socketPath, timeout)
+	nonzero := byte(0)
+	for _, value := range capability {
+		nonzero |= value
+	}
+	if err != nil || name != "artifact" || len(capability) != 32 || nonzero == 0 {
+		return nil, ErrInvalidConfig
+	}
+	copy(boundary.bearerCapability[:], capability)
+	boundary.hasBearerCapability = true
+	return boundary, nil
 }
 
 func (b *UnixBoundary) Check(ctx context.Context) error {
@@ -95,6 +112,9 @@ func (b *UnixBoundary) call(ctx context.Context, method, endpoint string, input,
 		return err
 	}
 	request.Header.Set("Accept", "application/json")
+	if b.hasBearerCapability {
+		request.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString(b.bearerCapability[:]))
+	}
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -252,7 +272,7 @@ func ValidateDistinctSockets(paths map[string]string) error {
 type UnixArtifactClient struct{ boundary *UnixBoundary }
 
 func NewUnixArtifactClient(boundary *UnixBoundary) (*UnixArtifactClient, error) {
-	if boundary == nil || boundary.name != "artifact" {
+	if boundary == nil || boundary.name != "artifact" || !boundary.hasBearerCapability {
 		return nil, ErrInvalidConfig
 	}
 	return &UnixArtifactClient{boundary}, nil

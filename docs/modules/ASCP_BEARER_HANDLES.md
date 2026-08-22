@@ -33,10 +33,13 @@ authority. Immutable payload, evidence, signer binding, registry identity, and
 outbox payload fields are not updateable through either runtime role.
 
 `cmd/ascp-bearer-worker` supplies the durable claim/retry process and strict
-Unix-socket clients for an isolated signer and primary WORM writer. The actual
-Ring 6 signing engine, signer-side RPC server, and WORM-provider sidecar remain
-explicit integration gates; this document does not claim those production
-services are deployed.
+Unix-socket clients for an isolated signer and primary WORM writer.
+`cmd/ascp-signer-runtime` supplies the signer-side RPC server, encrypted
+crash-safe ledger, activation acknowledgment, negative activation proof, and
+keeper-only artifact release boundary. The actual Ring 6/HSM service,
+activation-authority service, and WORM-provider sidecar remain explicit
+integration gates; this document does not claim those production services are
+deployed.
 
 ## Authenticated intake contract
 
@@ -89,8 +92,8 @@ and status `ok`.
   durable preparation.
 - `POST /v1/acknowledge` receives the exact activation proof and returns
   `{acknowledged:true}` only after durable signer-ledger activation.
-- `POST /v1/prove-unactivated` receives request, action, and input-hash
-  bindings and returns a domain-separated `UnactivatedProof`.
+- `POST /v1/prove-unactivated` receives request, operation, action, and
+  input-hash bindings and returns a domain-separated `UnactivatedProof`.
 - `POST /v1/put-primary` receives the exact registry key, bytes, and digest. It
   may return only `CREATED` or `EXISTS_EXACT` with the same digest.
 
@@ -120,15 +123,74 @@ transaction validates the worker lease and proof, changes the reservation from
 `RESERVED` to `RELEASED`, records `EXPIRED_UNACTIVATED`, cancels the pending
 prepare outbox event, and clears the lease. This closes the pre-activation
 budget leak without allowing TTL release after activation.
+An explicit `SIGNER_REFUSED` response from Ring 6 is the only permanent prepare
+refusal. While the request is still `SIGN_REQUESTED`, one serializable
+transaction changes the request to `REFUSED`, releases the `RESERVED` budget,
+cancels the prepare outbox event, and clears the lease. Binding, state,
+signature-recovery, transport, and dependency failures remain retryable or
+operator-visible and can never use this release path. A prepared handle or
+`AUTHORIZATION_LIVE` reservation cannot be refused back to released.
 An active bearer can leave the budget only through nonce consumption, a
 finalized unused-expiry proof, or finalized on-chain nonce invalidation; pause
 alone is not release evidence.
 
+## Isolated signer runtime
+
+`cmd/ascp-signer-runtime` owns no TCP listener and no signing private key. It
+serves two distinct, owner-controlled `0600` Unix sockets:
+
+- signer: the `ASCP_BEARER_RUNTIME_V1` prepare, acknowledge, and
+  prove-unactivated routes above; and
+- artifact: capability-authenticated `ASCP_KEEPER_BOUNDARY_V1` health plus
+  `POST /v1/release`, the only route that can return decrypted signature
+  bytes. Every artifact request requires the canonical base64 32-byte keeper
+  capability as a Bearer credential; `keeperId` is an independent ledger
+  binding and is not authentication.
+
+It pins one signer key ID/epoch and keeper ID. A route substitution is refused
+before the Ring 6 dependency is called. The process uses two additional,
+distinct pre-existing Unix sockets with protocol
+`ASCP_SIGNER_DEPENDENCY_V1`: `ring6` exposes `POST /v1/verify-and-sign`, while
+`activation` exposes `POST /v1/verify-activation` and
+`POST /v1/prove-unactivated`. Every dependency is health-identity checked at
+startup and its path, owner, permissions, content type, response size,
+duplicate keys, unknown fields, redirects, and exact response shape are
+rechecked.
+
+The ledger and its base64 32-byte AES-GCM key are separate `0600` files in the
+same owner-only volume. The ledger path may be created; no socket path is ever
+removed or overwritten. A stale socket is an explicit startup failure.
+
+| Variable | Requirement |
+|---|---|
+| `FLOWOPS_SIGNER_KEY_ID` | Canonical signer/HSM key identifier pinned to this shard |
+| `FLOWOPS_SIGNER_KEY_EPOCH` | Positive canonical key epoch pinned to this shard |
+| `FLOWOPS_SIGNER_ADDRESS` | Canonical nonzero module-registered authorizer address; every Ring 6 signature must recover to it |
+| `FLOWOPS_SIGNER_KEEPER_ID` | Sole keeper identity allowed to release artifacts |
+| `FLOWOPS_SIGNER_LEDGER_PATH` | Absolute append-only signer-ledger path in an owner-only directory |
+| `FLOWOPS_SIGNER_ARTIFACT_KEY_FILE` | Different `0600` regular file in the same volume; canonical base64 for 32 nonzero bytes |
+| `FLOWOPS_SIGNER_KEEPER_TOKEN_FILE` | Separate `0600` regular file containing the keeper-only canonical base64 32-byte Bearer capability; its value must differ from the artifact encryption key |
+| `FLOWOPS_SIGNER_RUNTIME_SOCKET` | New absolute path for the signer protocol socket |
+| `FLOWOPS_SIGNER_ARTIFACT_SOCKET` | New, distinct absolute path for keeper artifact release |
+| `FLOWOPS_SIGNER_RING6_SOCKET` | Existing secure socket for independent evidence verification and HSM signing |
+| `FLOWOPS_SIGNER_ACTIVATION_SOCKET` | Existing, distinct secure socket for activation/WORM authority checks |
+| `FLOWOPS_SIGNER_DEPENDENCY_TIMEOUT` | Optional `1s` through `10s`, default `3s` |
+
+The signer ledger identity includes request, authorization, reservation,
+operation, action, and signer-request hash. Its replay index is keyed by
+operation plus action, preventing one tenant's action label from colliding
+with another operation. Activation proofs bind the original request ID;
+negative activation proofs additionally bind operation ID. Exact prepared and
+released replays return the original encrypted artifact without another HSM
+signature. This expanded record/AAD schema is signer-ledger version 2; a
+version-1 ledger fails closed and must be drained and migrated under the key
+rotation ceremony rather than silently reinterpreted.
+
 ## Verification
 
 ```sh
-go test -race ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/controlapi ./internal/mcp
-go vet ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker
+go test -race ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker ./cmd/ascp-keeper ./cmd/ascp-signer-runtime
+go vet ./internal/ascpsignerbinding ./internal/ascpactivation ./internal/ascpbearer ./internal/ascpkeeper ./internal/ascpsignerruntime ./internal/controlapi ./internal/mcp ./cmd/ascp-bearer-worker ./cmd/ascp-keeper ./cmd/ascp-signer-runtime
 FLOWOPS_TEST_DATABASE_URL=... go test -race ./internal/controlapi \
   -run 'TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically|TestASCPTwoPhaseSignerActivationNeverStoresArtifactAndMakesReservationLiveAtomically|TestASCPSignerBindingRealPostgresIdempotencyTenantAndVersionRaces|TestASCPSignerBindingRotationCannotRaceOldBindingIntoSignRequested' -count=1
 ```
@@ -144,4 +206,5 @@ rotation races, cross-tenant binding isolation, append-only binding history,
 live-bearer rotation refusal, deterministic rotation-versus-sign-request
 interleaving, late exact replay, and the atomic
 `RESERVED → AUTHORIZATION_LIVE` transition, fenced concurrent runtime claims,
-stale-lease rejection, and atomic pre-activation expiry release.
+stale-lease rejection, atomic pre-activation expiry release, explicit
+permanent-refusal classification, and atomic signer-refusal budget release.

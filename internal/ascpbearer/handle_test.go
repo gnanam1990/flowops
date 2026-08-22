@@ -106,7 +106,7 @@ func TestPreparedExpiryRequiresAuthoritativeUnactivatedProof(t *testing.T) {
 
 func TestFileSignerLedgerSurvivesRestartWithExactEncryptedArtifact(t *testing.T) {
 	now := time.Unix(1800000000, 0).UTC()
-	path := filepath.Join(t.TempDir(), "signer-ledger.jsonl")
+	path := filepath.Join(signerLedgerTempDir(t), "signer-ledger.jsonl")
 	key := bytes.Repeat([]byte{1}, 32)
 	signature := bytes.Repeat([]byte{0x55}, 65)
 	store := openFileSignerStore(t, path, key, now)
@@ -144,7 +144,7 @@ func TestFileSignerLedgerSurvivesRestartWithExactEncryptedArtifact(t *testing.T)
 
 func TestFileSignerLedgerRejectsTamperingAndInsecurePermissions(t *testing.T) {
 	now := time.Unix(1800000000, 0).UTC()
-	directory := t.TempDir()
+	directory := signerLedgerTempDir(t)
 	path := filepath.Join(directory, "signer-ledger.jsonl")
 	key := bytes.Repeat([]byte{1}, 32)
 	store := openFileSignerStore(t, path, key, now)
@@ -176,7 +176,7 @@ func TestFileSignerLedgerRejectsTamperingAndInsecurePermissions(t *testing.T) {
 
 func TestFileSignerLedgerRejectsInsecureParentDirectory(t *testing.T) {
 	now := time.Unix(1800000000, 0).UTC()
-	directory := t.TempDir()
+	directory := signerLedgerTempDir(t)
 	if err := os.Chmod(directory, 0o777); err != nil {
 		t.Fatal(err)
 	}
@@ -187,9 +187,92 @@ func TestFileSignerLedgerRejectsInsecureParentDirectory(t *testing.T) {
 	}
 }
 
+func TestFileSignerLedgerRejectsSymlinkParentDirectory(t *testing.T) {
+	now := time.Unix(1800000000, 0).UTC()
+	target := signerLedgerTempDir(t)
+	parent := signerLedgerTempDir(t)
+	linked := filepath.Join(parent, "linked")
+	if err := os.Symlink(target, linked); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(linked, "signer-ledger.jsonl")
+	if _, err := OpenFileSignerStore(path, testCipher(t, bytes.Repeat([]byte{1}, 32)), testActivationVerifier{}, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{3}, 128))); err == nil {
+		t.Fatal("signer ledger opened through a symlink parent directory")
+	}
+}
+
+func TestFileSignerLedgerRejectsSymlinkAncestorDirectory(t *testing.T) {
+	now := time.Unix(1800000000, 0).UTC()
+	target := signerLedgerTempDir(t)
+	secure := filepath.Join(target, "secure")
+	if err := os.Mkdir(secure, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parent := signerLedgerTempDir(t)
+	linkedAncestor := filepath.Join(parent, "redirect")
+	if err := os.Symlink(target, linkedAncestor); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(linkedAncestor, "secure", "signer-ledger.jsonl")
+	if _, err := OpenFileSignerStore(path, testCipher(t, bytes.Repeat([]byte{1}, 32)), testActivationVerifier{}, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{3}, 128))); err == nil {
+		t.Fatal("signer ledger opened through a symlinked ancestor directory")
+	}
+}
+
+func TestFileSignerLedgerReplayHonorsCancelledStartupContext(t *testing.T) {
+	now := time.Unix(1800000000, 0).UTC()
+	path := filepath.Join(signerLedgerTempDir(t), "signer-ledger.jsonl")
+	key := bytes.Repeat([]byte{1}, 32)
+	store := openFileSignerStore(t, path, key, now)
+	if _, err := store.Prepare(context.Background(), signerInput(now, bytes.Repeat([]byte{6}, 65))); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := OpenFileSignerStoreContext(ctx, path, testCipher(t, key), testActivationVerifier{}, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{3}, 128))); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled replay error=%v", err)
+	}
+}
+
+func TestEmptyFileSignerLedgerHonorsCancelledStartupContext(t *testing.T) {
+	now := time.Unix(1800000000, 0).UTC()
+	path := filepath.Join(signerLedgerTempDir(t), "empty-signer-ledger.jsonl")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := OpenFileSignerStoreContext(ctx, path, testCipher(t, bytes.Repeat([]byte{1}, 32)), testActivationVerifier{}, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{3}, 128))); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled empty-ledger replay error=%v", err)
+	}
+}
+
+func TestSignerStoreRefusesOpaqueHandleCollisionWithoutOverwriting(t *testing.T) {
+	now := time.Unix(1800000000, 0).UTC()
+	cipher := testCipher(t, bytes.Repeat([]byte{1}, 32))
+	store, err := NewSignerStore(cipher, testActivationVerifier{}, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{3}, 32*4)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := signerInput(now, bytes.Repeat([]byte{4}, 65))
+	handle, err := store.Prepare(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.RequestID, second.AuthorizationID, second.ReservationID = bearerHash(81), bearerHash(82), bearerHash(83)
+	second.OperationID, second.ActionID, second.SignerRequestHash = bearerHash(84), "lock-action-2", bearerHash(85)
+	if _, err := store.Prepare(context.Background(), second); err == nil {
+		t.Fatal("duplicate opaque handle entropy overwrote the first record")
+	}
+	if replayed, exists, err := store.PreparedFor(first.OperationID, first.ActionID, first.SignerRequestHash); err != nil || !exists || replayed.ID != handle.ID {
+		t.Fatalf("first record changed: replayed=%+v exists=%t err=%v", replayed, exists, err)
+	}
+}
+
 func TestFileSignerLedgerAuthenticatesCiphertextAfterValidHashChainReplay(t *testing.T) {
 	now := time.Unix(1800000000, 0).UTC()
-	path := filepath.Join(t.TempDir(), "signer-ledger.jsonl")
+	path := filepath.Join(signerLedgerTempDir(t), "signer-ledger.jsonl")
 	key := bytes.Repeat([]byte{1}, 32)
 	store := openFileSignerStore(t, path, key, now)
 	if _, err := store.Prepare(context.Background(), signerInput(now, bytes.Repeat([]byte{0x6a}, 65))); err != nil {
@@ -238,7 +321,7 @@ func TestFileSignerLedgerAuthenticatesCiphertextAfterValidHashChainReplay(t *tes
 
 func TestFileSignerLedgerRevalidatesForgedActivationAfterValidHashChainReplay(t *testing.T) {
 	now := time.Unix(1800000000, 0).UTC()
-	path := filepath.Join(t.TempDir(), "signer-ledger.jsonl")
+	path := filepath.Join(signerLedgerTempDir(t), "signer-ledger.jsonl")
 	key := bytes.Repeat([]byte{1}, 32)
 	store := openFileSignerStore(t, path, key, now)
 	if _, err := store.Prepare(context.Background(), signerInput(now, bytes.Repeat([]byte{0x6b}, 65))); err != nil {
@@ -319,6 +402,20 @@ func openFileSignerStore(t *testing.T, path string, key []byte, now time.Time) *
 	return store
 }
 
+func signerLedgerTempDir(t *testing.T) string {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp(base, "flowops-signer-ledger-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return directory
+}
+
 func testCipher(t *testing.T, key []byte) *AESGCMCipher {
 	t.Helper()
 	cipher, err := NewAESGCMCipher(key, bytes.NewReader(bytes.Repeat([]byte{2}, 1024)))
@@ -330,6 +427,7 @@ func testCipher(t *testing.T, key []byte) *AESGCMCipher {
 
 func signerInput(now time.Time, signature []byte) PrepareInput {
 	return PrepareInput{
+		RequestID: bearerHash(8), AuthorizationID: bearerHash(9), ReservationID: bearerHash(10),
 		ActionID: "lock-action-1", OperationID: bearerHash(1), SignerRequestHash: bearerHash(7), CanonicalPayloadHash: bearerHash(2),
 		Digest: bearerHash(3), Nonce: bearerHash(4), SignerKeyID: "signer-key-1", KeyEpoch: 1,
 		KeeperID: "keeper-primary", ValidAfter: now, ValidUntil: now.Add(9 * time.Minute), Signature: signature,
@@ -337,7 +435,7 @@ func signerInput(now time.Time, signature []byte) PrepareInput {
 }
 
 func activationProof(handle Handle, now time.Time) ActivationProof {
-	return ActivationProof{RequestID: bearerHash(5), HandleID: handle.ID, OperationID: handle.OperationID,
+	return ActivationProof{RequestID: handle.RequestID, HandleID: handle.ID, OperationID: handle.OperationID,
 		Digest: handle.Digest, Nonce: handle.Nonce, PrimaryMirrorDigest: bearerHash(6), ActivationOccurredAt: now}
 }
 

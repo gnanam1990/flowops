@@ -138,6 +138,8 @@ type testIndependentSigningEngine struct {
 func (e *testIndependentSigningEngine) VerifyAndSign(_ context.Context, input ActivationInput) ([]byte, error) {
 	e.calls++
 	e.seen = input
+	e.seen.CanonicalPayload = append([]byte(nil), input.CanonicalPayload...)
+	e.seen.EvidenceBundle = append([]byte(nil), input.EvidenceBundle...)
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -277,5 +279,8 @@ func TestLedgerPreparedSignerSerializesConcurrentExactPrepare(t *testing.T) {
 	first, second := <-results, <-results
 	if first.err != nil || second.err != nil || first.handle == "" || first.handle != second.handle || engine.callCount() != 1 {
 		t.Fatalf("first=%+v second=%+v engine calls=%d", first, second, engine.callCount())
+	}
+	if len(signer.actionLocks) != 0 {
+		t.Fatalf("completed action locks were retained: %d", len(signer.actionLocks))
 	}
 }

@@ -38,6 +38,9 @@ var (
 // signature or ciphertext field.
 type Handle struct {
 	ID                   string    `json:"id"`
+	RequestID            string    `json:"requestId"`
+	AuthorizationID      string    `json:"authorizationId"`
+	ReservationID        string    `json:"reservationId"`
 	ActionID             string    `json:"actionId"`
 	OperationID          string    `json:"operationId"`
 	SignerRequestHash    string    `json:"signerRequestHash"`
@@ -54,6 +57,9 @@ type Handle struct {
 }
 
 type PrepareInput struct {
+	RequestID            string
+	AuthorizationID      string
+	ReservationID        string
 	ActionID             string
 	OperationID          string
 	SignerRequestHash    string
@@ -126,7 +132,8 @@ func NewSignerStore(cipher ArtifactCipher, verifier ActivationVerifier, clock fu
 func (s *SignerStore) Prepare(ctx context.Context, input PrepareInput) (Handle, error) {
 	now := s.clock().UTC()
 	input.ValidAfter, input.ValidUntil = input.ValidAfter.UTC(), input.ValidUntil.UTC()
-	if !identifier(input.ActionID) || !hash(input.OperationID) || !hash(input.SignerRequestHash) || !hash(input.CanonicalPayloadHash) ||
+	if !hash(input.RequestID) || !hash(input.AuthorizationID) || !hash(input.ReservationID) ||
+		!identifier(input.ActionID) || !hash(input.OperationID) || !hash(input.SignerRequestHash) || !hash(input.CanonicalPayloadHash) ||
 		!hash(input.Digest) || !hash(input.Nonce) || !identifier(input.SignerKeyID) || input.KeyEpoch == 0 ||
 		!identifier(input.KeeperID) || input.ValidAfter.Before(now.Add(-time.Minute)) ||
 		input.ValidAfter.After(now.Add(time.Minute)) || !input.ValidAfter.Before(input.ValidUntil) ||
@@ -136,7 +143,8 @@ func (s *SignerStore) Prepare(ctx context.Context, input PrepareInput) (Handle, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if id, exists := s.byAction[input.ActionID]; exists {
+	actionKey := signerActionKey(input.OperationID, input.ActionID)
+	if id, exists := s.byAction[actionKey]; exists {
 		record := s.byID[id]
 		if !samePrepareBinding(record.Handle, input) {
 			return Handle{}, ErrMismatch
@@ -151,12 +159,23 @@ func (s *SignerStore) Prepare(ctx context.Context, input PrepareInput) (Handle, 
 		}
 		return record.Handle, nil
 	}
-	id, err := s.newID()
-	if err != nil {
-		return Handle{}, err
+	var id string
+	for attempt := 0; attempt < 3; attempt++ {
+		candidate, err := s.newID()
+		if err != nil {
+			return Handle{}, err
+		}
+		if _, collision := s.byID[candidate]; !collision {
+			id = candidate
+			break
+		}
+	}
+	if id == "" {
+		return Handle{}, errors.New("generate unique opaque prepared handle")
 	}
 	handle := Handle{
-		ID: id, ActionID: input.ActionID, OperationID: input.OperationID,
+		ID: id, RequestID: input.RequestID, AuthorizationID: input.AuthorizationID,
+		ReservationID: input.ReservationID, ActionID: input.ActionID, OperationID: input.OperationID,
 		SignerRequestHash: input.SignerRequestHash, CanonicalPayloadHash: input.CanonicalPayloadHash,
 		Digest: input.Digest, Nonce: input.Nonce,
 		SignerKeyID: input.SignerKeyID, KeyEpoch: input.KeyEpoch, KeeperID: input.KeeperID,
@@ -171,19 +190,19 @@ func (s *SignerStore) Prepare(ctx context.Context, input PrepareInput) (Handle, 
 		return Handle{}, err
 	}
 	s.byID[id] = record
-	s.byAction[input.ActionID] = id
+	s.byAction[actionKey] = id
 	return handle, nil
 }
 
 // PreparedFor returns a durable exact replay without asking an HSM or signing
 // engine to sign again. Only a still-valid PREPARED record is replayable.
-func (s *SignerStore) PreparedFor(actionID, signerRequestHash string) (Handle, bool, error) {
-	if !identifier(actionID) || !hash(signerRequestHash) {
+func (s *SignerStore) PreparedFor(operationID, actionID, signerRequestHash string) (Handle, bool, error) {
+	if !hash(operationID) || !identifier(actionID) || !hash(signerRequestHash) {
 		return Handle{}, false, ErrTransition
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id, exists := s.byAction[actionID]
+	id, exists := s.byAction[signerActionKey(operationID, actionID)]
 	if !exists {
 		return Handle{}, false, nil
 	}
@@ -276,6 +295,54 @@ func (s *SignerStore) Expire(ctx context.Context, id string) (Handle, error) {
 	return record.Handle, nil
 }
 
+// ProveAndExpireUnactivated returns a signer-ledger proof bound to the exact
+// control-plane request. A missing record is a valid negative signer result:
+// no signature reached the durable prepare boundary. A matching PREPARED
+// record is first independently proved unactivated and durably expired.
+func (s *SignerStore) ProveAndExpireUnactivated(ctx context.Context, requestID, operationID, actionID, inputHash string) (UnactivatedProof, error) {
+	if !hash(requestID) || !hash(operationID) || !identifier(actionID) || !hash(inputHash) {
+		return UnactivatedProof{}, ErrTransition
+	}
+	now := s.clock().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	proof := UnactivatedProof{
+		RequestID: requestID, OperationID: operationID, ActionID: actionID, InputHash: inputHash,
+		Status: "EXPIRED_UNACTIVATED", ProvenAt: now,
+	}
+	id, exists := s.byAction[signerActionKey(operationID, actionID)]
+	if exists {
+		record := s.byID[id]
+		if record.Handle.RequestID != requestID || record.Handle.OperationID != operationID ||
+			record.Handle.SignerRequestHash != inputHash {
+			return UnactivatedProof{}, ErrMismatch
+		}
+		if record.Handle.State == Expired {
+			proof.HandleID = record.Handle.ID
+		} else {
+			if record.Handle.State != Prepared || now.Before(record.Handle.ValidUntil) {
+				return UnactivatedProof{}, ErrTransition
+			}
+			if err := s.verifier.ProveUnactivated(ctx, record.Handle, now); err != nil {
+				return UnactivatedProof{}, fmt.Errorf("prove signer handle unactivated: %w", err)
+			}
+			record.Handle.State = Expired
+			record.Handle.Outcome = "EXPIRED_UNACTIVATED"
+			if err := s.persist(ctx, now, record); err != nil {
+				return UnactivatedProof{}, err
+			}
+			s.byID[id] = record
+			proof.HandleID = record.Handle.ID
+		}
+	}
+	digest, err := UnactivatedProofDigest(proof)
+	if err != nil {
+		return UnactivatedProof{}, err
+	}
+	proof.ProofDigest = digest
+	return proof, nil
+}
+
 // Finalize retains ciphertext through the permanent replay horizon. Deletion
 // is a separate retention ceremony, not a normal lifecycle transition.
 func (s *SignerStore) Finalize(id, outcome string) (Handle, error) {
@@ -322,14 +389,15 @@ func (s *SignerStore) encryptedForTest(id string) []byte {
 }
 
 func samePrepareBinding(handle Handle, input PrepareInput) bool {
-	return handle.ActionID == input.ActionID && handle.OperationID == input.OperationID &&
+	return handle.RequestID == input.RequestID && handle.AuthorizationID == input.AuthorizationID &&
+		handle.ReservationID == input.ReservationID && handle.ActionID == input.ActionID && handle.OperationID == input.OperationID &&
 		handle.SignerRequestHash == input.SignerRequestHash && handle.CanonicalPayloadHash == input.CanonicalPayloadHash && handle.Digest == input.Digest &&
 		handle.Nonce == input.Nonce && handle.SignerKeyID == input.SignerKeyID && handle.KeyEpoch == input.KeyEpoch &&
 		handle.KeeperID == input.KeeperID && handle.ValidAfter.Equal(input.ValidAfter) && handle.ValidUntil.Equal(input.ValidUntil)
 }
 
 func exactActivationProof(handle Handle, proof ActivationProof) bool {
-	return hash(proof.RequestID) && proof.HandleID == handle.ID && proof.OperationID == handle.OperationID &&
+	return proof.RequestID == handle.RequestID && proof.HandleID == handle.ID && proof.OperationID == handle.OperationID &&
 		proof.Digest == handle.Digest && proof.Nonce == handle.Nonce && hash(proof.PrimaryMirrorDigest) &&
 		!proof.ActivationOccurredAt.Before(handle.ValidAfter) && proof.ActivationOccurredAt.Before(handle.ValidUntil)
 }
@@ -341,11 +409,14 @@ func sameActivationProof(left, right ActivationProof) bool {
 }
 
 func artifactAAD(handle Handle) []byte {
-	return []byte("ASCP_SIGNER_ARTIFACT_V1\n" + handle.ID + "\n" + handle.ActionID + "\n" + handle.OperationID + "\n" +
+	return []byte("ASCP_SIGNER_ARTIFACT_V2\n" + handle.ID + "\n" + handle.RequestID + "\n" + handle.AuthorizationID + "\n" +
+		handle.ReservationID + "\n" + handle.ActionID + "\n" + handle.OperationID + "\n" +
 		handle.SignerRequestHash + "\n" + handle.CanonicalPayloadHash + "\n" + handle.Digest + "\n" + handle.Nonce + "\n" + handle.SignerKeyID + "\n" +
 		strconv.FormatUint(handle.KeyEpoch, 10) + "\n" + handle.KeeperID + "\n" +
 		handle.ValidAfter.UTC().Format(time.RFC3339Nano) + "\n" + handle.ValidUntil.UTC().Format(time.RFC3339Nano))
 }
+
+func signerActionKey(operationID, actionID string) string { return operationID + "\n" + actionID }
 
 func opaqueIDSource(random io.Reader) func() (string, error) {
 	return func() (string, error) {

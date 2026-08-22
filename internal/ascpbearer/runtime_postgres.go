@@ -101,6 +101,69 @@ func (s *ActivationStore) RetryLease(ctx context.Context, lease RuntimeLease, co
 	return exactLeaseMutation(result, err, "retry bearer activation lease")
 }
 
+// Refuse atomically terminates a deterministic pre-signature refusal and
+// releases only the still-RESERVED budget. It cannot be used after a prepared
+// handle exists or after AUTHORIZATION_LIVE begins.
+func (s *ActivationStore) Refuse(ctx context.Context, lease RuntimeLease, code string) (ActivationRequest, error) {
+	if code != "SIGNER_REFUSED" {
+		return ActivationRequest{}, ErrActivationInput
+	}
+	now := s.clock().UTC()
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return ActivationRequest{}, fmt.Errorf("begin signer refusal: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	request, err := loadActivationRequestByID(ctx, tx, lease.Request.RequestID, true)
+	if err != nil {
+		return ActivationRequest{}, err
+	}
+	if err := s.requireRuntimeLease(ctx, tx, request.RequestID, now); err != nil {
+		return ActivationRequest{}, err
+	}
+	if request.State != SignRequested || request.PreparedHandle != "" {
+		return ActivationRequest{}, ErrActivationState
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE ascp_budget_reservations SET state='RELEASED'
+		WHERE reservation_id=$1 AND state='RESERVED'`, request.ReservationID)
+	if err != nil {
+		return ActivationRequest{}, fmt.Errorf("release signer-refused reservation: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return ActivationRequest{}, ErrActivationState
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE ascp_sign_requests
+		SET state='REFUSED', lease_owner=NULL, lease_token=NULL, lease_expires_at=NULL,
+		    next_attempt_at=$2, last_error=$3
+		WHERE request_id=$1 AND state='SIGN_REQUESTED' AND prepared_handle IS NULL`, request.RequestID, now, code)
+	if err != nil {
+		return ActivationRequest{}, fmt.Errorf("record signer refusal: %w", err)
+	}
+	changed, err = result.RowsAffected()
+	if err != nil || changed != 1 {
+		return ActivationRequest{}, ErrActivationState
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE ascp_signer_outbox
+		SET state='CANCELLED', cancelled_at=$2, last_error=$3
+		WHERE request_id=$1 AND kind='SIGN_PREPARE_REQUESTED' AND state='PENDING'`, request.RequestID, now, code)
+	if err != nil {
+		return ActivationRequest{}, fmt.Errorf("cancel signer-refused outbox: %w", err)
+	}
+	changed, err = result.RowsAffected()
+	if err != nil || changed != 1 {
+		return ActivationRequest{}, ErrActivationState
+	}
+	request, err = loadActivationRequestByID(ctx, tx, request.RequestID, false)
+	if err != nil {
+		return ActivationRequest{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ActivationRequest{}, fmt.Errorf("commit signer refusal: %w", err)
+	}
+	return request, nil
+}
+
 func (s *ActivationStore) ExpireUnactivated(ctx context.Context, lease RuntimeLease, proof UnactivatedProof) (ActivationRequest, error) {
 	now := s.clock().UTC()
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})

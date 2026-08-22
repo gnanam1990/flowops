@@ -24,6 +24,7 @@ type RuntimeLease struct {
 
 type UnactivatedProof struct {
 	RequestID   string    `json:"requestId"`
+	OperationID string    `json:"operationId"`
 	ActionID    string    `json:"actionId"`
 	InputHash   string    `json:"inputHash"`
 	HandleID    string    `json:"handleId,omitempty"`
@@ -43,6 +44,7 @@ type runtimeRepository interface {
 	ClaimExpired(context.Context, RuntimeClaim) (RuntimeLease, bool, error)
 	CompleteLease(context.Context, RuntimeLease) error
 	RetryLease(context.Context, RuntimeLease, string, time.Duration) error
+	Refuse(context.Context, RuntimeLease, string) (ActivationRequest, error)
 	ExpireUnactivated(context.Context, RuntimeLease, UnactivatedProof) (ActivationRequest, error)
 }
 
@@ -62,6 +64,7 @@ type RuntimeConfig struct {
 type RuntimeStep struct {
 	State   ActivationState `json:"state"`
 	Expired bool            `json:"expired"`
+	Refused bool            `json:"refused"`
 	Retried bool            `json:"retried"`
 }
 
@@ -94,6 +97,13 @@ func (s *RuntimeService) AdvanceOnce(ctx context.Context) (RuntimeStep, bool, er
 	leasedCtx := withRuntimeLease(ctx, lease)
 	request, err := s.coordinator.Advance(leasedCtx, lease.Request.RequestID)
 	if err != nil {
+		if permanentSignerRefusal(err) {
+			request, refuseErr := s.store.Refuse(leasedCtx, lease, "SIGNER_REFUSED")
+			if refuseErr != nil {
+				return RuntimeStep{}, true, errors.Join(err, refuseErr)
+			}
+			return RuntimeStep{State: request.State, Refused: true}, true, nil
+		}
 		if errors.Is(err, ErrRuntimeBoundary) {
 			if retryErr := s.retryLease(ctx, lease, runtimeErrorCode(err)); retryErr != nil {
 				return RuntimeStep{}, true, errors.Join(err, retryErr)
@@ -145,6 +155,7 @@ type RuntimeCycle struct {
 	Acknowledged int `json:"acknowledged"`
 	Expired      int `json:"expired"`
 	Retried      int `json:"retried"`
+	Refused      int `json:"refused"`
 }
 
 type RuntimeWorkerConfig struct {
@@ -253,6 +264,10 @@ func countRuntimeStep(cycle *RuntimeCycle, step RuntimeStep) {
 		cycle.Expired++
 		return
 	}
+	if step.Refused {
+		cycle.Refused++
+		return
+	}
 	cycle.Advanced++
 	switch step.State {
 	case HandlePrepared:
@@ -284,9 +299,15 @@ func runtimeErrorCode(err error) string {
 	return "BOUNDARY_UNAVAILABLE"
 }
 
+func permanentSignerRefusal(err error) bool {
+	var boundaryError *RuntimeBoundaryError
+	return errors.As(err, &boundaryError) && boundaryError.Boundary == "signer" &&
+		boundaryError.Code == "SIGNER_REFUSED" && boundaryError.StatusCode == 422
+}
+
 func validateUnactivatedProof(request ActivationRequest, proof UnactivatedProof, now time.Time) error {
 	digest, err := UnactivatedProofDigest(proof)
-	if err != nil || proof.RequestID != request.RequestID || proof.ActionID != request.ActionID ||
+	if err != nil || proof.RequestID != request.RequestID || proof.OperationID != request.OperationID || proof.ActionID != request.ActionID ||
 		proof.InputHash != request.InputHash || proof.Status != "EXPIRED_UNACTIVATED" || proof.ProofDigest != digest ||
 		proof.ProvenAt.Before(request.ValidUntil) || proof.ProvenAt.After(now.Add(time.Minute)) ||
 		request.PreparedHandle != "" && proof.HandleID != request.PreparedHandle ||
