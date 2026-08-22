@@ -89,23 +89,50 @@ func TestASCPSignerRefusalMigrationReconcilesOnlyUnambiguousLegacyRows(t *testin
 			t.Fatalf("reservation=%s request=%s/%s outbox=%s/%s cancelled=%t", reservationState, requestState, requestError, outboxState, outboxError, cancelled)
 		}
 	})
-	t.Run("blocks progressed refusal", func(t *testing.T) {
-		db := ascpRawIntegrationDatabase(t)
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		createLegacyRefusalTables(t, ctx, db)
-		if _, err := db.ExecContext(ctx, `
-			INSERT INTO ascp_budget_reservations VALUES ('reservation-2','AUTHORIZATION_LIVE');
-			INSERT INTO ascp_sign_requests (request_id,reservation_id,state,prepared_handle,last_error)
-			VALUES ('request-2','reservation-2','REFUSED','asph_progressed',NULL);
-			INSERT INTO ascp_signer_outbox (request_id,kind,state,delivered_at)
-			VALUES ('request-2','SIGN_PREPARE_REQUESTED','DELIVERED',now())`); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.ExecContext(ctx, string(script)); err == nil || !strings.Contains(err.Error(), "reconcile them before migration") {
-			t.Fatalf("progressed refusal migration error=%v", err)
-		}
-	})
+	blockedScenarios := []struct {
+		name                string
+		reservationState    string
+		preparedHandle      any
+		primaryMirrorDigest any
+		lastError           any
+		attemptCount        int
+		outboxKind          any
+		outboxState         any
+	}{
+		{name: "prepared handle", reservationState: "RESERVED", preparedHandle: "asph_progressed", outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "live reservation", reservationState: "AUTHORIZATION_LIVE", outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "delivered prepare outbox", reservationState: "RESERVED", outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "DELIVERED"},
+		{name: "mirror digest without timestamp", reservationState: "RESERVED", primaryMirrorDigest: "0x" + strings.Repeat("a", 64), outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "ambiguous last error", reservationState: "RESERVED", lastError: "SIGNER_CRASHED", outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "attempted request", reservationState: "RESERVED", attemptCount: 1, outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "missing prepare outbox", reservationState: "RESERVED"},
+	}
+	for _, scenario := range blockedScenarios {
+		t.Run("blocks "+scenario.name, func(t *testing.T) {
+			db := ascpRawIntegrationDatabase(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			createLegacyRefusalTables(t, ctx, db)
+			if _, err := db.ExecContext(ctx, `INSERT INTO ascp_budget_reservations VALUES ('reservation-2',$1)`, scenario.reservationState); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO ascp_sign_requests
+					(request_id,reservation_id,state,prepared_handle,primary_mirror_digest,last_error,attempt_count)
+				VALUES ('request-2','reservation-2','REFUSED',$1,$2,$3,$4)`, scenario.preparedHandle,
+				scenario.primaryMirrorDigest, scenario.lastError, scenario.attemptCount); err != nil {
+				t.Fatal(err)
+			}
+			if scenario.outboxKind != nil {
+				if _, err := db.ExecContext(ctx, `INSERT INTO ascp_signer_outbox (request_id,kind,state)
+					VALUES ('request-2',$1,$2)`, scenario.outboxKind, scenario.outboxState); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := db.ExecContext(ctx, string(script)); err == nil || !strings.Contains(err.Error(), "reconcile them before migration") {
+				t.Fatalf("scenario=%s migration error=%v", scenario.name, err)
+			}
+		})
+	}
 }
 
 func createLegacyRefusalTables(t *testing.T, ctx context.Context, db *sql.DB) {
@@ -128,6 +155,7 @@ func createLegacyRefusalTables(t *testing.T, ctx context.Context, db *sql.DB) {
 			lease_owner text,
 			lease_token text,
 			lease_expires_at timestamptz,
+			attempt_count integer NOT NULL DEFAULT 0,
 			next_attempt_at timestamptz NOT NULL DEFAULT '-infinity',
 			last_error text,
 			unactivated_proof jsonb,

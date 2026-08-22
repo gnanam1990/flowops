@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestReadCanonicalBase64SecretRejectsSymlinkedAncestor(t *testing.T) {
@@ -32,6 +35,27 @@ func TestReadCanonicalBase64SecretRejectsSymlinkedAncestor(t *testing.T) {
 	defer clear(loaded)
 	if err != nil || !bytes.Equal(loaded, secret) {
 		t.Fatalf("loaded=%x err=%v", loaded, err)
+	}
+}
+
+func TestReadCanonicalBase64SecretRejectsFIFOWithoutBlocking(t *testing.T) {
+	directory := canonicalTempDir(t)
+	fifo := filepath.Join(directory, "token")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := ReadCanonicalBase64Secret(fifo)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("FIFO secret was accepted")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FIFO secret blocked during open")
 	}
 }
 

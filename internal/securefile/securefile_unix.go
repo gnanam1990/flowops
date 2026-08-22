@@ -74,17 +74,17 @@ func ReadCanonicalBase64Secret(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open secret parent: %w", err)
 	}
-	defer parent.Close()
+	defer func() { _ = parent.Close() }()
 	parentInfo, err := parent.Stat()
 	if err != nil || !parentInfo.IsDir() || parentInfo.Mode().Perm()&0o022 != 0 || !OwnerAllowed(parentInfo) {
 		return nil, errors.New("secret parent must be a secured owner-controlled directory")
 	}
-	fd, err := unix.Openat(int(parent.Fd()), filepath.Base(path), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(int(parent.Fd()), filepath.Base(path), unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, errors.New("secret file is unavailable")
 	}
 	file := os.NewFile(uintptr(fd), path)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 1024 || !OwnerAllowed(info) {
 		return nil, errors.New("secret must be a private owner-controlled regular file")

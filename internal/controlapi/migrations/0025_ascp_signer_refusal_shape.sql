@@ -1,7 +1,8 @@
 -- REFUSED existed in the original state enum before its atomic transition was
 -- implemented. Refuse to guess when a legacy row shows evidence that signing
--- progressed or its reservation became live; operators must reconcile that
--- corruption explicitly before retrying this transactional migration.
+-- progressed, was attempted, carries ambiguous failure evidence, or its
+-- reservation became live; operators must reconcile that corruption
+-- explicitly before retrying this transactional migration.
 DO $$
 BEGIN
     IF EXISTS (
@@ -16,8 +17,11 @@ BEGIN
               request.activated_at IS NOT NULL OR
               request.mirrored_at IS NOT NULL OR
               request.acknowledged_at IS NOT NULL OR
+              request.primary_mirror_digest IS NOT NULL OR
               request.unactivated_proof IS NOT NULL OR
               request.expired_at IS NOT NULL OR
+              request.attempt_count <> 0 OR
+              (request.last_error IS NOT NULL AND request.last_error <> 'SIGNER_REFUSED') OR
               reservation.state NOT IN ('RESERVED','RELEASED') OR
               NOT EXISTS (
                   SELECT 1 FROM ascp_signer_outbox outbox

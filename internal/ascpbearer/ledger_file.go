@@ -189,6 +189,9 @@ func openSignerLedgerFile(directory *os.File, name, displayPath string) (*os.Fil
 }
 
 func (j *signerJournal) replay(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("replay signer ledger: %w", err)
+	}
 	if _, err := j.file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("seek signer ledger for replay: %w", err)
 	}

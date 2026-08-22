@@ -237,6 +237,16 @@ func TestFileSignerLedgerReplayHonorsCancelledStartupContext(t *testing.T) {
 	}
 }
 
+func TestEmptyFileSignerLedgerHonorsCancelledStartupContext(t *testing.T) {
+	now := time.Unix(1800000000, 0).UTC()
+	path := filepath.Join(signerLedgerTempDir(t), "empty-signer-ledger.jsonl")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := OpenFileSignerStoreContext(ctx, path, testCipher(t, bytes.Repeat([]byte{1}, 32)), testActivationVerifier{}, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{3}, 128))); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled empty-ledger replay error=%v", err)
+	}
+}
+
 func TestSignerStoreRefusesOpaqueHandleCollisionWithoutOverwriting(t *testing.T) {
 	now := time.Unix(1800000000, 0).UTC()
 	cipher := testCipher(t, bytes.Repeat([]byte{1}, 32))
