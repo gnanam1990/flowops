@@ -137,6 +137,14 @@ func TestGovernancePayloadRejectsDomainAndValueSubstitution(t *testing.T) {
 			return CallEscrowRevokeVerifier(8453, vectorContract, vectorWorkflow,
 				"0x2222222222222222222222222222222222222222", 0, 7, 0, false)
 		},
+		"stale pending add verifier": func() (common.Hash, error) {
+			return CallEscrowAddVerifier(8453, vectorContract, vectorWorkflow,
+				"0x2222222222222222222222222222222222222222", 9, 7, 1_800_000_000, false, 10)
+		},
+		"stale pending revoke verifier": func() (common.Hash, error) {
+			return CallEscrowRevokeVerifier(8453, vectorContract, vectorWorkflow,
+				"0x2222222222222222222222222222222222222222", 9, 7, 1_800_000_000, false)
+		},
 		"revoked add verifier": func() (common.Hash, error) {
 			return CallEscrowAddVerifier(8453, vectorContract, vectorWorkflow,
 				"0x2222222222222222222222222222222222222222", 9, 0, 0, true, 10)

@@ -60,7 +60,8 @@ func CallEscrowAddVerifier(
 	nextEpoch uint64,
 ) (common.Hash, error) {
 	if !address(key) || revoked || nextEpoch == 0 || nextEpoch <= activeEpoch ||
-		(pendingEpoch == 0) != (pendingActivatesAt == 0) || (pendingEpoch != 0 && nextEpoch <= pendingEpoch) {
+		(pendingEpoch == 0) != (pendingActivatesAt == 0) ||
+		(pendingEpoch != 0 && (pendingEpoch <= activeEpoch || nextEpoch <= pendingEpoch)) {
 		return common.Hash{}, ErrInvalidPayload
 	}
 	return bind(CallEscrowDomain, chainID, contractAddress, workflowID, selector("addVerifier(address,uint64,bytes32,bytes32)"),
@@ -76,7 +77,7 @@ func CallEscrowRevokeVerifier(
 	revoked bool,
 ) (common.Hash, error) {
 	if !address(key) || revoked || (activeEpoch == 0 && pendingEpoch == 0) ||
-		(pendingEpoch == 0) != (pendingActivatesAt == 0) {
+		(pendingEpoch == 0) != (pendingActivatesAt == 0) || (pendingEpoch != 0 && pendingEpoch <= activeEpoch) {
 		return common.Hash{}, ErrInvalidPayload
 	}
 	return bind(CallEscrowDomain, chainID, contractAddress, workflowID, selector("revokeVerifier(address,bytes32,bytes32)"),
