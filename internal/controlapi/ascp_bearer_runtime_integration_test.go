@@ -89,6 +89,7 @@ func TestASCPSignerRefusalMigrationReconcilesOnlyUnambiguousLegacyRows(t *testin
 			t.Fatalf("reservation=%s request=%s/%s outbox=%s/%s cancelled=%t", reservationState, requestState, requestError, outboxState, outboxError, cancelled)
 		}
 	})
+	progressedAt := time.Unix(1800000000, 0).UTC()
 	blockedScenarios := []struct {
 		name                string
 		reservationState    string
@@ -96,10 +97,22 @@ func TestASCPSignerRefusalMigrationReconcilesOnlyUnambiguousLegacyRows(t *testin
 		primaryMirrorDigest any
 		lastError           any
 		attemptCount        int
+		preparedAt          any
+		activatedAt         any
+		mirroredAt          any
+		acknowledgedAt      any
+		unactivatedProof    any
+		expiredAt           any
 		outboxKind          any
 		outboxState         any
 	}{
 		{name: "prepared handle", reservationState: "RESERVED", preparedHandle: "asph_progressed", outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "prepared timestamp", reservationState: "RESERVED", preparedAt: progressedAt, outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "activated timestamp", reservationState: "RESERVED", activatedAt: progressedAt, outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "mirrored timestamp", reservationState: "RESERVED", mirroredAt: progressedAt, outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "acknowledged timestamp", reservationState: "RESERVED", acknowledgedAt: progressedAt, outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "unactivated proof", reservationState: "RESERVED", unactivatedProof: `{}`, outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
+		{name: "expired timestamp", reservationState: "RESERVED", expiredAt: progressedAt, outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
 		{name: "live reservation", reservationState: "AUTHORIZATION_LIVE", outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
 		{name: "delivered prepare outbox", reservationState: "RESERVED", outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "DELIVERED"},
 		{name: "mirror digest without timestamp", reservationState: "RESERVED", primaryMirrorDigest: "0x" + strings.Repeat("a", 64), outboxKind: "SIGN_PREPARE_REQUESTED", outboxState: "PENDING"},
@@ -117,9 +130,11 @@ func TestASCPSignerRefusalMigrationReconcilesOnlyUnambiguousLegacyRows(t *testin
 				t.Fatal(err)
 			}
 			if _, err := db.ExecContext(ctx, `INSERT INTO ascp_sign_requests
-					(request_id,reservation_id,state,prepared_handle,primary_mirror_digest,last_error,attempt_count)
-				VALUES ('request-2','reservation-2','REFUSED',$1,$2,$3,$4)`, scenario.preparedHandle,
-				scenario.primaryMirrorDigest, scenario.lastError, scenario.attemptCount); err != nil {
+					(request_id,reservation_id,state,prepared_handle,primary_mirror_digest,last_error,attempt_count,
+					 prepared_at,activated_at,mirrored_at,acknowledged_at,unactivated_proof,expired_at)
+				VALUES ('request-2','reservation-2','REFUSED',$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)`, scenario.preparedHandle,
+				scenario.primaryMirrorDigest, scenario.lastError, scenario.attemptCount, scenario.preparedAt,
+				scenario.activatedAt, scenario.mirroredAt, scenario.acknowledgedAt, scenario.unactivatedProof, scenario.expiredAt); err != nil {
 				t.Fatal(err)
 			}
 			if scenario.outboxKind != nil {
