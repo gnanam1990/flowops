@@ -13,7 +13,7 @@ for required in \
     'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public' \
     'GRANT SELECT, INSERT, UPDATE ON commands' \
     'GRANT SELECT, INSERT ON audit_events, control_events' \
-    'GRANT SELECT, INSERT ON ascp_intents, ascp_policy_decisions, ascp_execution_authorizations' \
+    'GRANT SELECT, INSERT ON ascp_intents, ascp_financial_tombstones, ascp_policy_decisions, ascp_execution_authorizations' \
 	'GRANT SELECT, INSERT ON ascp_adaptation_grants' \
 	'GRANT UPDATE (state, remaining_attempts, consumed_operation_id, consumed_at)' \
 	'GRANT SELECT, INSERT ON ascp_proposal_workflows, ascp_workflow_actions' \
