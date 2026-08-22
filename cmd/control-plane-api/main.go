@@ -23,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gnanam1990/flowops/internal/ascpactivation"
 	"github.com/gnanam1990/flowops/internal/ascpadaptation"
+	"github.com/gnanam1990/flowops/internal/ascpadaptationsigner"
 	"github.com/gnanam1990/flowops/internal/ascpagent"
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpcapacity"
@@ -161,7 +162,7 @@ func run(ctx context.Context) (returnErr error) {
 			if err != nil {
 				return err
 			}
-			digestSigner, err := ascpadaptation.NewHSMSigner(hsm, cfg.ascpAdaptationKeyID, cfg.ascpAdaptationKeyEpoch, cfg.ascpAdaptationSigner)
+			digestSigner, err := ascpadaptationsigner.New(hsm, cfg.ascpAdaptationKeyID, cfg.ascpAdaptationKeyEpoch, cfg.ascpAdaptationSigner)
 			if err != nil {
 				return err
 			}

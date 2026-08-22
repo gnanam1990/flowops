@@ -1,4 +1,4 @@
-package ascpadaptation
+package ascpadaptationsigner
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpring6"
 )
 
@@ -37,7 +38,7 @@ func TestHSMSignerBindsIdempotencyDigestAndRecoversConfiguredKey(t *testing.T) {
 	}
 	stub := &hsmStub{result: ascpring6.HSMResult{OperationHandle: "adaptation_hsm_1", Signature: signature}}
 	address := strings.ToLower(crypto.PubkeyToAddress(key.PublicKey).Hex())
-	signer, err := NewHSMSigner(stub, "adaptation_key_1", 3, address)
+	signer, err := New(stub, "adaptation_key_1", 3, address)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,13 +51,13 @@ func TestHSMSignerBindsIdempotencyDigestAndRecoversConfiguredKey(t *testing.T) {
 
 	stub.result.Signature = append([]byte(nil), signature...)
 	stub.result.Digest = "0x" + strings.Repeat("f", 64)
-	if _, err := signer.SignDigest(t.Context(), digest); !errors.Is(err, ErrInvalidGrant) {
+	if _, err := signer.SignDigest(t.Context(), digest); !errors.Is(err, ascpadaptation.ErrInvalidGrant) {
 		t.Fatalf("wrong digest error=%v", err)
 	}
 	wrong, _ := crypto.HexToECDSA(strings.Repeat("b", 64))
 	stub.result.Digest = "0x" + hex.EncodeToString(digest)
 	stub.result.Signature, _ = crypto.Sign(digest, wrong)
-	if _, err := signer.SignDigest(t.Context(), digest); !errors.Is(err, ErrInvalidGrant) {
+	if _, err := signer.SignDigest(t.Context(), digest); !errors.Is(err, ascpadaptation.ErrInvalidGrant) {
 		t.Fatalf("wrong signer error=%v", err)
 	}
 }
