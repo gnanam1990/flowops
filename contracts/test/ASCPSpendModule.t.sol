@@ -102,16 +102,8 @@ contract ASCPSpendModuleTest is Test {
         );
         allowanceSpender = new AllowlistedSpenderHarness();
         safe.setModule(address(module));
-        _ownerCall(
-            address(module),
-            abi.encodeCall(ASCPSpendModule.setEscrowAllowlist, (address(escrow), address(escrow).codehash))
-        );
-        _ownerCall(
-            address(module),
-            abi.encodeCall(
-                ASCPSpendModule.setEscrowAllowlist, (address(allowanceSpender), address(allowanceSpender).codehash)
-            )
-        );
+        _setAllowlist(address(escrow), address(escrow).codehash, 1);
+        _setAllowlist(address(allowanceSpender), address(allowanceSpender).codehash, 2);
         _ownerCall(address(usdc), abi.encodeCall(IERC20.approve, (address(escrow), type(uint256).max)));
         usdc.mint(address(safe), 1_000_000);
 
@@ -231,8 +223,8 @@ contract ASCPSpendModuleTest is Test {
     function testAuthorizerRotationAtoBtoAMakesOldSignaturePermanentlyInvalid() public {
         (bytes memory payload, ASCPSpendModule.LockAuthorization memory authorization) = _lockAuthorization(400, 7);
         bytes memory oldSignature = _signLock(authorization, AUTHOR_KEY);
-        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (vm.addr(AUTHOR_B_KEY))));
-        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (vm.addr(AUTHOR_KEY))));
+        _setAuthorizer(vm.addr(AUTHOR_B_KEY), 3);
+        _setAuthorizer(vm.addr(AUTHOR_KEY), 4);
         assertEq(module.authorizerEpoch(), 3);
         vm.expectRevert(ASCPSpendModule.InvalidAuthorization.selector);
         module.executeLock(payload, authorization, oldSignature);
@@ -241,15 +233,15 @@ contract ASCPSpendModuleTest is Test {
     function testPauseDoesNotConsumeAndSafeInvalidationIsPermanent() public {
         (bytes memory payload, ASCPSpendModule.LockAuthorization memory authorization) = _lockAuthorization(400, 8);
         bytes memory signature = _signLock(authorization, AUTHOR_KEY);
-        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.setEmergencyPause, (true)));
+        _setPause(true, 5);
         vm.expectRevert(ASCPSpendModule.EmergencyPaused.selector);
         module.executeLock(payload, authorization, signature);
         assertFalse(module.usedNonces(authorization.nonce));
 
-        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.setEmergencyPause, (false)));
+        _setPause(false, 6);
         bytes32[] memory nonces = new bytes32[](1);
         nonces[0] = authorization.nonce;
-        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.invalidateNonces, (nonces)));
+        _invalidateNonces(nonces, 7);
         vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.NonceAlreadyUsed.selector, authorization.nonce));
         module.executeLock(payload, authorization, signature);
     }
@@ -268,7 +260,12 @@ contract ASCPSpendModuleTest is Test {
 
         ASCPSpendModule.Caps memory newCaps =
             ASCPSpendModule.Caps({perTransaction: 2_000, perDay: 4_000, allowanceCeiling: 20_000});
-        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.scheduleCaps, (newCaps)));
+        _scheduleCaps(newCaps, 8);
+        vm.expectRevert(
+            abi.encodeWithSelector(ASCPSpendModule.CapsAlreadyPending.selector, uint64(block.timestamp + 1 hours))
+        );
+        vm.prank(address(safe));
+        module.scheduleCaps(newCaps, keccak256("other-caps-workflow"), keccak256("other-caps-payload"));
         vm.expectRevert(
             abi.encodeWithSelector(ASCPSpendModule.CapsNotReady.selector, uint64(block.timestamp + 1 hours))
         );
@@ -383,9 +380,102 @@ contract ASCPSpendModuleTest is Test {
         module.executeAllowance(payload, authorization, signature);
 
         vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.NotSafe.selector, address(this)));
-        module.setEmergencyPause(true);
+        module.setEmergencyPause(true, bytes32(uint256(1)), bytes32(uint256(2)));
         vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.NotSafe.selector, address(this)));
-        module.setSpendAuthorizer(vm.addr(AUTHOR_B_KEY));
+        module.setSpendAuthorizer(vm.addr(AUTHOR_B_KEY), bytes32(uint256(1)), bytes32(uint256(2)));
+    }
+
+    function testGovernanceRejectsPayloadSubstitutionAndEmitsWorkflowBinding() public {
+        address next = vm.addr(AUTHOR_B_KEY);
+        bytes32 workflowId = keccak256("module-workflow");
+        bytes32 payloadHash = module.governancePayloadHash(
+            module.setSpendAuthorizer.selector,
+            keccak256(abi.encode(module.spendAuthorizer(), module.authorizerEpoch(), next))
+        );
+
+        vm.expectRevert("OWNER_CALL_FAILED");
+        _ownerCall(
+            address(module),
+            abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (vm.addr(0xC0FFEE), workflowId, payloadHash))
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit ASCPSpendModule.GovernanceWorkflowBound(workflowId, payloadHash, module.setSpendAuthorizer.selector);
+        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (next, workflowId, payloadHash)));
+    }
+
+    function testGovernanceRejectsNoopAllowlistAndInvalidNonceBatch() public {
+        address target = address(escrow);
+        bytes32 currentCodeHash = module.escrowAllowlist(target);
+        bytes32 workflowId = keccak256("noop-allowlist-workflow");
+        bytes32 payloadHash = module.governancePayloadHash(
+            module.setEscrowAllowlist.selector, keccak256(abi.encode(target, currentCodeHash, currentCodeHash))
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(ASCPSpendModule.EscrowAllowlistUnchanged.selector, target, currentCodeHash)
+        );
+        vm.prank(address(safe));
+        module.setEscrowAllowlist(target, currentCodeHash, workflowId, payloadHash);
+
+        bytes32[] memory empty = new bytes32[](0);
+        payloadHash = module.governancePayloadHash(module.invalidateNonces.selector, keccak256(abi.encode(empty)));
+        vm.expectRevert(abi.encodeWithSelector(ASCPSpendModule.InvalidNonceInvalidationCount.selector, 0));
+        vm.prank(address(safe));
+        module.invalidateNonces(empty, workflowId, payloadHash);
+
+        bytes32[] memory oversized = new bytes32[](module.MAX_GOVERNANCE_NONCE_INVALIDATIONS() + 1);
+        payloadHash = module.governancePayloadHash(module.invalidateNonces.selector, keccak256(abi.encode(oversized)));
+        vm.expectRevert(
+            abi.encodeWithSelector(ASCPSpendModule.InvalidNonceInvalidationCount.selector, oversized.length)
+        );
+        vm.prank(address(safe));
+        module.invalidateNonces(oversized, workflowId, payloadHash);
+    }
+
+    function testGovernancePayloadMatchesPublishedGoGoldenVector() public {
+        address fixedModule = 0x1111111111111111111111111111111111111111;
+        vm.etch(fixedModule, address(module).code);
+        vm.chainId(8453);
+        ASCPSpendModule target = ASCPSpendModule(fixedModule);
+        assertEq(
+            target.governancePayloadHash(
+                target.setSpendAuthorizer.selector,
+                keccak256(
+                    abi.encode(
+                        0x2222222222222222222222222222222222222222,
+                        uint64(9),
+                        0x3333333333333333333333333333333333333333
+                    )
+                )
+            ),
+            0xcbfaa0eb15e9f0bbfd62fb7e9aec03630ed5341a82826c795ff379b37eb3c6e7
+        );
+        assertEq(
+            target.governancePayloadHash(
+                target.setEscrowAllowlist.selector,
+                keccak256(
+                    abi.encode(0x3333333333333333333333333333333333333333, bytes32(uint256(1)), bytes32(uint256(2)))
+                )
+            ),
+            0x0b62fea6f1b5ce4ba038893f1648b2a094a09f40df7e55618961cc15df717973
+        );
+        assertEq(
+            target.governancePayloadHash(
+                target.scheduleCaps.selector, keccak256(abi.encode(uint256(400), 800, 1000, 500, 900, 1200))
+            ),
+            0x31232f6aa50156b95bf23de30b201dae965c824d12d6ff0997dfddbd91ff5b6c
+        );
+        assertEq(
+            target.governancePayloadHash(target.setEmergencyPause.selector, keccak256(abi.encode(false, true))),
+            0xaae2725657863db70a99d73ed88ced5a073de3ff26b20de56afa922417966969
+        );
+        bytes32[] memory nonces = new bytes32[](2);
+        nonces[0] = bytes32(uint256(3));
+        nonces[1] = bytes32(uint256(4));
+        assertEq(
+            target.governancePayloadHash(target.invalidateNonces.selector, keccak256(abi.encode(nonces))),
+            0xbbd33343b45306654ce8246f2aa753f2d1ed7126a15acc99cf83c9837eef9937
+        );
     }
 
     function testGoAndSolidityAuthorizationGoldenVectors() public {
@@ -538,6 +628,58 @@ contract ASCPSpendModuleTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    function _setAuthorizer(address next, uint256 sequence) internal {
+        bytes32 workflowId = keccak256(abi.encode("authorizer-workflow", sequence));
+        bytes32 payloadHash = module.governancePayloadHash(
+            module.setSpendAuthorizer.selector,
+            keccak256(abi.encode(module.spendAuthorizer(), module.authorizerEpoch(), next))
+        );
+        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.setSpendAuthorizer, (next, workflowId, payloadHash)));
+    }
+
+    function _setAllowlist(address target, bytes32 nextCodeHash, uint256 sequence) internal {
+        bytes32 workflowId = keccak256(abi.encode("allowlist-workflow", sequence));
+        bytes32 payloadHash = module.governancePayloadHash(
+            module.setEscrowAllowlist.selector,
+            keccak256(abi.encode(target, module.escrowAllowlist(target), nextCodeHash))
+        );
+        _ownerCall(
+            address(module),
+            abi.encodeCall(ASCPSpendModule.setEscrowAllowlist, (target, nextCodeHash, workflowId, payloadHash))
+        );
+    }
+
+    function _scheduleCaps(ASCPSpendModule.Caps memory next, uint256 sequence) internal {
+        (uint256 perTransaction, uint256 perDay, uint256 allowanceCeiling) = module.caps();
+        bytes32 workflowId = keccak256(abi.encode("caps-workflow", sequence));
+        bytes32 payloadHash = module.governancePayloadHash(
+            module.scheduleCaps.selector,
+            keccak256(
+                abi.encode(
+                    perTransaction, perDay, allowanceCeiling, next.perTransaction, next.perDay, next.allowanceCeiling
+                )
+            )
+        );
+        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.scheduleCaps, (next, workflowId, payloadHash)));
+    }
+
+    function _setPause(bool paused, uint256 sequence) internal {
+        bytes32 workflowId = keccak256(abi.encode("pause-workflow", sequence));
+        bytes32 payloadHash = module.governancePayloadHash(
+            module.setEmergencyPause.selector, keccak256(abi.encode(module.emergencyPaused(), paused))
+        );
+        _ownerCall(
+            address(module), abi.encodeCall(ASCPSpendModule.setEmergencyPause, (paused, workflowId, payloadHash))
+        );
+    }
+
+    function _invalidateNonces(bytes32[] memory nonces, uint256 sequence) internal {
+        bytes32 workflowId = keccak256(abi.encode("invalidate-workflow", sequence));
+        bytes32 payloadHash =
+            module.governancePayloadHash(module.invalidateNonces.selector, keccak256(abi.encode(nonces)));
+        _ownerCall(address(module), abi.encodeCall(ASCPSpendModule.invalidateNonces, (nonces, workflowId, payloadHash)));
+    }
+
     function _ownerCall(address target, bytes memory data) internal {
         safe.ownerCall(target, data);
     }
@@ -660,9 +802,16 @@ contract ASCPSpendModuleInvariantTest is StdInvariant, Test {
             ASCPSpendModule.Caps({perTransaction: 1_000, perDay: 2_000, allowanceCeiling: 10_000})
         );
         safe.setModule(address(module));
+        bytes32 workflowId = keccak256("invariant-allowlist-workflow");
+        bytes32 payloadHash = module.governancePayloadHash(
+            module.setEscrowAllowlist.selector,
+            keccak256(abi.encode(address(escrow), bytes32(0), address(escrow).codehash))
+        );
         safe.ownerCall(
             address(module),
-            abi.encodeCall(ASCPSpendModule.setEscrowAllowlist, (address(escrow), address(escrow).codehash))
+            abi.encodeCall(
+                ASCPSpendModule.setEscrowAllowlist, (address(escrow), address(escrow).codehash, workflowId, payloadHash)
+            )
         );
         safe.ownerCall(address(usdc), abi.encodeCall(IERC20.approve, (address(escrow), type(uint256).max)));
         usdc.mint(address(safe), 1_000_000);

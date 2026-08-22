@@ -35,6 +35,7 @@ contract ASCPCallEscrow is ReentrancyGuard {
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant NAME_HASH = keccak256("ASCP");
     bytes32 private constant VERSION_HASH = keccak256("4");
+    bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("ASCP_CALL_ESCROW_GOVERNANCE_V1");
 
     uint8 public constant RAIL_ESCROW = 1;
     uint16 public constant SCHEME_VERSION_V1 = 1;
@@ -154,6 +155,9 @@ contract ASCPCallEscrow is ReentrancyGuard {
     event VerifierActivated(address indexed key, uint64 epoch);
     event VerifierRevoked(address indexed key, uint64 epoch);
     event EmergencyPauseSet();
+    event GovernanceWorkflowBound(
+        bytes32 indexed workflowId, bytes32 indexed workflowPayloadHash, bytes4 indexed functionSelector
+    );
 
     error AssetNotContract(address asset);
     error DirectoryNotContract(address directory);
@@ -169,6 +173,7 @@ contract ASCPCallEscrow is ReentrancyGuard {
     error VerdictNonceUsed(uint256 nonce);
     error VerifierActivationPending(address key);
     error InvalidVerifier();
+    error InvalidWorkflowBinding();
     error NotSafe(address caller);
     error InvalidCommitment();
     error ChainMismatch(uint256 expected, uint256 actual);
@@ -270,12 +275,25 @@ contract ASCPCallEscrow is ReentrancyGuard {
         return _calls[callId];
     }
 
-    function addVerifier(address key, uint64 epoch) external {
+    function addVerifier(address key, uint64 epoch, bytes32 workflowId, bytes32 workflowPayloadHash) external {
         if (msg.sender != governor) revert NotGovernor(msg.sender);
-        if (key == address(0) || epoch == 0 || epoch <= activeVerifierEpoch[key]) revert InvalidVerifier();
+        PendingVerifier memory currentPending = pendingVerifier[key];
+        if (
+            key == address(0) || epoch == 0 || epoch <= activeVerifierEpoch[key]
+                || (currentPending.epoch != 0 && epoch <= currentPending.epoch)
+        ) revert InvalidVerifier();
+        _requireGovernanceWorkflow(
+            this.addVerifier.selector,
+            keccak256(
+                abi.encode(key, activeVerifierEpoch[key], currentPending.epoch, currentPending.activatesAt, epoch)
+            ),
+            workflowId,
+            workflowPayloadHash
+        );
         pendingVerifier[key] = PendingVerifier(epoch, uint64(block.timestamp) + VERIFIER_ACTIVATION_DELAY);
         verifierRevoked[key] = false;
         emit VerifierAdded(key, epoch, uint64(block.timestamp) + VERIFIER_ACTIVATION_DELAY);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.addVerifier.selector);
     }
 
     function activateVerifier(address key) external {
@@ -286,16 +304,49 @@ contract ASCPCallEscrow is ReentrancyGuard {
         emit VerifierActivated(key, p.epoch);
     }
 
-    function revokeVerifier(address key) external {
+    function revokeVerifier(address key, bytes32 workflowId, bytes32 workflowPayloadHash) external {
         if (msg.sender != governor) revert NotGovernor(msg.sender);
+        uint64 epoch = activeVerifierEpoch[key];
+        if (key == address(0) || epoch == 0 || verifierRevoked[key]) revert InvalidVerifier();
+        _requireGovernanceWorkflow(
+            this.revokeVerifier.selector,
+            keccak256(abi.encode(key, epoch, false, true)),
+            workflowId,
+            workflowPayloadHash
+        );
         verifierRevoked[key] = true;
-        emit VerifierRevoked(key, activeVerifierEpoch[key]);
+        emit VerifierRevoked(key, epoch);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.revokeVerifier.selector);
     }
 
-    function setEmergencyPause() external {
+    function setEmergencyPause(bytes32 workflowId, bytes32 workflowPayloadHash) external {
         if (msg.sender != governor) revert NotGovernor(msg.sender);
+        if (emergencyPaused) revert EmergencyPaused();
+        _requireGovernanceWorkflow(
+            this.setEmergencyPause.selector, keccak256(abi.encode(false, true)), workflowId, workflowPayloadHash
+        );
         emergencyPaused = true;
         emit EmergencyPauseSet();
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setEmergencyPause.selector);
+    }
+
+    function governancePayloadHash(bytes4 functionSelector, bytes32 argumentsHash) public view returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), functionSelector, argumentsHash)
+            );
+    }
+
+    function _requireGovernanceWorkflow(
+        bytes4 functionSelector,
+        bytes32 argumentsHash,
+        bytes32 workflowId,
+        bytes32 workflowPayloadHash
+    ) private view {
+        if (
+            workflowId == bytes32(0) || workflowPayloadHash == bytes32(0)
+                || workflowPayloadHash != governancePayloadHash(functionSelector, argumentsHash)
+        ) revert InvalidWorkflowBinding();
     }
 
     function ack(bytes32 callId) external nonReentrant {

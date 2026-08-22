@@ -21,6 +21,13 @@ for ordinary changes or 24 hours for payout/key authority changes. The active
 output is `currentVersion()` plus `currentRoot()`. `verifySeller` and
 `verifyResource` accept only proofs against that current version/root.
 
+The proposal's `workflowPayloadHash` is recomputed on-chain from the exact
+version predecessor, roots, blob/location hashes, change class, activation
+request, Base chain, directory address, and approval selector. Governor
+approval emits `GovernanceWorkflowBound` with the immutable workflow ID and
+payload hash. `cancelVersion` requires a separate exact `DIRECTORY_CANCEL`
+workflow binding and emits the same receipt event beside `VersionCancelled`.
+
 `pauseSeller(true)` and `setQuoteKeyRevoked(true)` require a pauser
 authorization. Their `false` variants require the governor. No directory call
 can transfer assets, choose an escrow recipient, sign a quote, or perform a
@@ -38,8 +45,9 @@ payment.
 - Missing/unavailable directory blobs are not handled by this contract. The
   approval/reconciliation service must freeze affected intake until a verified,
   governor-recorded replacement is available.
-- The current `CallEscrow` does not consume this directory; that integration is
-  intentionally a later audited migration.
+- The legacy `CallEscrow` does not consume this directory. `ASCPCallEscrow`
+  does enforce the current directory version, leaf proofs, pause overlay, and
+  quote-key revocation at every new lock.
 
 Run `forge test --match-path contracts/test/ServiceDirectory.t.sol -vv` for
 the focused test and fuzz suite.

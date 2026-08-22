@@ -61,15 +61,29 @@ contract EscrowDirectoryGovernor {
     }
 
     function addVerifier(ASCPCallEscrow escrow, address key, uint64 epoch) external {
-        escrow.addVerifier(key, epoch);
+        bytes32 workflowId = keccak256(abi.encode("add-verifier", key, epoch));
+        (uint64 pendingEpoch, uint64 pendingActivatesAt) = escrow.pendingVerifier(key);
+        bytes32 payloadHash = escrow.governancePayloadHash(
+            escrow.addVerifier.selector,
+            keccak256(abi.encode(key, escrow.activeVerifierEpoch(key), pendingEpoch, pendingActivatesAt, epoch))
+        );
+        escrow.addVerifier(key, epoch, workflowId, payloadHash);
     }
 
     function revokeVerifier(ASCPCallEscrow escrow, address key) external {
-        escrow.revokeVerifier(key);
+        uint64 epoch = escrow.activeVerifierEpoch(key);
+        bytes32 workflowId = keccak256(abi.encode("revoke-verifier", key, epoch));
+        bytes32 payloadHash = escrow.governancePayloadHash(
+            escrow.revokeVerifier.selector, keccak256(abi.encode(key, epoch, false, true))
+        );
+        escrow.revokeVerifier(key, workflowId, payloadHash);
     }
 
     function pause(ASCPCallEscrow escrow) external {
-        escrow.setEmergencyPause();
+        bytes32 workflowId = keccak256("pause-verifier");
+        bytes32 payloadHash =
+            escrow.governancePayloadHash(escrow.setEmergencyPause.selector, keccak256(abi.encode(false, true)));
+        escrow.setEmergencyPause(workflowId, payloadHash);
     }
 }
 
@@ -227,9 +241,10 @@ contract ASCPCallEscrowTest is Test {
             changeClass: ServiceDirectory.ChangeClass.Ordinary,
             requestedActivatesAt: uint64(block.timestamp),
             workflowId: keccak256("workflow"),
-            workflowPayloadHash: keccak256("workflow-payload"),
+            workflowPayloadHash: bytes32(0),
             proposerNonce: 1
         });
+        proposal.workflowPayloadHash = realDirectory.directoryProposalWorkflowPayloadHash(proposal);
         ServiceDirectory.AdminActionAuthorization memory authorization = ServiceDirectory.AdminActionAuthorization({
             orgDomain: keccak256("org"),
             contractAddress: address(realDirectory),
@@ -440,6 +455,57 @@ contract ASCPCallEscrowTest is Test {
         settlementGovernor.revokeVerifier(escrow, verifier);
         vm.expectRevert(abi.encodeWithSelector(ASCPCallEscrow.VerifierNotActive.selector, verifier, 7));
         escrow.release(second, a, abi.encodePacked(r, s, v));
+    }
+
+    function testVerifierGovernanceRequiresExactWorkflowPayloadBinding() public {
+        address verifier = makeAddr("bound-verifier");
+        bytes32 workflowId = keccak256("verifier-workflow");
+        bytes32 payloadHash = escrow.governancePayloadHash(
+            escrow.addVerifier.selector, keccak256(abi.encode(verifier, uint64(0), uint64(0), uint64(0), uint64(9)))
+        );
+        bytes32 staleNextHash = escrow.governancePayloadHash(
+            escrow.addVerifier.selector, keccak256(abi.encode(verifier, uint64(0), uint64(0), uint64(0), uint64(10)))
+        );
+
+        vm.expectRevert(ASCPCallEscrow.InvalidWorkflowBinding.selector);
+        vm.prank(address(settlementGovernor));
+        escrow.addVerifier(verifier, 10, workflowId, payloadHash);
+
+        vm.expectEmit(true, true, true, true);
+        emit ASCPCallEscrow.GovernanceWorkflowBound(workflowId, payloadHash, escrow.addVerifier.selector);
+        vm.prank(address(settlementGovernor));
+        escrow.addVerifier(verifier, 9, workflowId, payloadHash);
+
+        vm.expectRevert(ASCPCallEscrow.InvalidWorkflowBinding.selector);
+        vm.prank(address(settlementGovernor));
+        escrow.addVerifier(verifier, 10, keccak256("stale-workflow"), staleNextHash);
+    }
+
+    function testGovernancePayloadMatchesPublishedGoGoldenVector() public {
+        address fixedEscrow = 0x1111111111111111111111111111111111111111;
+        vm.etch(fixedEscrow, address(escrow).code);
+        vm.chainId(8453);
+        ASCPCallEscrow target = ASCPCallEscrow(fixedEscrow);
+        assertEq(
+            target.governancePayloadHash(
+                target.addVerifier.selector,
+                keccak256(
+                    abi.encode(0x2222222222222222222222222222222222222222, uint64(0), uint64(0), uint64(0), uint64(7))
+                )
+            ),
+            0x0f19082ff9903ba033a08ccbb3b8528aecf73085f137c7525e75edfd3eb82ae5
+        );
+        assertEq(
+            target.governancePayloadHash(
+                target.revokeVerifier.selector,
+                keccak256(abi.encode(0x2222222222222222222222222222222222222222, uint64(7), false, true))
+            ),
+            0xc495ef0524c5118be2b3f5212e30d052b96b53e213fe6ad459612e0acff0837b
+        );
+        assertEq(
+            target.governancePayloadHash(target.setEmergencyPause.selector, keccak256(abi.encode(false, true))),
+            0xd392524af9b81440a6267a4b8b84939e061dc4df4a9d1133258dc88dc857001a
+        );
     }
 
     function _commitment() internal view returns (ASCPCallEscrow.ExecutionCommitment memory c) {

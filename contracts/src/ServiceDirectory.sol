@@ -7,9 +7,10 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 /// @notice Governed, append-only directory roots for FlowOps seller and
 ///         resource metadata. It never holds assets or chooses escrow payout
 ///         recipients; consumers must prove a leaf against currentRoot().
-/// @dev UNAUDITED. This contract is intentionally not wired into CallEscrow
-///      until its successor escrow integration and independent review exist.
+/// @dev UNAUDITED. Legacy CallEscrow does not consume this directory;
+///      ASCPCallEscrow does, and still requires independent contract review.
 contract ServiceDirectory {
+    bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("SERVICE_DIRECTORY_GOVERNANCE_V1");
     bytes32 public constant SELLER_LEAF_DOMAIN = keccak256("ASCP_SELLER_LEAF_V1");
     bytes32 public constant RESOURCE_LEAF_DOMAIN = keccak256("ASCP_RESOURCE_LEAF_V1");
     bytes32 public constant PROPOSAL_DOMAIN = keccak256("ASCP_DIRECTORY_PROPOSAL_V1");
@@ -145,6 +146,9 @@ contract ServiceDirectory {
     event PauserSet(address indexed previousPauser, address indexed pauser, uint64 epoch);
     event SellerPaused(bytes32 indexed sellerId, bool paused, address indexed actor);
     event QuoteKeyRevoked(address indexed key, bool revoked, address indexed actor);
+    event GovernanceWorkflowBound(
+        bytes32 indexed workflowId, bytes32 indexed workflowPayloadHash, bytes4 indexed functionSelector
+    );
 
     error GovernorMustBeContract(address governor);
     error ZeroAddress();
@@ -165,6 +169,7 @@ contract ServiceDirectory {
     error AuthorizationNonceUsed(bytes32 role, uint256 nonce);
     error SellerIdZero();
     error QuoteKeyZero();
+    error InvalidWorkflowBinding();
 
     constructor(address governor_, address directoryPublisher_, address pauser_, bytes32 orgDomain_) {
         if (governor_.code.length == 0) revert GovernorMustBeContract(governor_);
@@ -195,6 +200,9 @@ contract ServiceDirectory {
                 || proposal.locationsHash == bytes32(0) || proposal.workflowId == bytes32(0)
                 || proposal.workflowPayloadHash == bytes32(0)
         ) revert InvalidProposal();
+        if (proposal.workflowPayloadHash != directoryProposalWorkflowPayloadHash(proposal)) {
+            revert InvalidWorkflowBinding();
+        }
         if (
             proposal.changeClass != ChangeClass.Ordinary
                 && proposal.changeClass != ChangeClass.PayoutOrAuthorityAffecting
@@ -259,9 +267,23 @@ contract ServiceDirectory {
         record.approvedAt = uint64(block.timestamp);
         record.effectiveActivatesAt = requested > minimum ? requested : minimum;
         emit VersionApproved(proposalHash, versionId, msg.sender, record.approvedAt, record.effectiveActivatesAt);
+        emit GovernanceWorkflowBound(
+            record.proposal.workflowId, record.proposal.workflowPayloadHash, this.approveVersion.selector
+        );
     }
 
-    function cancelVersion(uint64 versionId, bytes32 expectedProposalHash) external onlyGovernor {
+    function cancelVersion(
+        uint64 versionId,
+        bytes32 expectedProposalHash,
+        bytes32 workflowId,
+        bytes32 workflowPayloadHash
+    ) external onlyGovernor {
+        _requireGovernanceWorkflow(
+            this.cancelVersion.selector,
+            keccak256(abi.encode(versionId, expectedProposalHash)),
+            workflowId,
+            workflowPayloadHash
+        );
         bytes32 proposalHash = latestProposalHash[versionId];
         if (proposalHash == bytes32(0)) revert UnknownProposal(expectedProposalHash);
         if (proposalHash != expectedProposalHash) revert ProposalHashMismatch(proposalHash, expectedProposalHash);
@@ -275,6 +297,7 @@ contract ServiceDirectory {
         record.state = ProposalState.Cancelled;
         _liveSuccessorHash = bytes32(0);
         emit VersionCancelled(proposalHash, versionId, msg.sender);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.cancelVersion.selector);
     }
 
     function activateVersion() external {
@@ -421,6 +444,43 @@ contract ServiceDirectory {
 
     function hashProposal(DirectoryProposal memory proposal) public view returns (bytes32) {
         return keccak256(abi.encode(PROPOSAL_DOMAIN, block.chainid, address(this), proposal));
+    }
+
+    function directoryProposalWorkflowPayloadHash(DirectoryProposal memory proposal) public view returns (bytes32) {
+        return governancePayloadHash(
+            this.approveVersion.selector,
+            keccak256(
+                abi.encode(
+                    proposal.versionId,
+                    proposal.previousVersion,
+                    proposal.previousRoot,
+                    proposal.newRoot,
+                    proposal.blobContentHash,
+                    proposal.locationsHash,
+                    proposal.changeClass,
+                    proposal.requestedActivatesAt
+                )
+            )
+        );
+    }
+
+    function governancePayloadHash(bytes4 functionSelector, bytes32 argumentsHash) public view returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), functionSelector, argumentsHash)
+            );
+    }
+
+    function _requireGovernanceWorkflow(
+        bytes4 functionSelector,
+        bytes32 argumentsHash,
+        bytes32 workflowId,
+        bytes32 workflowPayloadHash
+    ) private view {
+        if (
+            workflowId == bytes32(0) || workflowPayloadHash == bytes32(0)
+                || workflowPayloadHash != governancePayloadHash(functionSelector, argumentsHash)
+        ) revert InvalidWorkflowBinding();
     }
 
     function adminAuthorizationDigest(AdminActionAuthorization memory authorization) public view returns (bytes32) {
