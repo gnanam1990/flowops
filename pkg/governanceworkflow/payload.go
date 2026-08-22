@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	CallEscrowDomain       = "ASCP_CALL_ESCROW_GOVERNANCE_V1"
-	SpendModuleDomain      = "ASCP_SPEND_MODULE_GOVERNANCE_V1"
-	ServiceDirectoryDomain = "SERVICE_DIRECTORY_GOVERNANCE_V1"
-	AgentRegistryDomain    = "AGENT_REGISTRY_GOVERNANCE_V1"
+	CallEscrowDomain        = "ASCP_CALL_ESCROW_GOVERNANCE_V1"
+	SpendModuleDomain       = "ASCP_SPEND_MODULE_GOVERNANCE_V1"
+	ServiceDirectoryDomain  = "SERVICE_DIRECTORY_GOVERNANCE_V1"
+	DirectoryProposalDomain = "ASCP_DIRECTORY_PROPOSAL_V1"
+	AgentRegistryDomain     = "AGENT_REGISTRY_GOVERNANCE_V1"
 	// MaxGovernanceNonceInvalidations mirrors ASCPSpendModule.MAX_GOVERNANCE_NONCE_INVALIDATIONS.
 	MaxGovernanceNonceInvalidations = 100
 )
@@ -37,20 +38,20 @@ var (
 )
 
 type Caps struct {
-	PerTransaction   string
-	PerDay           string
-	AllowanceCeiling string
+	PerTransaction   string `json:"perTransaction"`
+	PerDay           string `json:"perDay"`
+	AllowanceCeiling string `json:"allowanceCeiling"`
 }
 
 type DirectoryProposal struct {
-	VersionID            uint64
-	PreviousVersion      uint64
-	PreviousRoot         string
-	NewRoot              string
-	BlobContentHash      string
-	LocationsHash        string
-	ChangeClass          uint8
-	RequestedActivatesAt uint64
+	VersionID            uint64 `json:"versionId"`
+	PreviousVersion      uint64 `json:"previousVersion"`
+	PreviousRoot         string `json:"previousRoot"`
+	NewRoot              string `json:"newRoot"`
+	BlobContentHash      string `json:"blobContentHash"`
+	LocationsHash        string `json:"locationsHash"`
+	ChangeClass          uint8  `json:"changeClass"`
+	RequestedActivatesAt uint64 `json:"requestedActivatesAt"`
 }
 
 func CallEscrowAddVerifier(
@@ -174,6 +175,41 @@ func DirectoryPublish(chainID uint64, contractAddress, workflowID string, propos
 		proposal.RequestedActivatesAt)
 }
 
+// DirectoryProposalHash reproduces ServiceDirectory.hashProposal for the
+// exact proposal that an approveVersion call is allowed to select. All fields
+// are static ABI values, so the encoded tuple has the same layout as the
+// flattened arguments below.
+func DirectoryProposalHash(
+	chainID uint64,
+	contractAddress, workflowID string,
+	proposal DirectoryProposal,
+	proposerNonce string,
+) (common.Hash, error) {
+	payloadHash, err := DirectoryPublish(chainID, contractAddress, workflowID, proposal)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	nonce, err := decimal(proposerNonce)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	encoded, err := abi.Arguments{
+		{Type: bytes32Type}, {Type: uint256Type}, {Type: addressType},
+		{Type: uint64Type}, {Type: uint64Type}, {Type: bytes32Type}, {Type: bytes32Type},
+		{Type: bytes32Type}, {Type: bytes32Type}, {Type: uint8Type}, {Type: uint64Type},
+		{Type: bytes32Type}, {Type: bytes32Type}, {Type: uint256Type},
+	}.Pack(
+		crypto.Keccak256Hash([]byte(DirectoryProposalDomain)), new(big.Int).SetUint64(chainID), common.HexToAddress(contractAddress),
+		proposal.VersionID, proposal.PreviousVersion, common.HexToHash(proposal.PreviousRoot), common.HexToHash(proposal.NewRoot),
+		common.HexToHash(proposal.BlobContentHash), common.HexToHash(proposal.LocationsHash), proposal.ChangeClass,
+		proposal.RequestedActivatesAt, common.HexToHash(workflowID), payloadHash, nonce,
+	)
+	if err != nil {
+		return common.Hash{}, ErrInvalidPayload
+	}
+	return crypto.Keccak256Hash(encoded), nil
+}
+
 func DirectoryCancel(chainID uint64, contractAddress, workflowID string, versionID uint64, proposalHash string) (common.Hash, error) {
 	if versionID == 0 || !hash(proposalHash, false) {
 		return common.Hash{}, ErrInvalidPayload
@@ -183,40 +219,14 @@ func DirectoryCancel(chainID uint64, contractAddress, workflowID string, version
 		[]abi.Argument{{Type: uint64Type}, {Type: bytes32Type}}, versionID, common.HexToHash(proposalHash))
 }
 
-func DirectorySetPublisher(
-	chainID uint64,
-	contractAddress, workflowID, current string,
-	currentEpoch uint64,
-	next string,
-) (common.Hash, error) {
-	return authorityRotation(
-		ServiceDirectoryDomain,
-		"setDirectoryPublisher(address,bytes32,bytes32)",
-		chainID,
-		contractAddress,
-		workflowID,
-		current,
-		currentEpoch,
-		next,
-	)
+func DirectorySetPublisher(chainID uint64, contractAddress, workflowID, current string, currentEpoch uint64, next string) (common.Hash, error) {
+	return authorityRotation(ServiceDirectoryDomain, "setDirectoryPublisher(address,bytes32,bytes32)",
+		chainID, contractAddress, workflowID, current, currentEpoch, next)
 }
 
-func DirectorySetPauser(
-	chainID uint64,
-	contractAddress, workflowID, current string,
-	currentEpoch uint64,
-	next string,
-) (common.Hash, error) {
-	return authorityRotation(
-		ServiceDirectoryDomain,
-		"setPauser(address,bytes32,bytes32)",
-		chainID,
-		contractAddress,
-		workflowID,
-		current,
-		currentEpoch,
-		next,
-	)
+func DirectorySetPauser(chainID uint64, contractAddress, workflowID, current string, currentEpoch uint64, next string) (common.Hash, error) {
+	return authorityRotation(ServiceDirectoryDomain, "setPauser(address,bytes32,bytes32)",
+		chainID, contractAddress, workflowID, current, currentEpoch, next)
 }
 
 func DirectoryPauseSeller(chainID uint64, contractAddress, workflowID, sellerID string, current, next bool) (common.Hash, error) {
@@ -239,31 +249,12 @@ func DirectoryQuoteKeyRevocation(chainID uint64, contractAddress, workflowID, ke
 		common.HexToAddress(key), current, next)
 }
 
-func AgentSetRegistryAdmin(
-	chainID uint64,
-	contractAddress, workflowID, current string,
-	currentEpoch uint64,
-	next string,
-) (common.Hash, error) {
-	return authorityRotation(
-		AgentRegistryDomain,
-		"setRegistryAdmin(address,bytes32,bytes32)",
-		chainID,
-		contractAddress,
-		workflowID,
-		current,
-		currentEpoch,
-		next,
-	)
+func AgentSetRegistryAdmin(chainID uint64, contractAddress, workflowID, current string, currentEpoch uint64, next string) (common.Hash, error) {
+	return authorityRotation(AgentRegistryDomain, "setRegistryAdmin(address,bytes32,bytes32)",
+		chainID, contractAddress, workflowID, current, currentEpoch, next)
 }
 
-func authorityRotation(
-	domain, signature string,
-	chainID uint64,
-	contractAddress, workflowID, current string,
-	currentEpoch uint64,
-	next string,
-) (common.Hash, error) {
+func authorityRotation(domain, signature string, chainID uint64, contractAddress, workflowID, current string, currentEpoch uint64, next string) (common.Hash, error) {
 	if !address(current) || !address(next) || currentEpoch == 0 || current == next {
 		return common.Hash{}, ErrInvalidPayload
 	}

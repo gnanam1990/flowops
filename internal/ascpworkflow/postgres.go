@@ -49,14 +49,24 @@ func (s *PostgresStore) Create(ctx context.Context, workflow Workflow, key, inpu
 		}
 		return existing, replayed, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO ascp_proposal_workflows
-		(workflow_id, organization_id, kind, chain_action, payload_hash, proposed_by, proposer_role, proposer_step_up_at, proposer_step_up_until,
-		 state, proposed_at, expires_at)
-		VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7,to_timestamp($8),to_timestamp($9),$10,to_timestamp($11),to_timestamp($12))`,
-		workflow.WorkflowID, workflow.OrganizationID, workflow.Kind, workflow.ChainAction, workflow.PayloadHash, workflow.ProposedBy,
-		workflow.ProposerRole, workflow.ProposerStepUpAt, workflow.ProposerStepUpUntil, workflow.State, workflow.ProposedAt, workflow.ExpiresAt)
+	result, err := tx.ExecContext(ctx, `INSERT INTO ascp_proposal_workflows
+		(workflow_id, organization_id, kind, chain_action, payload_hash, chain_id, contract_address, function_selector, calldata,
+		 governance_action, proposed_by, proposer_role, proposer_step_up_at, proposer_step_up_until, state, proposed_at, expires_at)
+		VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9,$10::jsonb,$11,$12,to_timestamp($13),to_timestamp($14),$15,to_timestamp($16),to_timestamp($17))
+		ON CONFLICT (workflow_id) DO NOTHING`,
+		workflow.WorkflowID, workflow.OrganizationID, workflow.Kind, workflow.ChainAction, workflow.PayloadHash, nullableUint64(workflow.ChainID),
+		nullableString(workflow.ContractAddress), nullableString(workflow.FunctionSelector), nullableString(workflow.Calldata),
+		nullableJSON(workflow.GovernanceAction), workflow.ProposedBy, workflow.ProposerRole, workflow.ProposerStepUpAt,
+		workflow.ProposerStepUpUntil, workflow.State, workflow.ProposedAt, workflow.ExpiresAt)
 	if err != nil {
 		return Workflow{}, false, fmt.Errorf("insert proposal workflow: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	if inserted != 1 {
+		return Workflow{}, false, ErrStateConflict
 	}
 	if err := recordTransition(ctx, tx, workflow, "CREATE", key, inputHash, workflow.ProposedBy, workflow.ProposedAt); err != nil {
 		return Workflow{}, false, err
@@ -69,6 +79,34 @@ func (s *PostgresStore) Create(ctx context.Context, workflow Workflow, key, inpu
 
 func (s *PostgresStore) Get(ctx context.Context, organizationID, workflowID string) (Workflow, error) {
 	return scanWorkflow(s.db.QueryRowContext(ctx, workflowSelect+` WHERE organization_id=$1 AND workflow_id=$2`, organizationID, workflowID))
+}
+
+func (s *PostgresStore) Pending(ctx context.Context, limit int, afterWorkflowID string) ([]Workflow, error) {
+	if limit < 1 || limit > 1000 || (afterWorkflowID != "" && !hash(afterWorkflowID)) {
+		return nil, ErrInvalidWorkflow
+	}
+	rows, err := s.db.QueryContext(ctx, workflowSelect+`
+		WHERE (state IN ('APPROVED_PENDING_CHAIN','SUBMITTED','CONFIRMED') OR
+		       (state IN ('REVERTED','REORGED','TIMED_OUT','REQUIRES_REAPPROVAL') AND submission_transaction_hash IS NOT NULL))
+		  AND ($2='' OR (approved_at,workflow_id) > (
+		      (SELECT approved_at FROM ascp_proposal_workflows WHERE workflow_id=$2),$2))
+		ORDER BY approved_at, workflow_id LIMIT $1`, limit, afterWorkflowID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending proposal workflows: %w", err)
+	}
+	defer rows.Close()
+	workflows := make([]Workflow, 0, limit)
+	for rows.Next() {
+		workflow, err := scanWorkflow(rows)
+		if err != nil {
+			return nil, err
+		}
+		workflows = append(workflows, workflow)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending proposal workflows: %w", err)
+	}
+	return workflows, nil
 }
 
 func (s *PostgresStore) Approve(ctx context.Context, actor Actor, workflowID, key, inputHash string, now time.Time) (Workflow, bool, error) {
@@ -99,6 +137,9 @@ func (s *PostgresStore) decide(ctx context.Context, actor Actor, workflowID, act
 		return Workflow{}, false, err
 	}
 	if workflow.State != Proposed {
+		if err := recordAction(ctx, tx, workflow, action, key, inputHash, actor.PrincipalID, now.Unix()); err != nil {
+			return Workflow{}, false, err
+		}
 		return workflow, true, tx.Commit()
 	}
 	if now.Unix() >= workflow.ExpiresAt {
@@ -107,6 +148,9 @@ func (s *PostgresStore) decide(ctx context.Context, actor Actor, workflowID, act
 			return Workflow{}, false, err
 		}
 		if err := recordTransition(ctx, tx, workflow, "EXPIRE", "expire:"+workflowID, eventHash("EXPIRE", workflowID), actor.PrincipalID, now.Unix()); err != nil {
+			return Workflow{}, false, err
+		}
+		if err := recordAction(ctx, tx, workflow, action, key, inputHash, actor.PrincipalID, now.Unix()); err != nil {
 			return Workflow{}, false, err
 		}
 		return workflow, true, tx.Commit()
@@ -122,12 +166,14 @@ func (s *PostgresStore) decide(ctx context.Context, actor Actor, workflowID, act
 		workflow.ApproverStepUpAt, workflow.ApproverStepUpUntil = actor.StepUpAt.UTC().Unix(), actor.StepUpUntil.UTC().Unix()
 		workflow.ApprovedAt = now.Unix()
 		workflow.State = ApprovedPendingChain
-		if !workflowRequiresChainReceipt(workflow) {
-			workflow.State = Approved
+		var finalizedAt any
+		if !requiresChainReceipt(workflow.Kind) {
+			workflow.State, workflow.FinalizedAt, finalizedAt = Finalized, now.Unix(), now
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state=$3, approved_by=$4, approver_role=$5,
-			approver_step_up_at=$6, approver_step_up_until=$7, approved_at=$8 WHERE organization_id=$1 AND workflow_id=$2`,
-			actor.OrganizationID, workflowID, workflow.State, actor.PrincipalID, actor.Role, actor.StepUpAt, actor.StepUpUntil, now)
+			approver_step_up_at=$6, approver_step_up_until=$7, approved_at=$8, completed_at=$9
+			WHERE organization_id=$1 AND workflow_id=$2`, actor.OrganizationID, workflowID, workflow.State,
+			actor.PrincipalID, actor.Role, actor.StepUpAt, actor.StepUpUntil, now, finalizedAt)
 	} else {
 		if !canCancel(workflow, actor) {
 			return Workflow{}, false, ErrForbiddenRole
@@ -141,6 +187,11 @@ func (s *PostgresStore) decide(ctx context.Context, actor Actor, workflowID, act
 	}
 	if err := recordTransition(ctx, tx, workflow, action, key, inputHash, actor.PrincipalID, now.Unix()); err != nil {
 		return Workflow{}, false, err
+	}
+	if action == "APPROVE" && workflow.State == ApprovedPendingChain {
+		if err := recordExecutionCommand(ctx, tx, workflow, inputHash, now.Unix()); err != nil {
+			return Workflow{}, false, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Workflow{}, false, fmt.Errorf("commit proposal workflow transition: %w", err)
@@ -171,6 +222,143 @@ func (s *PostgresStore) Expire(ctx context.Context, organizationID, workflowID s
 	return workflow, true, tx.Commit()
 }
 
+func (s *PostgresStore) Submit(ctx context.Context, organizationID, workflowID, transactionHash string, now time.Time) (Workflow, bool, error) {
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	defer tx.Rollback()
+	workflow, err := scanWorkflow(tx.QueryRowContext(ctx, workflowSelect+` WHERE organization_id=$1 AND workflow_id=$2 FOR UPDATE`, organizationID, workflowID))
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	if workflow.State == Submitted && workflow.SubmissionTxHash == transactionHash {
+		return workflow, true, tx.Commit()
+	}
+	// Reorg and timeout retries require proof that the Safe transaction bytes
+	// and nonce remain exactly approved. This boundary only receives an outer
+	// transaction hash, so accepting either side state here would be a blind
+	// financial retry.
+	if workflow.State != ApprovedPendingChain {
+		return Workflow{}, false, ErrStateConflict
+	}
+	if now.Unix() < workflow.ApprovedAt {
+		return Workflow{}, false, ErrStateConflict
+	}
+	transitionKey := eventHash("SUBMIT", workflowID, transactionHash)
+	workflow.State, workflow.SubmissionTxHash, workflow.SubmittedAt = Submitted, transactionHash, now.Unix()
+	workflow.ConfirmedAt, workflow.TerminalReason, workflow.TerminalAt = 0, "", 0
+	if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state='SUBMITTED', submission_transaction_hash=$3,
+		submitted_at=$4, confirmed_at=NULL, terminal_reason=NULL, terminal_at=NULL WHERE organization_id=$1 AND workflow_id=$2`,
+		organizationID, workflowID, transactionHash, now); err != nil {
+		return Workflow{}, false, fmt.Errorf("record governance submission: %w", err)
+	}
+	if err := recordTransition(ctx, tx, workflow, "SUBMIT", transitionKey, transitionKey, "CHAIN_RELAYER", now.Unix()); err != nil {
+		return Workflow{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Workflow{}, false, err
+	}
+	return workflow, false, nil
+}
+
+func (s *PostgresStore) RetrySubmission(ctx context.Context, organizationID, workflowID, transactionHash string, proof SafeRetryProof, now time.Time) (Workflow, bool, error) {
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	defer tx.Rollback()
+	workflow, err := scanWorkflow(tx.QueryRowContext(ctx, workflowSelect+` WHERE organization_id=$1 AND workflow_id=$2 FOR UPDATE`, organizationID, workflowID))
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	if workflow.State == Submitted && workflow.SubmissionTxHash == transactionHash {
+		encoded, err := json.Marshal(proof)
+		if err != nil {
+			return Workflow{}, false, ErrStateConflict
+		}
+		var exact bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM ascp_workflow_safe_retry_proofs
+			WHERE organization_id=$1 AND workflow_id=$2 AND retry_transaction_hash=$3 AND evidence_json=$4::jsonb)`,
+			organizationID, workflowID, transactionHash, encoded).Scan(&exact); err != nil || !exact {
+			return Workflow{}, false, ErrStateConflict
+		}
+		return workflow, true, tx.Commit()
+	}
+	if (workflow.State != TimedOut && workflow.State != Reorged) || proof.PreviousTransactionHash != workflow.SubmissionTxHash ||
+		proof.VerifiedPayloadHash != workflow.PayloadHash || !validSafeRetryProof(workflowID, transactionHash, proof, now) {
+		return Workflow{}, false, ErrStateConflict
+	}
+	encoded, err := json.Marshal(proof)
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	observers, err := json.Marshal(proof.Observers)
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	proofID := eventHash("SAFE_RETRY_PROOF", workflowID, proof.PreviousTransactionHash, transactionHash, proof.EvidenceDigest)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ascp_workflow_safe_retry_proofs
+		(proof_id,workflow_id,organization_id,previous_transaction_hash,retry_transaction_hash,outcome,
+		 previous_canonical,safe_address,safe_nonce,safe_tx_hash,exec_calldata_hash,verified_payload_hash,
+		 observers,evidence_digest,evidence_json,observed_at,created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15::jsonb,to_timestamp($16),$17)`,
+		proofID, workflowID, organizationID, proof.PreviousTransactionHash, transactionHash, proof.Outcome,
+		proof.PreviousCanonical, proof.SafeAddress, proof.SafeNonce, proof.SafeTxHash, proof.ExecCalldataHash,
+		proof.VerifiedPayloadHash, observers, proof.EvidenceDigest, encoded, proof.ObservedAt, now); err != nil {
+		return Workflow{}, false, fmt.Errorf("record Safe retry proof: %w", err)
+	}
+	transitionKey := eventHash("SUBMIT_PROVEN_RETRY", workflowID, proofID, transactionHash)
+	workflow.State, workflow.SubmissionTxHash, workflow.SubmittedAt = Submitted, transactionHash, now.Unix()
+	workflow.ConfirmedAt, workflow.TerminalReason, workflow.TerminalAt = 0, "", 0
+	if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state='SUBMITTED', submission_transaction_hash=$3,
+		submitted_at=$4, confirmed_at=NULL, terminal_reason=NULL, terminal_at=NULL WHERE organization_id=$1 AND workflow_id=$2`,
+		organizationID, workflowID, transactionHash, now); err != nil {
+		return Workflow{}, false, fmt.Errorf("record proven governance retry: %w", err)
+	}
+	if err := recordTransition(ctx, tx, workflow, "SUBMIT_PROVEN_RETRY", transitionKey, transitionKey, "SAFE_RELAYER", now.Unix()); err != nil {
+		return Workflow{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Workflow{}, false, err
+	}
+	return workflow, false, nil
+}
+
+func (s *PostgresStore) Confirm(ctx context.Context, organizationID, workflowID, transactionHash string, now time.Time) (Workflow, bool, error) {
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	defer tx.Rollback()
+	workflow, err := scanWorkflow(tx.QueryRowContext(ctx, workflowSelect+` WHERE organization_id=$1 AND workflow_id=$2 FOR UPDATE`, organizationID, workflowID))
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	if workflow.State == Confirmed && workflow.SubmissionTxHash == transactionHash {
+		return workflow, true, tx.Commit()
+	}
+	if workflow.State != Submitted || workflow.SubmissionTxHash != transactionHash {
+		return Workflow{}, false, ErrStateConflict
+	}
+	if now.Unix() < workflow.SubmittedAt {
+		return Workflow{}, false, ErrStateConflict
+	}
+	transitionKey := eventHash("CONFIRM", workflowID, transactionHash, fmt.Sprint(workflow.SubmittedAt))
+	workflow.State, workflow.ConfirmedAt = Confirmed, now.Unix()
+	if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state='CONFIRMED', confirmed_at=$3
+		WHERE organization_id=$1 AND workflow_id=$2`, organizationID, workflowID, now); err != nil {
+		return Workflow{}, false, fmt.Errorf("record governance confirmation: %w", err)
+	}
+	if err := recordTransition(ctx, tx, workflow, "CONFIRM", transitionKey, transitionKey, "CHAIN_OBSERVER", now.Unix()); err != nil {
+		return Workflow{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Workflow{}, false, err
+	}
+	return workflow, false, nil
+}
+
 func (s *PostgresStore) Complete(ctx context.Context, organizationID, workflowID string, receipt CompletionReceipt, digest string, encoded []byte, now time.Time) (Workflow, bool, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
@@ -181,18 +369,130 @@ func (s *PostgresStore) Complete(ctx context.Context, organizationID, workflowID
 	if err != nil {
 		return Workflow{}, false, err
 	}
-	if workflow.State == Approved && workflow.CompletionDigest == digest {
+	if workflow.State == Finalized && workflow.CompletionDigest == digest {
 		return workflow, true, tx.Commit()
 	}
-	if workflow.State != ApprovedPendingChain {
+	if !completionCandidateState(workflow.State) {
 		return Workflow{}, false, ErrStateConflict
 	}
-	workflow.State, workflow.CompletionReceipt, workflow.CompletionDigest, workflow.CompletedAt = Approved, append([]byte(nil), encoded...), digest, now.Unix()
-	if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state='APPROVED', completion_receipt=$3::jsonb,
-		completion_digest=$4, completed_at=$5 WHERE organization_id=$1 AND workflow_id=$2`, organizationID, workflowID, encoded, digest, now); err != nil {
+	if workflow.SubmissionTxHash == "" && chainSideState(workflow.State) {
+		return Workflow{}, false, ErrStateConflict
+	}
+	if workflow.SubmissionTxHash != "" && workflow.SubmissionTxHash != receipt.TransactionHash {
+		var authorized bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM ascp_workflow_safe_retry_proofs
+			WHERE workflow_id=$1 AND organization_id=$2 AND
+			      (previous_transaction_hash=$3 OR retry_transaction_hash=$3))`,
+			workflowID, organizationID, receipt.TransactionHash).Scan(&authorized); err != nil || !authorized {
+			return Workflow{}, false, errors.Join(ErrStateConflict, err)
+		}
+	}
+	if now.Unix() < workflow.ApprovedAt || now.Unix() < workflow.SubmittedAt || now.Unix() < workflow.ConfirmedAt {
+		return Workflow{}, false, ErrStateConflict
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO ascp_workflow_receipt_ownership
+		(chain_id, transaction_hash, log_index, workflow_id, organization_id, completion_digest, claimed_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`, receipt.ChainID, receipt.TransactionHash,
+		receipt.LogIndex, workflowID, organizationID, digest, now)
+	if err != nil {
+		return Workflow{}, false, fmt.Errorf("claim workflow completion receipt: %w", err)
+	}
+	claimed, err := result.RowsAffected()
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	if claimed == 0 {
+		var ownerWorkflow, ownerOrganization, ownerDigest string
+		err := tx.QueryRowContext(ctx, `SELECT workflow_id, organization_id, completion_digest
+			FROM ascp_workflow_receipt_ownership WHERE chain_id=$1 AND transaction_hash=$2 AND log_index=$3 FOR UPDATE`,
+			receipt.ChainID, receipt.TransactionHash, receipt.LogIndex).Scan(&ownerWorkflow, &ownerOrganization, &ownerDigest)
+		if errors.Is(err, sql.ErrNoRows) {
+			// The INSERT can also conflict on UNIQUE(workflow_id). Resolve that
+			// axis explicitly rather than returning an opaque sql.ErrNoRows.
+			err = tx.QueryRowContext(ctx, `SELECT workflow_id, organization_id, completion_digest
+				FROM ascp_workflow_receipt_ownership WHERE workflow_id=$1 FOR UPDATE`, workflowID).
+				Scan(&ownerWorkflow, &ownerOrganization, &ownerDigest)
+			if err == nil {
+				return Workflow{}, false, ErrStateConflict
+			}
+		}
+		if err != nil {
+			return Workflow{}, false, fmt.Errorf("read workflow receipt owner: %w", err)
+		}
+		if ownerWorkflow != workflowID || ownerOrganization != organizationID {
+			return Workflow{}, false, ErrReceiptOwned
+		}
+		if ownerDigest != digest {
+			return Workflow{}, false, ErrStateConflict
+		}
+	}
+	if workflow.State == ApprovedPendingChain || chainSideState(workflow.State) {
+		workflow.State, workflow.SubmissionTxHash, workflow.SubmittedAt = Submitted, receipt.TransactionHash, now.Unix()
+		if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state='SUBMITTED', submission_transaction_hash=$3,
+			submitted_at=$4,confirmed_at=NULL,terminal_reason=NULL,terminal_at=NULL
+			WHERE organization_id=$1 AND workflow_id=$2`, organizationID, workflowID, receipt.TransactionHash, now); err != nil {
+			return Workflow{}, false, fmt.Errorf("reconstruct governance submission: %w", err)
+		}
+		if err := recordTransition(ctx, tx, workflow, "SUBMIT_RECOVERED", digest, digest, "CHAIN_OBSERVER", now.Unix()); err != nil {
+			return Workflow{}, false, err
+		}
+	}
+	if workflow.State == Submitted {
+		workflow.State, workflow.SubmissionTxHash, workflow.ConfirmedAt = Confirmed, receipt.TransactionHash, now.Unix()
+		if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state='CONFIRMED',
+			submission_transaction_hash=$3,confirmed_at=$4
+			WHERE organization_id=$1 AND workflow_id=$2`, organizationID, workflowID, receipt.TransactionHash, now); err != nil {
+			return Workflow{}, false, fmt.Errorf("confirm governance submission: %w", err)
+		}
+		if err := recordTransition(ctx, tx, workflow, "CONFIRM", digest, digest, "CHAIN_OBSERVER", now.Unix()); err != nil {
+			return Workflow{}, false, err
+		}
+	}
+	workflow.State, workflow.SubmissionTxHash, workflow.CompletionReceipt, workflow.CompletionDigest, workflow.FinalizedAt =
+		Finalized, receipt.TransactionHash, append([]byte(nil), encoded...), digest, now.Unix()
+	if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state='FINALIZED', completion_receipt=$3::jsonb,
+		completion_digest=$4, completed_at=$5, submission_transaction_hash=$6
+		WHERE organization_id=$1 AND workflow_id=$2`, organizationID, workflowID, encoded, digest, now, receipt.TransactionHash); err != nil {
 		return Workflow{}, false, fmt.Errorf("complete proposal workflow: %w", err)
 	}
-	if err := recordTransition(ctx, tx, workflow, "COMPLETE", digest, digest, "CHAIN_OBSERVER", now.Unix()); err != nil {
+	if err := recordTransition(ctx, tx, workflow, "FINALIZE", digest, digest, "CHAIN_OBSERVER", now.Unix()); err != nil {
+		return Workflow{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Workflow{}, false, err
+	}
+	return workflow, false, nil
+}
+
+func (s *PostgresStore) FailChain(ctx context.Context, organizationID, workflowID string, state State, reason TerminalReason, now time.Time) (Workflow, bool, error) {
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	defer tx.Rollback()
+	workflow, err := scanWorkflow(tx.QueryRowContext(ctx, workflowSelect+` WHERE organization_id=$1 AND workflow_id=$2 FOR UPDATE`, organizationID, workflowID))
+	if err != nil {
+		return Workflow{}, false, err
+	}
+	if workflow.State == state && workflow.TerminalReason == reason {
+		return workflow, true, tx.Commit()
+	}
+	if !validFailureTransition(workflow.State, state) {
+		return Workflow{}, false, ErrStateConflict
+	}
+	if now.Unix() < workflow.ApprovedAt || now.Unix() < workflow.SubmittedAt || now.Unix() < workflow.ConfirmedAt {
+		return Workflow{}, false, ErrStateConflict
+	}
+	action := "FAIL_" + string(state)
+	transitionKey := eventHash(action, workflowID, string(reason), workflow.SubmissionTxHash,
+		fmt.Sprint(workflow.SubmittedAt), fmt.Sprint(workflow.ConfirmedAt))
+	workflow.State, workflow.TerminalReason, workflow.TerminalAt = state, reason, now.Unix()
+	if _, err := tx.ExecContext(ctx, `UPDATE ascp_proposal_workflows SET state=$3, terminal_reason=$4,
+		terminal_at=$5 WHERE organization_id=$1 AND workflow_id=$2`, organizationID, workflowID, state, reason, now); err != nil {
+		return Workflow{}, false, fmt.Errorf("terminalize governance workflow: %w", err)
+	}
+	if err := recordTransition(ctx, tx, workflow, action, transitionKey, transitionKey, "CHAIN_OBSERVER", now.Unix()); err != nil {
 		return Workflow{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -234,10 +534,8 @@ func lookupAction(ctx context.Context, tx *sql.Tx, organizationID, actorID, acti
 
 func recordTransition(ctx context.Context, tx *sql.Tx, workflow Workflow, action, key, inputHash, actorID string, at int64) error {
 	if action != "EXPIRE" || key != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO ascp_workflow_actions
-			(organization_id, actor_id, action, idempotency_key, input_hash, workflow_id, result_state, created_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,to_timestamp($8))`, workflow.OrganizationID, actorID, action, key, inputHash, workflow.WorkflowID, workflow.State, at); err != nil {
-			return fmt.Errorf("record workflow action: %w", err)
+		if err := recordAction(ctx, tx, workflow, action, key, inputHash, actorID, at); err != nil {
+			return err
 		}
 	}
 	payload, err := json.Marshal(workflow)
@@ -259,25 +557,82 @@ func recordTransition(ctx context.Context, tx *sql.Tx, workflow Workflow, action
 	return nil
 }
 
-const workflowSelect = `SELECT workflow_id, organization_id, kind, COALESCE(chain_action,''), payload_hash, proposed_by, proposer_role, state,
+func recordAction(ctx context.Context, tx *sql.Tx, workflow Workflow, action, key, inputHash, actorID string, at int64) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ascp_workflow_actions
+		(organization_id, actor_id, action, idempotency_key, input_hash, workflow_id, result_state, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,to_timestamp($8))`, workflow.OrganizationID, actorID, action, key, inputHash,
+		workflow.WorkflowID, workflow.State, at); err != nil {
+		return fmt.Errorf("record workflow action: %w", err)
+	}
+	return nil
+}
+
+func recordExecutionCommand(ctx context.Context, tx *sql.Tx, workflow Workflow, approvalHash string, at int64) error {
+	command, err := buildExecutionCommand(workflow, approvalHash)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(command)
+	if err != nil {
+		return err
+	}
+	outboxID := eventHash("GOVERNANCE_EXECUTE", workflow.WorkflowID, approvalHash)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ascp_workflow_outbox
+		(outbox_id, workflow_id, organization_id, topic, payload_json, created_at)
+		VALUES ($1,$2,$3,'ascp.governance.execute',$4::jsonb,to_timestamp($5))`, outboxID,
+		workflow.WorkflowID, workflow.OrganizationID, payload, at); err != nil {
+		return fmt.Errorf("record governance execution command: %w", err)
+	}
+	return nil
+}
+
+func buildExecutionCommand(workflow Workflow, approvalHash string) (GovernanceExecutionCommand, error) {
+	if workflow.State != ApprovedPendingChain || !hash(workflow.WorkflowID) || !hash(workflow.PayloadHash) ||
+		!identifier(workflow.OrganizationID) || !identifier(workflow.ApprovedBy) || workflow.ApprovedAt <= 0 ||
+		(workflow.ChainID != 8453 && workflow.ChainID != 84532) || !canonicalAddress(workflow.ContractAddress) ||
+		!selector(workflow.FunctionSelector) || !governanceCalldata(workflow.Calldata, workflow.FunctionSelector) ||
+		len(workflow.GovernanceAction) == 0 || !json.Valid(workflow.GovernanceAction) || !hash(approvalHash) {
+		return GovernanceExecutionCommand{}, ErrInvalidWorkflow
+	}
+	if _, err := boundActionForWorkflow(workflow); err != nil {
+		return GovernanceExecutionCommand{}, err
+	}
+	command := GovernanceExecutionCommand{
+		Version: GovernanceExecutionVersion, WorkflowID: workflow.WorkflowID, OrganizationID: workflow.OrganizationID,
+		Kind: workflow.Kind, PayloadHash: workflow.PayloadHash, ChainID: workflow.ChainID,
+		ContractAddress: workflow.ContractAddress, FunctionSelector: workflow.FunctionSelector, Calldata: workflow.Calldata,
+		Value: "0", Operation: "CALL", GovernanceAction: append(json.RawMessage(nil), workflow.GovernanceAction...),
+		ApprovedBy: workflow.ApprovedBy, ApprovedAt: workflow.ApprovedAt, ExecuteAfter: workflow.ApprovedAt + 1,
+		ApprovalActionHash: approvalHash,
+	}
+	return command, nil
+}
+
+const workflowSelect = `SELECT workflow_id, organization_id, kind, COALESCE(chain_action,''), payload_hash, COALESCE(chain_id,0),
+	COALESCE(contract_address,''), COALESCE(function_selector,''), COALESCE(calldata,''), governance_action,
+	proposed_by, proposer_role, state,
 	COALESCE(approved_by,''), COALESCE(approver_role,''), COALESCE(cancelled_by,''),
 	extract(epoch FROM proposer_step_up_at)::bigint, extract(epoch FROM proposer_step_up_until)::bigint,
 	COALESCE(extract(epoch FROM approver_step_up_at)::bigint,0), COALESCE(extract(epoch FROM approver_step_up_until)::bigint,0),
 	extract(epoch FROM proposed_at)::bigint, COALESCE(extract(epoch FROM approved_at)::bigint,0),
 	COALESCE(extract(epoch FROM cancelled_at)::bigint,0), COALESCE(extract(epoch FROM expired_at)::bigint,0),
 	extract(epoch FROM expires_at)::bigint, completion_receipt, COALESCE(completion_digest,''),
-	COALESCE(extract(epoch FROM completed_at)::bigint,0) FROM ascp_proposal_workflows`
+	COALESCE(extract(epoch FROM completed_at)::bigint,0), COALESCE(submission_transaction_hash,''),
+	COALESCE(extract(epoch FROM submitted_at)::bigint,0), COALESCE(extract(epoch FROM confirmed_at)::bigint,0),
+	COALESCE(terminal_reason,''), COALESCE(extract(epoch FROM terminal_at)::bigint,0) FROM ascp_proposal_workflows`
 
 type scanner interface{ Scan(...any) error }
 
 func scanWorkflow(row scanner) (Workflow, error) {
 	var workflow Workflow
-	var receipt []byte
+	var receipt, action []byte
 	err := row.Scan(&workflow.WorkflowID, &workflow.OrganizationID, &workflow.Kind, &workflow.ChainAction, &workflow.PayloadHash,
+		&workflow.ChainID, &workflow.ContractAddress, &workflow.FunctionSelector, &workflow.Calldata, &action,
 		&workflow.ProposedBy, &workflow.ProposerRole, &workflow.State, &workflow.ApprovedBy, &workflow.ApproverRole,
 		&workflow.CancelledBy, &workflow.ProposerStepUpAt, &workflow.ProposerStepUpUntil, &workflow.ApproverStepUpAt, &workflow.ApproverStepUpUntil, &workflow.ProposedAt,
 		&workflow.ApprovedAt, &workflow.CancelledAt, &workflow.ExpiredAt, &workflow.ExpiresAt, &receipt,
-		&workflow.CompletionDigest, &workflow.CompletedAt)
+		&workflow.CompletionDigest, &workflow.FinalizedAt, &workflow.SubmissionTxHash, &workflow.SubmittedAt,
+		&workflow.ConfirmedAt, &workflow.TerminalReason, &workflow.TerminalAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Workflow{}, ErrNotFound
 	}
@@ -285,7 +640,29 @@ func scanWorkflow(row scanner) (Workflow, error) {
 		return Workflow{}, fmt.Errorf("read proposal workflow: %w", err)
 	}
 	workflow.CompletionReceipt = append([]byte(nil), receipt...)
+	workflow.GovernanceAction = append([]byte(nil), action...)
 	return workflow, nil
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullableUint64(value uint64) any {
+	if value == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableJSON(value json.RawMessage) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return []byte(value)
 }
 
 func eventHash(values ...string) string {

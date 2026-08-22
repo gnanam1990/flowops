@@ -32,18 +32,29 @@ Go computes the same hashes in `pkg/governanceworkflow`. Published
 cross-language vectors prevent selector, enum, integer-width, field-order,
 domain, chain, and contract-address drift.
 
+The public workflow API accepts the caller-selected workflow ID and one typed
+action, not a payload hash or calldata. The Go builder derives and persists the
+canonical action, payload, selector, and full call. The same configured
+chain/contract/selector map authorizes proposal creation and later receipt
+discovery, preventing an arbitrary but ABI-compatible target from reaching the
+approval outbox.
+For directory approval, the builder also derives the exact immutable proposal
+hash from the directory proposal domain, chain, contract, workflow binding,
+proposal fields, and proposer nonce; a caller cannot pair approval semantics
+with the hash of a different stored proposal.
+
 ## Consequences
 
 - The changed governance function selectors are intentionally ABI-breaking.
   These pre-alpha contracts are non-upgradeable, so any earlier deployment is
   incompatible and must not be promoted; reviewed successors must be deployed,
   verified, and reconfigured through the Safe ceremony.
-- A receipt observer can require both the exact action event and the shared
-  binding event before closing `APPROVED_PENDING_CHAIN`. It must obtain a
+- The receipt observer requires both the exact action event and the shared
+  binding event before finalizing a workflow. It obtains a
   canonical finalized receipt from the configured independent RPC quorum,
-  verify chain/contract/transaction/log identity and one-time receipt ownership,
-  and reject disagreement, reorg, or replay. This change does not itself
-  implement that observer or accept caller-supplied receipts.
+  verifies chain/contract/transaction/log identity and one-time receipt ownership,
+  and rejects disagreement, reorg, or replay. No public route accepts a
+  caller-supplied receipt or transaction hash.
 - Verifier addition, cap scheduling, and directory approval receipts prove the
   scheduled mutation, not later activation. The observer must apply
   selector-specific completion semantics and separately reconcile activation

@@ -38,4 +38,16 @@ func TestPublishedMigrationsRemainForwardOnly(t *testing.T) {
 	if checksums["0021_harden_ascp_verifier_runtime.sql"] != published0021 {
 		t.Fatalf("0021 checksum changed after publication: %s", checksums["0021_harden_ascp_verifier_runtime.sql"])
 	}
+	const published0028 = "d422be432b097d6eb1a69d76564144f77e143ff5a53f347e75d6a1f0624769c3"
+	if checksums["0028_ascp_governance_receipt_ownership.sql"] != published0028 {
+		t.Fatalf("0028 checksum changed after publication: %s", checksums["0028_ascp_governance_receipt_ownership.sql"])
+	}
+	const published0029 = "6b8cd13e845442a21a0d5c972a55de809dbffc64008bc8e20917d6e704231bd0"
+	if checksums["0029_ascp_governance_action_lifecycle.sql"] != published0029 {
+		t.Fatalf("0029 checksum changed after publication: %s", checksums["0029_ascp_governance_action_lifecycle.sql"])
+	}
+	const published0030 = "a4b19cec81136dd6b4a0d58f956bb73984cc87337746ded98e763ccfdd5b0368"
+	if checksums["0030_ascp_governance_safe_relayer.sql"] != published0030 {
+		t.Fatalf("0030 checksum changed after publication: %s", checksums["0030_ascp_governance_safe_relayer.sql"])
+	}
 }

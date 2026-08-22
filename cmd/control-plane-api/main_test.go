@@ -18,6 +18,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 		"FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64",
 		"FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS", "FLOWOPS_ASCP_ADAPTATION_KEY_ID",
 		"FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET", "FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT",
+		"FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", "FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK",
 		"FLOWOPS_BASE_RPC_PROVIDERS_JSON",
 		"FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC",
 	} {
@@ -51,6 +52,25 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 		t.Fatal("oversized ASCP directory freshness window was accepted")
 	}
 	t.Setenv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE", "1m")
+	t.Setenv("FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", "0x2222222222222222222222222222222222222222")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("partial governance observer tuple was accepted")
+	}
+	t.Setenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "0x3333333333333333333333333333333333333333")
+	t.Setenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK", "0100")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("noncanonical governance start block was accepted")
+	}
+	t.Setenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK", "100")
+	cfg, err = loadConfig()
+	if err != nil || cfg.ascpGovernanceFromBlock != 100 {
+		t.Fatalf("governance observer config=%+v err=%v", cfg, err)
+	}
+	t.Setenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "0x1111111111111111111111111111111111111111")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("duplicate governance contract addresses were accepted")
+	}
+	t.Setenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "0x3333333333333333333333333333333333333333")
 	t.Setenv("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS", "0x2222222222222222222222222222222222222222")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("partial adaptation signer configuration was accepted")

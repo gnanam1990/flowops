@@ -22,10 +22,10 @@ The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/flowops-admin`, `/flowops/flowops-operator`,
 `/flowops/ascp-leadership`, `/flowops/ascp-seller-worker`,
 `/flowops/ascp-event-recovery`, `/flowops/ascp-verifier`, `/flowops/ascp-keeper`,
-`/flowops/ascp-bearer-worker`, `/flowops/ascp-signer-runtime`,
-`/flowops/ascp-asset-health`, `/flowops/ascp-capacity-audit`, and
-`/flowops/postgres-readiness`. `railway.json`
-selects that image, checks `/health`,
+`/flowops/ascp-governance-relayer`, `/flowops/ascp-bearer-worker`,
+`/flowops/ascp-signer-runtime`, `/flowops/ascp-asset-health`,
+`/flowops/ascp-capacity-audit`, and `/flowops/postgres-readiness`.
+`railway.json` selects that image, checks `/health`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
 before the API starts.
@@ -68,8 +68,11 @@ The API service requires:
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
 | `FLOWOPS_ASCP_DIRECTORY_CONTRACT` | Optional canonical lowercase ServiceDirectory address. When unset, durable agent intake remains mounted but returns a fail-closed 503 |
 | `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |
-| `FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS` | Canonical global in-flight operation limit, default `1000`; must exactly match `ascp_capacity_counters.max_active_operations` configured by the migration owner |
-| `FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON` | Optional strict deployment-owned array enabling chain-changing workflows; every row binds action, kind, Base chain, contract/code hash, on-chain principal, two-person roles, relayer policy, selector, action/workflow events, timelock, and emergency path |
+| `FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS` | Canonical global in-flight operation limit, default `1000`; must match the migration-owned capacity counter |
+| `FLOWOPS_ASCP_CALL_ESCROW_CONTRACT` | Optional canonical reviewed ASCPCallEscrow address; requires the complete governance-observer tuple |
+| `FLOWOPS_ASCP_SPEND_MODULE_CONTRACT` | Optional canonical reviewed ASCPSpendModule address; requires the complete governance-observer tuple |
+| `FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK` | Positive canonical decimal earliest deployment block across the three governance contracts; enables both the chain-action creation allowlist and internal receipt worker only with all addresses |
+| `FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON` | Optional strict deployment-owned action matrix binding exact code hash, principal, dual-control roles, relayer, selector/events, timelock, and emergency path |
 | `FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS` | Canonical recovered address of the dedicated platform adaptation key; enables signed grants only with the complete tuple below |
 | `FLOWOPS_ASCP_ADAPTATION_KEY_ID` | Canonical HSM key identifier dedicated to adaptation grants |
 | `FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH` | Positive canonical HSM key epoch |
@@ -356,7 +359,7 @@ table, or surplus column authority.
 | `FLOWOPS_BEARER_KEY_EPOCH` | Positive signer key epoch assigned to this worker shard |
 | `FLOWOPS_BEARER_KEEPER_ID` | Exact keeper allowed to release the resulting activated artifacts |
 | `FLOWOPS_BEARER_ORGANIZATION_ID` | Exact organization assigned to this single-organization worker shard |
-| `FLOWOPS_BEARER_LEADERSHIP_EPOCH` | Positive epoch pinned into this worker's short-lived deployment identity; restart with the target epoch only after promotion cutover |
+| `FLOWOPS_BEARER_LEADERSHIP_EPOCH` | Positive epoch pinned into the worker's short-lived deployment identity |
 | `FLOWOPS_BEARER_SIGNER_SOCKET` | Absolute Unix socket for prepare, activation acknowledgment, and non-activation proof |
 | `FLOWOPS_BEARER_MIRROR_SOCKET` | Different absolute Unix socket for create-if-absent primary WORM writes |
 | `FLOWOPS_BEARER_BOUNDARY_TIMEOUT` | Optional per-sidecar timeout, default `3s`, range `1s` through `10s` |
@@ -567,7 +570,7 @@ Required runtime configuration:
 | `FLOWOPS_VERIFIER_ESCROW_CONTRACT` | Exact lowercase nonzero escrow address |
 | `FLOWOPS_VERIFIER_EPOCH` | Positive finalized verifier epoch |
 | `FLOWOPS_VERIFIER_ORGANIZATION_ID` | Exact organization assigned to this single-organization verifier shard |
-| `FLOWOPS_VERIFIER_LEADERSHIP_EPOCH` | Positive leadership epoch pinned into this verifier deployment; stale instances cannot issue attestations after cutover |
+| `FLOWOPS_VERIFIER_LEADERSHIP_EPOCH` | Positive leadership epoch pinned into this verifier deployment |
 | `FLOWOPS_VERIFIER_SOFTWARE_HASH` | Nonzero lowercase `0x`-prefixed 32-byte digest |
 | `FLOWOPS_VERIFIER_INTAKE_KEYS_JSON` | Strict key-id to canonical base64 32-byte HMAC key map |
 | `FLOWOPS_VERIFIER_SIGNER_KEY_FILE` | Absolute, regular, non-symlink owner-private lowercase secp256k1 key file; local/test adapter only |
@@ -600,9 +603,82 @@ are never pruned. Do not run the file signer for production funds.
 ## ASCP asset-health runtime
 
 Run `/flowops/ascp-asset-health` as a separate supervised, non-listening
-process. Apply migration `0029_ascp_asset_health.sql`, create a dedicated LOGIN
-role, and apply `deploy/control-plane/configure-asset-health-role.sql`. Pin the
-reviewed USDC proxy implementation and runtime code hash; do not discover or
-accept replacements automatically. The full variable contract, recovery
-invariants, accounting behavior, alert conditions, and fork-drill gate are in
+process. Apply `0029_ascp_asset_health.sql`, create a dedicated LOGIN role, and
+apply `deploy/control-plane/configure-asset-health-role.sql`. Pin the reviewed
+USDC proxy implementation and runtime code hash; replacements are never
+accepted automatically. The full variable contract and recovery gate are in
 `docs/modules/ASCP_ASSET_HEALTH.md`.
+
+## Governance Safe relayer
+
+Apply migration `0030_ascp_governance_safe_relayer.sql`, create a dedicated
+LOGIN role with no memberships or owned objects, and apply:
+
+```sh
+psql "$MIGRATION_OWNER_DATABASE_URL" \
+  --set=governance_relayer_role="$FLOWOPS_GOVERNANCE_RELAY_DATABASE_ROLE" \
+  --file=deploy/control-plane/configure-governance-relayer-role.sql
+```
+
+Run `/flowops/ascp-governance-relayer run` as a separately supervised process.
+It opens no listener. Required configuration is:
+
+| Variable | Contract |
+| --- | --- |
+| `FLOWOPS_GOVERNANCE_RELAY_DATABASE_URL` | Dedicated capped role; PostgreSQL URL with exactly `sslmode=verify-full` |
+| `FLOWOPS_GOVERNANCE_RELAY_WORKER_ID` | Stable deployment worker identifier; daemon mode only |
+| `FLOWOPS_GOVERNANCE_RELAY_DIRECTORY_SOCKET` | Private Unix socket for authoritative organization Safe binding |
+| `FLOWOPS_GOVERNANCE_RELAY_CHAIN_SOCKET` | Private read-only quorum snapshot/outcome Unix socket |
+| `FLOWOPS_GOVERNANCE_RELAY_VAULT_SOCKET` | Private authenticated Safe-artifact vault Unix socket |
+| `FLOWOPS_GOVERNANCE_RELAY_BROADCAST_SOCKET` | Private outer transaction prepare/broadcast Unix socket |
+| `FLOWOPS_GOVERNANCE_RELAY_VAULT_TOKEN_FILE` | Canonical base64 32-byte vault capability in an owner-private file |
+| `FLOWOPS_GOVERNANCE_RELAY_QUORUM` | `2` to `5`; default `2` |
+| `FLOWOPS_GOVERNANCE_RELAY_INTERVAL` | Optional cycle interval; default `1m`, maximum `5m` |
+| `FLOWOPS_GOVERNANCE_RELAY_LEASE_DURATION` | Optional fenced lease; default `55s`, maximum `1m` |
+| `FLOWOPS_GOVERNANCE_RELAY_BOUNDARY_TIMEOUT` | Optional sidecar timeout; default `3s`, maximum `10s` |
+| `FLOWOPS_GOVERNANCE_RELAY_BATCH_SIZE` | Optional phase bound; default `20`, maximum `100` |
+
+The runtime verifies the database role's exact effective privilege set before
+processing work. The pure observer-array constraint validator is the sole
+executable routine. Surplus PUBLIC, membership, table, column, routine,
+sequence, schema, temporary-table, or ownership authority is a startup failure.
+
+All four sockets must be non-symlinks with distinct filesystem identities and
+secure ownership. Sidecars must return the exact
+`ASCP_GOVERNANCE_RELAY_BOUNDARY_V1` identity. The chain boundary is read-only;
+the broadcast boundary cannot access the vault; the vault receives an
+authenticated capability but cannot broadcast.
+
+Before requesting signatures, set `FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_ORG` and
+`FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_WORKFLOW`, then run:
+
+```sh
+/flowops/ascp-governance-relayer inspect
+```
+
+The JSON output is the signing ceremony input. Owners must independently check
+the organization workflow, exact target and calldata, current Safe nonce,
+sorted owner set, threshold, Safe transaction hash, payload hash, and quorum
+evidence. Inspect mode does not require worker, vault, or broadcast
+configuration and does not connect to those boundaries. If any field changes, discard all collected signatures and
+inspect again.
+
+After the customer Safe owners sign that exact Safe transaction hash, place
+only the canonical base64 signature bundle in a runtime-user-owned `0600`
+non-symlink file and run `/flowops/ascp-governance-relayer authorize` with:
+
+- the same `FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_ORG`;
+- the same `FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_WORKFLOW`;
+- `FLOWOPS_GOVERNANCE_RELAY_AUTHORIZE_KEY`; and
+- `FLOWOPS_GOVERNANCE_RELAY_SIGNATURE_FILE`.
+
+Authorize mode does not require a daemon worker ID or broadcast socket and
+cannot prepare or broadcast an outer transaction.
+
+Remove the signature file through the approved secret-retention procedure
+after the command succeeds. Alert on awaiting signatures, lease stalls,
+reapproval-required jobs, stale/quorum failures, repeated outer preparation,
+and the lag between `FINALIZED_OBSERVED` and independently finalized workflow
+state. A signed Safe transaction is limited to ten submitted outer attempts;
+attempt ten exhausts automatic relay and pages for a fresh approval and owner
+ceremony. Never repair a retry or reset the cap by editing relay or proof rows.

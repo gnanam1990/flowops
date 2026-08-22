@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +20,7 @@ type rpcFixture struct {
 	blocks   map[string]rpcBlock
 	receipt  *rpcReceipt
 	receipts map[string]*rpcReceipt
+	logs     []rpcLog
 }
 
 type fixtureTransport struct {
@@ -59,6 +62,8 @@ func (t *fixtureTransport) RoundTrip(request *http.Request) (*http.Response, err
 		} else {
 			result = fixture.receipt
 		}
+	case "eth_getLogs":
+		result = fixture.logs
 	default:
 		return nil, fmt.Errorf("unexpected method %s", call.Method)
 	}
@@ -67,6 +72,112 @@ func (t *fixtureTransport) RoundTrip(request *http.Request) (*http.Response, err
 		StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
 		Body: io.NopCloser(bytes.NewReader(envelope)), Request: request,
 	}, nil
+}
+
+func TestGovernanceReceiptQuorumRequiresCanonicalPairedEvents(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	workflowID, payloadHash, txHash := testHash(501), testHash(502), testHash(503)
+	contract := "0x1111111111111111111111111111111111111111"
+	selector := "0x12345678"
+	actionTopic := testHash(504)
+	identity := func(index uint64) rpcLog {
+		return rpcLog{Address: contract, Data: "0x", BlockNumber: "0x65", BlockHash: testHash(101),
+			TransactionHash: txHash, TransactionIndex: "0x0", LogIndex: fmt.Sprintf("0x%x", index)}
+	}
+	action := identity(1)
+	action.Topics = []string{actionTopic}
+	binding := identity(2)
+	binding.Topics = []string{governanceWorkflowBoundTopic, workflowID, payloadHash, selector + strings.Repeat("0", 56)}
+	unrelatedBefore := identity(0)
+	unrelatedBefore.Topics = []string{actionTopic}
+	unrelatedAfter := identity(3)
+	unrelatedAfter.Topics = []string{actionTopic}
+	otherBinding := identity(4)
+	otherBinding.Topics = []string{governanceWorkflowBoundTopic, testHash(599), testHash(598), selector + strings.Repeat("0", 56)}
+	receipt := &rpcReceipt{TransactionHash: txHash, BlockNumber: "0x65", BlockHash: testHash(101), Status: "0x1",
+		Logs: []rpcLog{unrelatedBefore, action, binding, unrelatedAfter, otherBinding}}
+	fixtures := map[string]*rpcFixture{
+		"alpha.rpc.example": {chainID: "0x14a34", blocks: map[string]rpcBlock{"latest": rpcBlockFixture(130, now), "finalized": rpcBlockFixture(120, now), "0x65": rpcBlockFixture(101, now)}, receipt: receipt, logs: []rpcLog{binding}},
+		"beta.rpc.example":  {chainID: "0x14a34", blocks: map[string]rpcBlock{"latest": rpcBlockFixture(131, now), "finalized": rpcBlockFixture(121, now), "0x65": rpcBlockFixture(101, now)}, receipt: receipt, logs: []rpcLog{binding}},
+	}
+	observers, err := NewObserverSet(84532, observerProviders(), rpcClient(fixtures), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := GovernanceExpectedReceipt{WorkflowID: workflowID, PayloadHash: payloadHash, ApprovedAt: uint64(now.Unix() - 1), FromBlock: 90, Rules: []GovernanceRule{{
+		Contract: contract, FunctionSelector: selector, ActionEventSignature: actionTopic,
+	}}}
+	result := observers.GovernanceReceiptQuorum(t.Context(), expected)
+	if len(result.Failures) != 0 || len(result.Evidence) != 2 {
+		t.Fatalf("GovernanceReceiptQuorum() = %+v", result)
+	}
+	for _, evidence := range result.Evidence {
+		if evidence.TransactionHash != txHash || evidence.BindingLogIndex != 2 || !slices.Equal(evidence.ActionLogIndexes, []uint64{1}) || evidence.ConfirmedHead < 130 {
+			t.Fatalf("evidence = %+v", evidence)
+		}
+	}
+	for _, fixture := range fixtures {
+		fixture.logs = nil
+	}
+	pending := observers.GovernanceReceiptQuorum(t.Context(), expected)
+	if len(pending.Evidence) != 0 || len(pending.PendingProviders) != 2 || len(pending.Failures) != 2 {
+		t.Fatalf("pending receipt classification=%+v", pending)
+	}
+	for _, fixture := range fixtures {
+		fixture.logs = []rpcLog{binding}
+	}
+
+	broken := *receipt
+	broken.Logs = []rpcLog{binding}
+	fixtures["beta.rpc.example"].receipt = &broken
+	result = observers.GovernanceReceiptQuorum(t.Context(), expected)
+	if len(result.Evidence) != 1 || len(result.Failures) != 1 || !slices.Equal(result.InvalidProviders, []string{"rpc_beta"}) {
+		t.Fatalf("missing paired event was accepted: %+v", result)
+	}
+}
+
+func TestGovernanceReceiptPairsOnlyAdjacentNonceInvalidationRun(t *testing.T) {
+	workflowID, payloadHash, txHash, blockHash := testHash(601), testHash(602), testHash(603), testHash(604)
+	contract, actionTopic := "0x1111111111111111111111111111111111111111", testHash(605)
+	log := func(index uint64, topic string) rpcLog {
+		return rpcLog{Address: contract, Topics: []string{topic}, Data: "0x", BlockNumber: "0x64", BlockHash: blockHash,
+			TransactionHash: txHash, TransactionIndex: "0x0", LogIndex: fmt.Sprintf("0x%x", index)}
+	}
+	logs := []rpcLog{log(0, actionTopic), log(2, actionTopic), log(3, actionTopic), log(4, governanceWorkflowBoundTopic)}
+	logs[3].Topics = []string{governanceWorkflowBoundTopic, workflowID, payloadHash, "0x12345678" + strings.Repeat("0", 56)}
+	paired, err := verifyGovernanceReceiptLogs(logs, GovernanceExpectedReceipt{WorkflowID: workflowID, PayloadHash: payloadHash},
+		GovernanceRule{Contract: contract, FunctionSelector: "0x12345678", ActionEventSignature: actionTopic, MultipleActionEvents: true, ExpectedActionEvents: 2},
+		txHash, 100, blockHash, 4)
+	if err != nil || !slices.Equal(paired, []uint64{2, 3}) {
+		t.Fatalf("paired nonce invalidations=%v err=%v", paired, err)
+	}
+	duplicate := append(slices.Clone(logs), log(3, actionTopic))
+	if _, err := verifyGovernanceReceiptLogs(duplicate, GovernanceExpectedReceipt{WorkflowID: workflowID, PayloadHash: payloadHash},
+		GovernanceRule{Contract: contract, FunctionSelector: "0x12345678", ActionEventSignature: actionTopic, MultipleActionEvents: true},
+		txHash, 100, blockHash, 4); !errors.Is(err, ErrGovernanceReceiptInvalid) {
+		t.Fatalf("duplicate receipt log index error=%v", err)
+	}
+	if _, err := verifyGovernanceReceiptLogs(logs, GovernanceExpectedReceipt{WorkflowID: workflowID, PayloadHash: payloadHash},
+		GovernanceRule{Contract: contract, FunctionSelector: "0x12345678", ActionEventSignature: actionTopic, MultipleActionEvents: true, ExpectedActionEvents: 3},
+		txHash, 100, blockHash, 4); !errors.Is(err, ErrGovernanceReceiptInvalid) {
+		t.Fatalf("wrong nonce-invalidation count error=%v", err)
+	}
+}
+
+func TestGovernanceLogWindowsAreBoundedAndOverflowSafe(t *testing.T) {
+	got, err := governanceLogWindows(1, 25_001)
+	if want := [][2]uint64{{1, 10_000}, {10_001, 20_000}, {20_001, 25_001}}; err != nil || !slices.Equal(got, want) {
+		t.Fatalf("windows=%v want=%v", got, want)
+	}
+	maximum := ^uint64(0)
+	got, err = governanceLogWindows(maximum-5, maximum)
+	if err != nil || !slices.Equal(got, [][2]uint64{{maximum - 5, maximum}}) {
+		t.Fatalf("overflow windows=%v", got)
+	}
+	if _, err := governanceLogWindows(1, maximum); err == nil {
+		t.Fatal("untrusted provider head was allowed to allocate an unbounded governance scan")
+	}
 }
 
 func rpcClient(fixtures map[string]*rpcFixture) *http.Client {

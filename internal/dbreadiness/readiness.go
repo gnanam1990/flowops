@@ -55,6 +55,7 @@ var runtimeTables = []tableContract{
 	{name: "ascp_workflow_actions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_workflow_events", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_workflow_outbox", allowed: set("SELECT", "INSERT")},
+	{name: "ascp_workflow_receipt_ownership", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_policy_decisions", allowed: set("SELECT", "INSERT")},
 	{name: "ascp_approvals", allowed: set("SELECT", "INSERT", "UPDATE")},
 	{name: "ascp_budget_reservations", allowed: set("SELECT", "INSERT", "UPDATE")},
@@ -92,7 +93,7 @@ type columnUpdateContract struct {
 
 var runtimeColumnUpdates = []columnUpdateContract{
 	{table: "ascp_adaptation_grants", columns: set("state", "remaining_attempts", "consumed_operation_id", "consumed_at")},
-	{table: "ascp_proposal_workflows", columns: set("state", "approved_by", "approver_role", "approver_step_up_at", "approver_step_up_until", "approved_at", "cancelled_by", "cancelled_at", "expired_at", "completion_receipt", "completion_digest", "completed_at")},
+	{table: "ascp_proposal_workflows", columns: set("chain_action", "state", "approved_by", "approver_role", "approver_step_up_at", "approver_step_up_until", "approved_at", "cancelled_by", "cancelled_at", "expired_at", "submission_transaction_hash", "submitted_at", "confirmed_at", "completion_receipt", "completion_digest", "completed_at", "terminal_reason", "terminal_at")},
 	{table: "ascp_bearer_handles", columns: set("state")},
 	{table: "ascp_bearer_registry", columns: set("outcome")},
 	{table: "ascp_payment_operations", columns: set("state", "locked_transaction_hash", "locked_block_number", "locked_block_hash", "terminal_action", "terminal_transaction_hash", "terminal_block_number", "terminal_block_hash", "updated_at")},

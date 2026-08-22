@@ -27,6 +27,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/ascpbearer"
 	"github.com/gnanam1990/flowops/internal/ascpcapacity"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
+	"github.com/gnanam1990/flowops/internal/ascpgovernanceobserver"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
 	"github.com/gnanam1990/flowops/internal/ascpring6"
@@ -67,6 +68,9 @@ type startupConfig struct {
 	signerReceiptKeys       []controlapi.BroadcastKey
 	pilotLimits             *pilotlimits.Limits
 	ascpDirectoryContract   string
+	ascpCallEscrowContract  string
+	ascpSpendModuleContract string
+	ascpGovernanceFromBlock uint64
 	ascpDirectoryMaxAge     time.Duration
 	ascpMaxActiveOperations int
 	ascpAdaptationSigner    string
@@ -122,17 +126,6 @@ func run(ctx context.Context) (returnErr error) {
 	workflowStore, err := ascpworkflow.NewPostgresStore(db)
 	if err != nil {
 		return fmt.Errorf("create ASCP proposal workflow store: %w", err)
-	}
-	var workflowCompletionVerifier ascpworkflow.CompletionVerifier
-	if len(cfg.ascpAuthorityRules) != 0 {
-		workflowCompletionVerifier, err = ascpworkflow.NewAuthorityVerifier(cfg.ascpAuthorityRules, cfg.observerConfig.ObserverQuorum)
-		if err != nil {
-			return fmt.Errorf("create ASCP chain authority verifier: %w", err)
-		}
-	}
-	workflowService, err := ascpworkflow.New(workflowStore, workflowCompletionVerifier, nil, nil)
-	if err != nil {
-		return fmt.Errorf("create ASCP proposal workflow service: %w", err)
 	}
 	var ascpAgentService *ascpagent.Service
 	var ascpOrchestrationService *ascporchestration.Service
@@ -284,6 +277,47 @@ func run(ctx context.Context) (returnErr error) {
 	if err != nil {
 		return fmt.Errorf("create Base observer set: %w", err)
 	}
+	var governanceObserver *ascpgovernanceobserver.Observer
+	if cfg.ascpGovernanceFromBlock != 0 {
+		governanceObserver, err = ascpgovernanceobserver.New(ascpgovernanceobserver.Config{
+			Observers: observers, Quorum: cfg.observerConfig.ObserverQuorum,
+			FinalizedConfirmations: cfg.observerConfig.ReorgLookback + 1, FromBlock: cfg.ascpGovernanceFromBlock,
+			CallEscrowContract: cfg.ascpCallEscrowContract, SpendModuleContract: cfg.ascpSpendModuleContract,
+			DirectoryContract: cfg.ascpDirectoryContract,
+		})
+		if err != nil {
+			return fmt.Errorf("create ASCP governance receipt observer: %w", err)
+		}
+	}
+	workflowOptions := make([]ascpworkflow.Option, 0, 1)
+	if len(cfg.ascpAuthorityRules) != 0 {
+		authorityVerifier, authorityErr := ascpworkflow.NewAuthorityVerifier(
+			cfg.ascpAuthorityRules, cfg.observerConfig.ObserverQuorum,
+		)
+		if authorityErr != nil {
+			return fmt.Errorf("create ASCP chain authority verifier: %w", authorityErr)
+		}
+		workflowOptions = append(workflowOptions, ascpworkflow.WithGovernanceActionGate(authorityVerifier))
+	}
+	workflowService, err := ascpworkflow.New(workflowStore, governanceObserver, nil, nil, workflowOptions...)
+	if err != nil {
+		return fmt.Errorf("create ASCP proposal workflow service: %w", err)
+	}
+	var governanceWorker *ascpgovernanceobserver.Worker
+	if governanceObserver != nil {
+		governanceWorker, err = ascpgovernanceobserver.NewWorker(workflowStore, workflowService, ascpgovernanceobserver.WorkerConfig{
+			Interval: cfg.reconciliationInterval, QueryTimeout: cfg.reconciliationTimeout, BatchSize: 1000,
+			OnCycle: func(cycle ascpgovernanceobserver.WorkerCycle) {
+				slog.Info("ASCP governance receipt cycle completed", "pending", cycle.Pending,
+					"completed", cycle.Completed, "deferred", cycle.Deferred, "rejected", cycle.Rejected)
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("create ASCP governance receipt worker: %w", err)
+		}
+	} else {
+		slog.Warn("ASCP chain governance workflows are disabled", "reason", "governance contract tuple is unset")
+	}
 	observerSupervisor, err := reconciliation.NewSupervisor(observers, reconciliationEngine, reconciliation.SupervisorConfig{
 		Interval: cfg.observerInterval, ObservationTimeout: cfg.observerTimeout,
 		OnResult: func(status reconciliation.ChainStatus, result reconciliation.SnapshotResult) {
@@ -377,6 +411,13 @@ func run(ctx context.Context) (returnErr error) {
 	go func() {
 		ascpSettlementErrors <- ascpSettlementWorker.Run(shutdownSignal)
 	}()
+	var governanceErrors chan error
+	if governanceWorker != nil {
+		governanceErrors = make(chan error, 1)
+		go func() {
+			governanceErrors <- governanceWorker.Run(shutdownSignal)
+		}()
+	}
 	select {
 	case <-shutdownSignal.Done():
 	case err := <-serverErrors:
@@ -398,6 +439,10 @@ func run(ctx context.Context) (returnErr error) {
 	case err := <-ascpSettlementErrors:
 		if err != nil {
 			return fmt.Errorf("run ASCP settlement worker: %w", err)
+		}
+	case err := <-governanceErrors:
+		if err != nil {
+			return fmt.Errorf("run ASCP governance receipt worker: %w", err)
 		}
 	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -436,12 +481,14 @@ func loadConfig() (startupConfig, error) {
 		address: strings.TrimSpace(os.Getenv("FLOWOPS_CONTROL_ADDR")), databaseURL: strings.TrimSpace(os.Getenv("FLOWOPS_DATABASE_URL")),
 		envelopeKeyID: strings.TrimSpace(os.Getenv("FLOWOPS_ENVELOPE_KEY_ID")),
 		envelopeKey:   key, siteSessionKey: siteSessionKey,
-		reconciliation:        strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
-		mcpAllowedOrigins:     splitMCPOrigins(os.Getenv("FLOWOPS_MCP_ALLOWED_ORIGINS")),
-		ascpDirectoryContract: strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT"))),
-		ascpAdaptationSigner:  strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS"))),
-		ascpAdaptationKeyID:   strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_KEY_ID")),
-		ascpAdaptationHSM:     strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET")),
+		reconciliation:          strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
+		mcpAllowedOrigins:       splitMCPOrigins(os.Getenv("FLOWOPS_MCP_ALLOWED_ORIGINS")),
+		ascpDirectoryContract:   strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT"))),
+		ascpCallEscrowContract:  strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_CALL_ESCROW_CONTRACT"))),
+		ascpSpendModuleContract: strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT"))),
+		ascpAdaptationSigner:    strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS"))),
+		ascpAdaptationKeyID:     strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_KEY_ID")),
+		ascpAdaptationHSM:       strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET")),
 	}
 	ascpDirectoryMaxAge, err := parseDurationEnv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE", os.Getenv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE"), time.Minute)
 	if err != nil {
@@ -522,6 +569,20 @@ func loadConfig() (startupConfig, error) {
 			return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_CONTRACT requires the reviewed escrow deployment tuple")
 		}
 	}
+	governanceFromBlockRaw := strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK"))
+	governanceConfigured := cfg.ascpCallEscrowContract != "" || cfg.ascpSpendModuleContract != "" || governanceFromBlockRaw != ""
+	if governanceConfigured {
+		if cfg.ascpDirectoryContract == "" || !canonicalContract(cfg.ascpCallEscrowContract) ||
+			!canonicalContract(cfg.ascpSpendModuleContract) || cfg.ascpCallEscrowContract == cfg.ascpSpendModuleContract ||
+			cfg.ascpCallEscrowContract == cfg.ascpDirectoryContract || cfg.ascpSpendModuleContract == cfg.ascpDirectoryContract {
+			return startupConfig{}, errors.New("governance observation requires three distinct canonical ASCP contract addresses")
+		}
+		fromBlock, err := strconv.ParseUint(governanceFromBlockRaw, 10, 64)
+		if err != nil || fromBlock == 0 || strconv.FormatUint(fromBlock, 10) != governanceFromBlockRaw {
+			return startupConfig{}, errors.New("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK must be a positive canonical integer")
+		}
+		cfg.ascpGovernanceFromBlock = fromBlock
+	}
 	if cfg.ascpAdaptationSigner != "" && (len(cfg.ascpAdaptationSigner) != 42 || !common.IsHexAddress(cfg.ascpAdaptationSigner) || common.HexToAddress(cfg.ascpAdaptationSigner) == (common.Address{})) {
 		return startupConfig{}, errors.New("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS must be a non-zero canonical address")
 	}
@@ -571,6 +632,11 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, errors.New("database, signing, session, operator-control, observer, and reconciliation configuration are required")
 	}
 	return cfg, nil
+}
+
+func canonicalContract(value string) bool {
+	return len(value) == 42 && common.IsHexAddress(value) && value == strings.ToLower(value) &&
+		common.HexToAddress(value) != (common.Address{})
 }
 
 func splitMCPOrigins(value string) []string {
