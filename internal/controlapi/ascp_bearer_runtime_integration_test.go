@@ -389,7 +389,30 @@ func TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically(t *t
 		leaseToken.Valid || proofPresent || !refusalCode.Valid || refusalCode.String != "SIGNER_REFUSED" {
 		t.Fatalf("refusal reservation=%s request=%s outbox=%s lease=%+v proof=%t code=%+v", reservationState, requestState, outboxState, leaseToken, proofPresent, refusalCode)
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE ascp_sign_requests SET last_error=NULL WHERE request_id=$1`, refusedInput.RequestID); err == nil {
-		t.Fatal("database accepted a malformed refused signer request")
+	malformedRefusedUpdates := []struct {
+		name       string
+		assignment string
+	}{
+		{name: "prepared handle", assignment: `prepared_handle='asph_invalid'`},
+		{name: "prepared timestamp", assignment: `prepared_at=now()`},
+		{name: "activated timestamp", assignment: `activated_at=now()`},
+		{name: "mirrored timestamp", assignment: `mirrored_at=now()`},
+		{name: "acknowledged timestamp", assignment: `acknowledged_at=now()`},
+		{name: "primary mirror digest", assignment: `primary_mirror_digest='0x` + strings.Repeat("a", 64) + `'`},
+		{name: "unactivated proof", assignment: `unactivated_proof='{}'::jsonb`},
+		{name: "expired timestamp", assignment: `expired_at=now()`},
+		{name: "lease owner", assignment: `lease_owner='worker-invalid'`},
+		{name: "lease token", assignment: `lease_token='0x` + strings.Repeat("b", 64) + `'`},
+		{name: "lease expiry", assignment: `lease_expires_at=now()`},
+		{name: "missing refusal error", assignment: `last_error=NULL`},
+		{name: "wrong refusal error", assignment: `last_error='SIGNER_CRASHED'`},
+	}
+	for _, mutation := range malformedRefusedUpdates {
+		t.Run("constraint rejects "+mutation.name, func(t *testing.T) {
+			query := `UPDATE ascp_sign_requests SET ` + mutation.assignment + ` WHERE request_id=$1`
+			if _, err := db.ExecContext(ctx, query, refusedInput.RequestID); err == nil {
+				t.Fatalf("database accepted malformed REFUSED field: %s", mutation.name)
+			}
+		})
 	}
 }
