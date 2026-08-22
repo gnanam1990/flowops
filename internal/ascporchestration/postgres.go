@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascpreservation"
@@ -36,6 +37,7 @@ type operationMaterial struct {
 	quoteHash, purchaseSpecHash, directoryContract   string
 	quoteJSON, purchaseSpecBytes, requestBody        []byte
 	policyVersion, policyJSON                        string
+	adaptationGrantID                                string
 }
 
 func (s *PostgresStore) Evaluate(ctx context.Context, identity Identity, operationID string, cfg EvaluationConfig) (Decision, error) {
@@ -136,6 +138,7 @@ func lockOperationMaterial(ctx context.Context, tx *sql.Tx, identity Identity, o
 	err := tx.QueryRowContext(ctx, `
 		SELECT i.organization_id, i.actor_id, a.customer_id, a.status, o.authorizations_paused,
 		       i.quote_hash, i.purchase_spec_hash, i.directory_contract, i.quote_json, i.purchase_spec_bytes, i.request_body,
+		       COALESCE(i.adaptation_grant_id,''),
 		       p.version, p.config
 		FROM ascp_intents i
 		JOIN agents a ON a.organization_id=i.organization_id AND a.id=i.actor_id
@@ -145,7 +148,7 @@ func lockOperationMaterial(ctx context.Context, tx *sql.Tx, identity Identity, o
 		FOR UPDATE OF i`, operationID, identity.OrganizationID, identity.AgentID).Scan(
 		&material.organizationID, &material.agentID, &material.customerID, &material.agentStatus,
 		&material.organizationPaused, &material.quoteHash, &material.purchaseSpecHash, &material.directoryContract,
-		&material.quoteJSON, &material.purchaseSpecBytes, &material.requestBody, &policyVersion, &policyJSON)
+		&material.quoteJSON, &material.purchaseSpecBytes, &material.requestBody, &material.adaptationGrantID, &policyVersion, &policyJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return operationMaterial{}, ErrNotFound
 	}
@@ -233,6 +236,7 @@ func deriveDecision(ctx context.Context, tx *sql.Tx, identity Identity, operatio
 	} else if now.Unix() < 0 || uint64(now.Unix()) >= quote.QuoteExpiresAt {
 		policyDecision = policy.Decision{Outcome: policy.Deny, Reason: "QUOTE_EXPIRED", PolicyVersion: policyConfig.Version}
 	}
+	policyDecision = escalateAdaptedRejection(policyDecision, material.adaptationGrantID != "")
 	decision := Decision{
 		DecisionID: cfg.DecisionID, OrganizationID: identity.OrganizationID, AgentID: identity.AgentID,
 		OperationID: operationID, Outcome: policyDecision.Outcome, Reason: policyDecision.Reason,
@@ -256,6 +260,18 @@ func deriveDecision(ctx context.Context, tx *sql.Tx, identity Identity, operatio
 		}
 	}
 	return decision, nil
+}
+
+func escalateAdaptedRejection(decision policy.Decision, adapted bool) policy.Decision {
+	if !adapted || decision.Outcome != policy.Deny {
+		return decision
+	}
+	switch decision.Reason {
+	case policy.ReasonPerActionLimit, policy.ReasonTaskBudget, policy.ReasonDailyBudget, policy.ReasonRecipientNotAllowed:
+		decision.Outcome = policy.RequireApproval
+		decision.Reason = policy.ReasonAdaptationRejected
+	}
+	return decision
 }
 
 func policySpendSnapshot(ctx context.Context, tx *sql.Tx, identity Identity, spec purchasespec.Spec, now time.Time) (policy.SpendSnapshot, error) {
@@ -305,6 +321,151 @@ func policySpendSnapshot(ctx context.Context, tx *sql.Tx, identity Identity, spe
 		TaskSpentAtomic: values[taskID].spent.String(), TaskReservedAtomic: values[taskID].reserved.String(),
 		DailySpentAtomic: values[dailyID].spent.String(), DailyReservedAtomic: values[dailyID].reserved.String(),
 	}, nil
+}
+
+func (s *PostgresStore) AdaptationRequest(ctx context.Context, identity Identity, operationID string) (ascpadaptation.IssueRequest, error) {
+	if !validIdentity(identity) || !validHash(operationID) {
+		return ascpadaptation.IssueRequest{}, ErrInvalidScope
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return ascpadaptation.IssueRequest{}, fmt.Errorf("begin adaptation planning: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var outcome policy.Outcome
+	var reason policy.Reason
+	var quoteJSON, purchaseBytes, requestBody, policyJSON []byte
+	var directoryContract string
+	var evaluatedAt time.Time
+	err = tx.QueryRowContext(ctx, `
+		SELECT d.outcome,d.reason,i.quote_json,i.purchase_spec_bytes,i.request_body,i.directory_contract,p.config,d.evaluated_at
+		FROM ascp_policy_decisions d
+		JOIN ascp_intents i ON i.operation_id=d.operation_id
+		JOIN policies p ON p.organization_id=d.organization_id AND p.agent_id=d.agent_id AND p.version=d.policy_version
+		WHERE d.operation_id=$1 AND d.organization_id=$2 AND d.agent_id=$3`,
+		operationID, identity.OrganizationID, identity.AgentID).Scan(
+		&outcome, &reason, &quoteJSON, &purchaseBytes, &requestBody, &directoryContract, &policyJSON, &evaluatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ascpadaptation.IssueRequest{}, ErrNotFound
+	}
+	if err != nil {
+		return ascpadaptation.IssueRequest{}, fmt.Errorf("read adaptation decision source: %w", err)
+	}
+	if outcome != policy.Deny {
+		return ascpadaptation.IssueRequest{}, ascpadaptation.ErrReasonIneligible
+	}
+	var reasonClass ascpadaptation.ReasonClass
+	switch reason {
+	case policy.ReasonPerActionLimit, policy.ReasonTaskBudget, policy.ReasonDailyBudget:
+		reasonClass = ascpadaptation.ReasonTooExpensive
+	case policy.ReasonRecipientNotAllowed:
+		reasonClass = ascpadaptation.ReasonWrongSeller
+	default:
+		return ascpadaptation.IssueRequest{}, ascpadaptation.ErrReasonIneligible
+	}
+	var quote sellerquote.Quote
+	if err := json.Unmarshal(quoteJSON, &quote); err != nil || quote.Validate() != nil {
+		return ascpadaptation.IssueRequest{}, errors.New("stored adaptation quote is invalid")
+	}
+	spec, err := purchasespec.ValidatePersisted(purchaseBytes, requestBody)
+	if err != nil || spec.OrgID != identity.OrganizationID || spec.AgentID != identity.AgentID || quote.PurchaseSpecHash != purchasespec.Hash(purchaseBytes) {
+		return ascpadaptation.IssueRequest{}, errors.New("stored adaptation purchase binding is invalid")
+	}
+	var policyConfig policy.Config
+	if err := json.Unmarshal(policyJSON, &policyConfig); err != nil {
+		return ascpadaptation.IssueRequest{}, errors.New("stored adaptation policy is invalid")
+	}
+	if _, err := policy.Compile(policyConfig); err != nil {
+		return ascpadaptation.IssueRequest{}, fmt.Errorf("compile adaptation policy: %w", err)
+	}
+	spend, err := policySpendSnapshot(ctx, tx, identity, spec, evaluatedAt.UTC())
+	if err != nil {
+		return ascpadaptation.IssueRequest{}, err
+	}
+	maximum, ok := adaptationMaximum(quote.AmountBaseUnits, policyConfig, spend)
+	if !ok {
+		return ascpadaptation.IssueRequest{}, ascpadaptation.ErrReasonIneligible
+	}
+	sellers := []string{quote.SellerID}
+	if reasonClass == ascpadaptation.ReasonWrongSeller {
+		sellers, err = approvedAdaptationSellers(ctx, tx, quote, directoryContract, policyConfig.AllowedRecipients)
+		if err != nil {
+			return ascpadaptation.IssueRequest{}, err
+		}
+		if len(sellers) == 0 {
+			return ascpadaptation.IssueRequest{}, ascpadaptation.ErrReasonIneligible
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return ascpadaptation.IssueRequest{}, fmt.Errorf("commit adaptation planning: %w", err)
+	}
+	return ascpadaptation.IssueRequest{
+		ReasonClass: reasonClass, OriginalIntentID: operationID,
+		OrganizationID: identity.OrganizationID, AgentID: identity.AgentID, TaskID: spec.TaskID,
+		AllowedCategory: spec.Category, MaxAmountAtomic: maximum, AllowedSellerSet: sellers,
+		IssuedAt: evaluatedAt.UTC().Unix(),
+	}, nil
+}
+
+func adaptationMaximum(original string, config policy.Config, spend policy.SpendSnapshot) (string, bool) {
+	values := []string{original, config.PerActionLimitAtomic}
+	remaining := func(budget, spent, reserved string) (*big.Int, bool) {
+		limit, limitOK := new(big.Int).SetString(budget, 10)
+		spentValue, spentOK := new(big.Int).SetString(spent, 10)
+		reservedValue, reservedOK := new(big.Int).SetString(reserved, 10)
+		if !limitOK || !spentOK || !reservedOK || limit.Sign() <= 0 || spentValue.Sign() < 0 || reservedValue.Sign() < 0 {
+			return nil, false
+		}
+		return limit.Sub(limit, new(big.Int).Add(spentValue, reservedValue)), true
+	}
+	taskRemaining, taskOK := remaining(config.TaskBudgetAtomic, spend.TaskSpentAtomic, spend.TaskReservedAtomic)
+	dailyRemaining, dailyOK := remaining(config.DailyBudgetAtomic, spend.DailySpentAtomic, spend.DailyReservedAtomic)
+	if !taskOK || !dailyOK {
+		return "", false
+	}
+	values = append(values, taskRemaining.String(), dailyRemaining.String())
+	var maximum *big.Int
+	for _, value := range values {
+		parsed, ok := new(big.Int).SetString(value, 10)
+		if !ok || parsed.Sign() <= 0 || parsed.String() != value {
+			return "", false
+		}
+		if maximum == nil || parsed.Cmp(maximum) < 0 {
+			maximum = parsed
+		}
+	}
+	return maximum.String(), true
+}
+
+func approvedAdaptationSellers(ctx context.Context, tx *sql.Tx, quote sellerquote.Quote, directoryContract string, recipients []string) ([]string, error) {
+	chainID, err := strconv.ParseInt(quote.ChainID, 10, 64)
+	if err != nil || len(recipients) == 0 {
+		return nil, ascpadaptation.ErrReasonIneligible
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT e.seller_id
+		FROM ascp_directory_heads h
+		JOIN ascp_directory_quote_evidence e ON e.observation_digest=h.observation_digest
+		WHERE h.chain_id=$1 AND h.directory_contract=$2
+		  AND e.active=true AND e.quote_key_revoked=false AND e.payout_address=ANY($3)
+		ORDER BY e.seller_id
+		LIMIT 64`, chainID, directoryContract, recipients)
+	if err != nil {
+		return nil, fmt.Errorf("read approved adaptation sellers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var sellers []string
+	for rows.Next() {
+		var sellerID string
+		if err := rows.Scan(&sellerID); err != nil {
+			return nil, err
+		}
+		sellers = append(sellers, sellerID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return sellers, nil
 }
 
 func (s *PostgresStore) Decision(ctx context.Context, identity Identity, operationID string) (Decision, error) {

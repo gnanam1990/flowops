@@ -5,10 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
 	"github.com/gnanam1990/flowops/internal/ascporchestration"
@@ -26,7 +30,7 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `INSERT INTO organizations (id,name) VALUES ('org_orch_it','Orchestration IT')`); err != nil {
 		t.Fatal(err)
 	}
-	for _, agentID := range []string{"agent_human_it", "agent_auto_it"} {
+	for _, agentID := range []string{"agent_human_it", "agent_auto_it", "agent_adapted_it", "agent_blocked_it", "agent_wrong_seller_it"} {
 		if _, err := db.ExecContext(ctx, `
 			INSERT INTO agents (organization_id,id,customer_id,name,status)
 			VALUES ('org_orch_it',$1,$2,$1,'ACTIVE')`, agentID, "customer_"+agentID); err != nil {
@@ -35,7 +39,13 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 	}
 	humanPolicy := orchestrationPolicy("policy_human_it", true)
 	autoPolicy := orchestrationPolicy("policy_auto_it", false)
-	for agentID, config := range map[string]policy.Config{"agent_human_it": humanPolicy, "agent_auto_it": autoPolicy} {
+	adaptedPolicy := orchestrationPolicy("policy_adapted_it", false)
+	adaptedPolicy.PerActionLimitAtomic = "5"
+	adaptedPolicy.AutoApproveThresholdAtomic = "5"
+	blockedPolicy := orchestrationPolicy("policy_blocked_it", false)
+	blockedPolicy.BlockedCategories = []string{"research"}
+	wrongSellerPolicy := orchestrationPolicy("policy_wrong_seller_it", false)
+	for agentID, config := range map[string]policy.Config{"agent_human_it": humanPolicy, "agent_auto_it": autoPolicy, "agent_adapted_it": adaptedPolicy, "agent_blocked_it": blockedPolicy, "agent_wrong_seller_it": wrongSellerPolicy} {
 		raw, _ := json.Marshal(config)
 		if _, err := db.ExecContext(ctx, `
 			INSERT INTO policies (organization_id,agent_id,version,config,active,activated_at)
@@ -51,6 +61,17 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 			 finalized_block_number,finalized_block_hash,providers,observed_at)
 		VALUES ($1,84532,$2,9,$3,200,$4,'["alpha","bravo"]'::jsonb,$5)`,
 		observationDigest, ascpIntegrationDirectory, ascpIntegrationHash(2504), ascpIntegrationHash(2505), now); err != nil {
+		t.Fatal(err)
+	}
+	badSellerID, badResourceID := ascpIntegrationHash(2560), ascpIntegrationHash(2561)
+	badPayee := "0x9999999999999999999999999999999999999999"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ascp_directory_quote_evidence
+			(observation_digest,seller_id,resource_id,quote_signing_key,key_epoch,payout_address,
+			 ack_authority,amount_base_units,verification_spec_hash,declared_work_time,
+			 verification_budget_seconds,active,quote_key_revoked)
+		VALUES ($1,$2,$3,$4,1,$5,$6,'10',$7,60,30,true,false)`, observationDigest,
+		badSellerID, badResourceID, ascpIntegrationSigner, badPayee, ascpIntegrationAck, verificationHash); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `
@@ -70,6 +91,26 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 	}
 	humanOperation := insertOrchestrationIntent(t, db, now, "agent_human_it", ascpIntegrationHash(2510), ascpIntegrationHash(2511), sellerID, resourceID, verificationHash)
 	autoOperation := insertOrchestrationIntent(t, db, now, "agent_auto_it", ascpIntegrationHash(2520), ascpIntegrationHash(2521), sellerID, resourceID, verificationHash)
+	originalAdaptationOperation := insertOrchestrationIntent(t, db, now, "agent_adapted_it", ascpIntegrationHash(2530), ascpIntegrationHash(2531), sellerID, resourceID, verificationHash)
+	blockedOperation := insertOrchestrationIntent(t, db, now, "agent_blocked_it", ascpIntegrationHash(2550), ascpIntegrationHash(2551), sellerID, resourceID, verificationHash)
+	wrongSellerOperation := insertOrchestrationIntentWithPayTo(t, db, now, "agent_wrong_seller_it", ascpIntegrationHash(2562), ascpIntegrationHash(2563), badSellerID, badResourceID, verificationHash, badPayee)
+	adaptationKey, err := crypto.HexToECDSA(strings.Repeat("9", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var adaptationSignerCalls atomic.Int32
+	adaptationIssuer, err := ascpadaptation.NewIssuer(adaptationIntegrationSigner{key: adaptationKey, calls: &adaptationSignerCalls}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptationStore, err := ascpadaptation.NewPostgresStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adaptations, err := ascpadaptation.NewService(adaptationIssuer, adaptationStore)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	revalidator, err := ascpexecauth.NewLocalRevalidator(2 * time.Minute)
 	if err != nil {
@@ -85,11 +126,62 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 	}
 	service, err := ascporchestration.New(ascporchestration.Config{
 		DatabaseStore: flowStore, Authorization: executionStore, EscrowContract: ascpIntegrationModule,
-		SettleWindow: time.Hour, Clock: func() time.Time { return now },
+		SettleWindow: time.Hour, Clock: func() time.Time { return now }, Adaptations: adaptations,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	blockedIdentity := ascporchestration.Identity{OrganizationID: "org_orch_it", AgentID: "agent_blocked_it"}
+	blockedDecision, err := service.Evaluate(ctx, blockedIdentity, blockedOperation)
+	if err != nil || blockedDecision.Outcome != policy.Deny || blockedDecision.Reason != policy.ReasonBlockedCategory || blockedDecision.AdaptationGrantID != "" {
+		t.Fatalf("inappropriate decision=%+v err=%v", blockedDecision, err)
+	}
+	wrongSellerIdentity := ascporchestration.Identity{OrganizationID: "org_orch_it", AgentID: "agent_wrong_seller_it"}
+	wrongSellerDecision, err := service.Evaluate(ctx, wrongSellerIdentity, wrongSellerOperation)
+	if err != nil || wrongSellerDecision.Outcome != policy.Deny || wrongSellerDecision.Reason != policy.ReasonRecipientNotAllowed || wrongSellerDecision.AdaptationGrantID == "" {
+		t.Fatalf("wrong-seller decision=%+v err=%v", wrongSellerDecision, err)
+	}
+	wrongSellerGrant, err := adaptationStore.GetGrant(ctx, "org_orch_it", "agent_wrong_seller_it", wrongSellerDecision.AdaptationGrantID)
+	if err != nil || wrongSellerGrant.ReasonClass != ascpadaptation.ReasonWrongSeller || len(wrongSellerGrant.Artifact.Grant.AllowedSellerSet) != 1 || wrongSellerGrant.Artifact.Grant.AllowedSellerSet[0] != sellerID {
+		t.Fatalf("wrong-seller grant=%+v err=%v", wrongSellerGrant, err)
+	}
+	adaptedIdentity := ascporchestration.Identity{OrganizationID: "org_orch_it", AgentID: "agent_adapted_it"}
+	initialAdaptationDecision, err := service.Evaluate(ctx, adaptedIdentity, originalAdaptationOperation)
+	if err != nil || initialAdaptationDecision.Outcome != policy.Deny || initialAdaptationDecision.Reason != policy.ReasonPerActionLimit || initialAdaptationDecision.AdaptationGrantID == "" {
+		t.Fatalf("initial adaptation decision=%+v err=%v", initialAdaptationDecision, err)
+	}
+	adaptationGrant, err := adaptationStore.GetGrant(ctx, "org_orch_it", "agent_adapted_it", initialAdaptationDecision.AdaptationGrantID)
+	if err != nil || adaptationGrant.Artifact.Grant.MaxAmountAtomic != "5" || adaptationGrant.Artifact.Grant.OriginalIntentID != originalAdaptationOperation {
+		t.Fatalf("automatic adaptation grant=%+v err=%v", adaptationGrant, err)
+	}
+	initialAdaptationReplay, err := service.Evaluate(ctx, adaptedIdentity, originalAdaptationOperation)
+	if err != nil || !initialAdaptationReplay.Replayed || initialAdaptationReplay.AdaptationGrantID != initialAdaptationDecision.AdaptationGrantID || adaptationSignerCalls.Load() != 2 {
+		t.Fatalf("adaptation replay=%+v signerCalls=%d err=%v", initialAdaptationReplay, adaptationSignerCalls.Load(), err)
+	}
+	readAdaptationDecision, err := service.Decision(ctx, adaptedIdentity, originalAdaptationOperation)
+	if err != nil || readAdaptationDecision.AdaptationGrantID != initialAdaptationDecision.AdaptationGrantID || adaptationSignerCalls.Load() != 2 {
+		t.Fatalf("adaptation read=%+v signerCalls=%d err=%v", readAdaptationDecision, adaptationSignerCalls.Load(), err)
+	}
+	updatedPolicy := adaptedPolicy
+	updatedPolicy.Version = "policy_adapted_it_2"
+	updatedPolicy.PerActionLimitAtomic, updatedPolicy.AutoApproveThresholdAtomic = "4", "4"
+	updatedPolicyJSON, _ := json.Marshal(updatedPolicy)
+	policyTx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policyTx.ExecContext(ctx, `UPDATE policies SET active=false WHERE organization_id='org_orch_it' AND agent_id='agent_adapted_it' AND active=true`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policyTx.ExecContext(ctx, `
+		INSERT INTO policies (organization_id,agent_id,version,config,active,activated_at)
+		VALUES ('org_orch_it','agent_adapted_it',$1,$2,true,$3)`, updatedPolicy.Version, updatedPolicyJSON, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := policyTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	adaptedOperation := insertOrchestrationIntentWithAdaptation(t, db, now, "agent_adapted_it", ascpIntegrationHash(2540), ascpIntegrationHash(2541), sellerID, resourceID, verificationHash, adaptationGrant)
 	humanIdentity := ascporchestration.Identity{OrganizationID: "org_orch_it", AgentID: "agent_human_it"}
 	humanDecision, err := service.Evaluate(ctx, humanIdentity, humanOperation)
 	if err != nil || humanDecision.Outcome != policy.RequireApproval || humanDecision.Approval == nil ||
@@ -212,7 +304,11 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 	if err != nil || autoAuthorizationReplay.AuthorizationID != autoAuthorization.AuthorizationID {
 		t.Fatalf("auto authorization replay without active policy=%+v err=%v", autoAuthorizationReplay, err)
 	}
-	var approvals, decisions, reservations int
+	adaptedDecision, err := service.Evaluate(ctx, adaptedIdentity, adaptedOperation)
+	if err != nil || adaptedDecision.Outcome != policy.RequireApproval || adaptedDecision.Reason != policy.ReasonAdaptationRejected || adaptedDecision.Approval == nil {
+		t.Fatalf("second adaptation decision=%+v err=%v", adaptedDecision, err)
+	}
+	var approvals, decisions, reservations, grantCount int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM ascp_approvals`).Scan(&approvals); err != nil {
 		t.Fatal(err)
 	}
@@ -222,8 +318,11 @@ func TestASCPOrchestrationRealPostgresHumanAndAutomaticPaths(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM ascp_budget_reservations`).Scan(&reservations); err != nil {
 		t.Fatal(err)
 	}
-	if approvals != 1 || decisions != 2 || reservations != 2 {
-		t.Fatalf("approvals=%d decisions=%d reservations=%d", approvals, decisions, reservations)
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM ascp_adaptation_grants`).Scan(&grantCount); err != nil {
+		t.Fatal(err)
+	}
+	if approvals != 2 || decisions != 6 || reservations != 2 || grantCount != 2 {
+		t.Fatalf("approvals=%d decisions=%d reservations=%d grants=%d", approvals, decisions, reservations, grantCount)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE ascp_policy_decisions SET reason='ALLOWED' WHERE decision_id=$1`, autoDecision.DecisionID); err == nil {
 		t.Fatal("append-only policy decision accepted an update")
@@ -243,9 +342,19 @@ func orchestrationPolicy(version string, requireHuman bool) policy.Config {
 	return config
 }
 
-func insertOrchestrationIntent(t *testing.T, db interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-}, now time.Time, agentID, operationID, nonce, sellerID, resourceID, verificationHash string) string {
+func insertOrchestrationIntent(t *testing.T, db *sql.DB, now time.Time, agentID, operationID, nonce, sellerID, resourceID, verificationHash string) string {
+	return insertOrchestrationIntentRecord(t, db, now, agentID, operationID, nonce, sellerID, resourceID, verificationHash, "10", ascpIntegrationPayee, "", "")
+}
+
+func insertOrchestrationIntentWithPayTo(t *testing.T, db *sql.DB, now time.Time, agentID, operationID, nonce, sellerID, resourceID, verificationHash, payTo string) string {
+	return insertOrchestrationIntentRecord(t, db, now, agentID, operationID, nonce, sellerID, resourceID, verificationHash, "10", payTo, "", "")
+}
+
+func insertOrchestrationIntentWithAdaptation(t *testing.T, db *sql.DB, now time.Time, agentID, operationID, nonce, sellerID, resourceID, verificationHash string, grant ascpadaptation.Record) string {
+	return insertOrchestrationIntentRecord(t, db, now, agentID, operationID, nonce, sellerID, resourceID, verificationHash, grant.Artifact.Grant.MaxAmountAtomic, ascpIntegrationPayee, grant.Artifact.Grant.GrantID, grant.Digest)
+}
+
+func insertOrchestrationIntentRecord(t *testing.T, db *sql.DB, now time.Time, agentID, operationID, nonce, sellerID, resourceID, verificationHash, amount, payTo, grantID, grantDigest string) string {
 	t.Helper()
 	purchase, err := purchasespec.Build(purchasespec.Input{
 		OrgID: "org_orch_it", AgentID: agentID, TaskID: "task_" + agentID,
@@ -258,7 +367,7 @@ func insertOrchestrationIntent(t *testing.T, db interface {
 	quote := sellerquote.Quote{
 		PurchaseSpecHash: purchase.PurchaseSpecHash, SellerID: sellerID, ResourceID: resourceID,
 		DirectoryVersion: 9, SchemeVersion: 1, ChainID: "84532", Asset: ascpIntegrationUSDC,
-		AmountBaseUnits: "10", PayTo: ascpIntegrationPayee, AckAuthority: ascpIntegrationAck,
+		AmountBaseUnits: amount, PayTo: payTo, AckAuthority: ascpIntegrationAck,
 		VerificationSpecHash: verificationHash, DeclaredWorkTime: 60, VerificationBudgetSeconds: 30,
 		QuoteExpiresAt: uint64(now.Add(time.Hour).Unix()), QuoteNonce: nonce,
 	}
@@ -267,15 +376,35 @@ func insertOrchestrationIntent(t *testing.T, db interface {
 		t.Fatal(err)
 	}
 	quoteJSON, _ := json.Marshal(quote)
-	if _, err := db.ExecContext(context.Background(), `
+	tx, err := db.BeginTx(t.Context(), &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(t.Context(), `
 		INSERT INTO ascp_intents
 			(operation_id,organization_id,actor_id,endpoint,idempotency_key,canonical_input_hash,
 			 quote_hash,purchase_spec_hash,quote_nonce,directory_version,directory_contract,seller_signer,
-			 quote_json,purchase_spec_json,purchase_spec_bytes,request_body,created_at)
-			VALUES ($1,'org_orch_it',$2,'ascp.intent.create',$3,$4,$5,$6,$7,9,$8,$9,$10,$11,$12,$13,$14)`,
-		operationID, agentID, "idem_"+agentID, operationID[2:], quoteHash.Hex(), purchase.PurchaseSpecHash,
+			 quote_json,purchase_spec_json,purchase_spec_bytes,request_body,adaptation_grant_id,adaptation_grant_digest,created_at)
+			VALUES ($1,'org_orch_it',$2,'ascp.intent.create',$3,$4,$5,$6,$7,9,$8,$9,$10,$11,$12,$13,NULLIF($14,''),NULLIF($15,''),$16)`,
+		operationID, agentID, "idem_"+operationID[2:], operationID[2:], quoteHash.Hex(), purchase.PurchaseSpecHash,
 		nonce, ascpIntegrationDirectory, ascpIntegrationSigner, quoteJSON, purchase.CanonicalJSON,
-		purchase.CanonicalJSON, []byte{}, now); err != nil {
+		purchase.CanonicalJSON, []byte{}, grantID, grantDigest, now); err != nil {
+		t.Fatal(err)
+	}
+	if grantID != "" {
+		result, err := tx.ExecContext(t.Context(), `
+			UPDATE ascp_adaptation_grants
+			SET state='CONSUMED',remaining_attempts=0,consumed_operation_id=$2,consumed_at=statement_timestamp()
+			WHERE grant_id=$1 AND grant_digest=$3 AND state='ISSUED' AND remaining_attempts=1`, grantID, operationID, grantDigest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+			t.Fatalf("consume adaptation grant rows=%d err=%v", rows, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	return operationID

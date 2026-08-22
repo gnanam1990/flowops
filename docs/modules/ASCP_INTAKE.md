@@ -49,9 +49,11 @@ The untrusted create body contains `taskId`, HTTP `method`, canonicalizable
 HTTPS `url`, optional exact `requestBodyBase64`, optional headers, response
 contract, category, optional reason reference, SellerQuote, and its signature.
 There is no organization, agent, directory contract/evidence, expected terms,
-policy, approval, reservation, or signer-proof field. Adaptation grants are a
-separate pending module: this route rejects `adaptationGrantId` until issuance
-and atomic grant consumption exist.
+policy, approval, reservation, or signer-proof field. An optional
+`adaptationGrantId` is resolved from durable state under the authenticated
+organization and agent; caller-supplied grant artifacts are rejected. Its
+signature and scope are independently verified and the grant is consumed in
+the same transaction as the new intent. See `ASCP_ADAPTATION_GRANTS.md`.
 
 Acceptance for this slice requires:
 

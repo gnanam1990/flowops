@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpagent"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/internal/directoryreader"
@@ -67,6 +69,15 @@ func TestASCPAgentRoutesDeriveIdentityRejectTrustedFieldsAndConcealReads(t *test
 	if recorder.Code != http.StatusBadRequest || ascp.createCalls != 1 || !bytes.Contains(recorder.Body.Bytes(), []byte(`"correlationId":"corr_test"`)) {
 		t.Fatalf("trusted-field injection status=%d calls=%d body=%s", recorder.Code, ascp.createCalls, recorder.Body.String())
 	}
+	request = httptest.NewRequest(http.MethodPost, "/agent/v1/intents", bytes.NewBufferString(`{"adaptationGrant":{"grant":{},"signature":"attacker"}}`))
+	request.Header.Set("Authorization", "Bearer "+agentTokenA)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "idem_untrusted_grant")
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || ascp.createCalls != 1 || !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"INVALID_JSON"`)) {
+		t.Fatalf("untrusted grant artifact status=%d calls=%d body=%s", recorder.Code, ascp.createCalls, recorder.Body.String())
+	}
 
 	ascp.createErr = directoryreader.ErrCurrentVersionMismatch
 	request = httptest.NewRequest(http.MethodPost, "/agent/v1/intents", bytes.NewBufferString(`{}`))
@@ -79,6 +90,33 @@ func TestASCPAgentRoutesDeriveIdentityRejectTrustedFieldsAndConcealReads(t *test
 		t.Fatalf("stale directory status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	ascp.createErr = nil
+	for _, test := range []struct {
+		name      string
+		err       error
+		want      int
+		code      string
+		retriable bool
+	}{
+		{name: "invalid adaptation grant", err: ascpadaptation.ErrInvalidGrant, want: http.StatusBadRequest, code: "INVALID_ASCP_INTENT"},
+		{name: "adaptation scope", err: ascpadaptation.ErrGrantScope, want: http.StatusBadRequest, code: "INVALID_ASCP_INTENT"},
+		{name: "adaptation consumed", err: ascpadaptation.ErrGrantConsumed, want: http.StatusConflict, code: "ADAPTATION_GRANT_CONSUMED"},
+		{name: "adaptation unavailable", err: ascpagent.ErrAdaptationUnavailable, want: http.StatusServiceUnavailable, code: "ADAPTATION_GRANT_UNAVAILABLE", retriable: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ascp.createErr = test.err
+			request := httptest.NewRequest(http.MethodPost, "/agent/v1/intents", bytes.NewBufferString(`{}`))
+			request.Header.Set("Authorization", "Bearer "+agentTokenA)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Idempotency-Key", "idem_adaptation_error")
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			retriable := fmt.Sprintf(`"retriable":%t`, test.retriable)
+			if recorder.Code != test.want || !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"`+test.code+`"`)) || !bytes.Contains(recorder.Body.Bytes(), []byte(retriable)) {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	ascp.createErr = nil
 
 	request = httptest.NewRequest(http.MethodPost, "/agent/v1/intents", bytes.NewBufferString(`{}`))
 	request.Header.Set("Authorization", "Bearer "+ownerTokenA)
@@ -86,7 +124,7 @@ func TestASCPAgentRoutesDeriveIdentityRejectTrustedFieldsAndConcealReads(t *test
 	request.Header.Set("Idempotency-Key", "idem_3")
 	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden || ascp.createCalls != 2 {
+	if recorder.Code != http.StatusForbidden || ascp.createCalls != 6 {
 		t.Fatalf("human create status=%d calls=%d", recorder.Code, ascp.createCalls)
 	}
 

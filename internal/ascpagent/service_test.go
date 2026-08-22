@@ -3,6 +3,7 @@ package ascpagent
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/pkg/purchasespec"
 	"github.com/gnanam1990/flowops/pkg/sellerquote"
@@ -98,6 +100,73 @@ func TestCreateRejectsUntrustedDeploymentAndBodyBindingsBeforeMutation(t *testin
 	if _, err := service.Create(context.Background(), Identity{OrganizationID: "org_a", AgentID: "agent_a"}, "idem_encoding", changed); !errors.Is(err, ErrInvalidRequest) || resolver.calls != 0 {
 		t.Fatalf("encoding error=%v resolverCalls=%d", err, resolver.calls)
 	}
+}
+
+func TestCreateResolvesAdaptationGrantIDThroughAuthenticatedScope(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	request, evidence := validCreateRequest(t, now)
+	store := ascpintake.NewMemoryStore()
+	intake, err := ascpintake.New(store, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{3}, 128)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.HexToECDSA(strings.Repeat("7", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := ascpadaptation.NewIssuer(adaptationTestSigner{key: key}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants, err := ascpadaptation.NewService(issuer, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := grants.Issue(t.Context(), ascpadaptation.IssueRequest{
+		ReasonClass: ascpadaptation.ReasonTooExpensive, OriginalIntentID: testHash(10),
+		OrganizationID: "org_a", AgentID: "agent_a", TaskID: request.TaskID,
+		AllowedCategory: request.Category, MaxAmountAtomic: request.SellerQuote.AmountBaseUnits,
+		AllowedSellerSet: []string{request.SellerQuote.SellerID}, IssuedAt: now.Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AdaptationGrantID = record.Artifact.Grant.GrantID
+	signer := strings.ToLower(crypto.PubkeyToAddress(key.PublicKey).Hex())
+	service, err := New(Config{
+		Intake: intake, Reader: store, Directory: &stubDirectory{evidence: evidence},
+		DirectoryContract: testDirectory, ChainID: testChainID, Asset: testAsset, SchemeVersion: 1,
+		AdaptationSigner: signer, Adaptations: store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.Create(t.Context(), Identity{OrganizationID: "org_a", AgentID: "agent_a"}, "idem_adapted", request)
+	if err != nil || created.AdaptationGrantID != request.AdaptationGrantID {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+
+	request.AdaptationGrantID = "bad"
+	if _, err := service.Create(t.Context(), Identity{OrganizationID: "org_a", AgentID: "agent_a"}, "idem_bad_grant", request); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("malformed adaptation ID error=%v", err)
+	}
+	request.AdaptationGrantID = record.Artifact.Grant.GrantID
+	if _, err := service.Create(t.Context(), Identity{OrganizationID: "org_a", AgentID: "agent_b"}, "idem_cross_agent", request); !errors.Is(err, ErrUnsupportedTerms) {
+		t.Fatalf("cross-agent PurchaseSpec binding error=%v", err)
+	}
+	unconfigured, err := New(Config{Intake: intake, Reader: store, Directory: &stubDirectory{evidence: evidence}, DirectoryContract: testDirectory, ChainID: testChainID, Asset: testAsset, SchemeVersion: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unconfigured.Create(t.Context(), Identity{OrganizationID: "org_a", AgentID: "agent_a"}, "idem_unconfigured", request); !errors.Is(err, ErrAdaptationUnavailable) {
+		t.Fatalf("unconfigured adaptation error=%v", err)
+	}
+}
+
+type adaptationTestSigner struct{ key *ecdsa.PrivateKey }
+
+func (s adaptationTestSigner) SignDigest(_ context.Context, digest []byte) ([]byte, error) {
+	return crypto.Sign(digest, s.key)
 }
 
 type stubDirectory struct {

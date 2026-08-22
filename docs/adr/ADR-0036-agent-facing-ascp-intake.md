@@ -40,6 +40,7 @@ converted into a successful operation.
 This decision wires intake and read status only. It does not claim policy
 approval, execution authorization, signer activation, relay, settlement, or
 accounting completion; those remain separate state-machine boundaries.
-Adaptation-grant issuance and atomic consumption are also not implemented in
-this slice; `adaptationGrantId` is therefore rejected as an unknown field
-rather than accepted without enforcement.
+ADR-0056 extends this boundary with an optional ID-only adaptation grant.
+The server resolves the artifact from tenant-and-agent-scoped durable state;
+signature/scope verification and grant consumption are enforced atomically
+with intent creation. Caller-supplied grant bytes remain rejected.

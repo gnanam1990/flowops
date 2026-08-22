@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpapproval"
 	"github.com/gnanam1990/flowops/internal/ascpexecauth"
+	"github.com/gnanam1990/flowops/internal/policy"
 )
 
 func TestDeliveryDeadlinesSatisfyOnchainMinimums(t *testing.T) {
@@ -53,6 +55,23 @@ func TestOrgDomainIsStableAndScoped(t *testing.T) {
 	other, _ := OrgDomain("org_b")
 	if first != replay || first == other || !validHash(first) {
 		t.Fatalf("first=%s replay=%s other=%s", first, replay, other)
+	}
+}
+
+func TestSecondAdaptiveRejectionEscalatesButBlockedCategoryDoesNot(t *testing.T) {
+	for _, reason := range []policy.Reason{policy.ReasonPerActionLimit, policy.ReasonTaskBudget, policy.ReasonDailyBudget, policy.ReasonRecipientNotAllowed} {
+		decision := escalateAdaptedRejection(policy.Decision{Outcome: policy.Deny, Reason: reason, PolicyVersion: "policy_1"}, true)
+		if decision.Outcome != policy.RequireApproval || decision.Reason != policy.ReasonAdaptationRejected || decision.PolicyVersion != "policy_1" {
+			t.Fatalf("reason=%s decision=%+v", reason, decision)
+		}
+	}
+	blocked := escalateAdaptedRejection(policy.Decision{Outcome: policy.Deny, Reason: policy.ReasonBlockedCategory}, true)
+	if blocked.Outcome != policy.Deny || blocked.Reason != policy.ReasonBlockedCategory {
+		t.Fatalf("blocked category became escalatable: %+v", blocked)
+	}
+	ordinary := escalateAdaptedRejection(policy.Decision{Outcome: policy.Deny, Reason: policy.ReasonPerActionLimit}, false)
+	if ordinary.Outcome != policy.Deny || ordinary.Reason != policy.ReasonPerActionLimit {
+		t.Fatalf("ordinary rejection changed: %+v", ordinary)
 	}
 }
 
@@ -128,6 +147,9 @@ func (s *serviceStoreStub) AuthorizationInput(_ context.Context, _ Identity, _, 
 }
 func (s *serviceStoreStub) Authorization(context.Context, Identity, string) (Authorization, error) {
 	return s.authorization, s.authorizationErr
+}
+func (s *serviceStoreStub) AdaptationRequest(context.Context, Identity, string) (ascpadaptation.IssueRequest, error) {
+	return ascpadaptation.IssueRequest{}, ascpadaptation.ErrReasonIneligible
 }
 
 type authorizationStub struct {

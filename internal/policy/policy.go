@@ -55,6 +55,7 @@ const (
 	ReasonRailRequiresApproval   Reason = "RAIL_REQUIRES_APPROVAL"
 	ReasonPilotPerActionLimit    Reason = "PILOT_PER_ACTION_LIMIT_EXCEEDED"
 	ReasonPilotOutstandingLimit  Reason = "PILOT_OUTSTANDING_LIMIT_EXCEEDED"
+	ReasonAdaptationRejected     Reason = "ADAPTATION_REJECTED"
 )
 
 type Config struct {

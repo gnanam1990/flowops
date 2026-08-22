@@ -16,6 +16,8 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 		"FLOWOPS_DATABASE_URL", "FLOWOPS_ENVELOPE_KEY_ID", "FLOWOPS_ENVELOPE_PRIVATE_KEY_B64",
 		"FLOWOPS_SITE_SESSION_KEY_B64", "FLOWOPS_RECONCILIATION_JOURNAL", "FLOWOPS_OPERATOR_CONTROL_KEY_B64",
 		"FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64",
+		"FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS", "FLOWOPS_ASCP_ADAPTATION_KEY_ID",
+		"FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET", "FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT",
 		"FLOWOPS_BASE_RPC_PROVIDERS_JSON",
 		"FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC",
 	} {
@@ -47,6 +49,26 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	t.Setenv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE", "6m")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("oversized ASCP directory freshness window was accepted")
+	}
+	t.Setenv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE", "1m")
+	t.Setenv("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS", "0x2222222222222222222222222222222222222222")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("partial adaptation signer configuration was accepted")
+	}
+	t.Setenv("FLOWOPS_ASCP_ADAPTATION_KEY_ID", "adaptation_key_1")
+	t.Setenv("FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "2")
+	t.Setenv("FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET", "/tmp/flowops-adaptation-hsm.sock")
+	t.Setenv("FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT", "2s")
+	cfg, err = loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ascpAdaptationKeyEpoch != 2 || cfg.ascpAdaptationTimeout != 2*time.Second || cfg.ascpAdaptationKeyID != "adaptation_key_1" {
+		t.Fatalf("adaptation config=%+v", cfg)
+	}
+	t.Setenv("FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "02")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("noncanonical adaptation key epoch was accepted")
 	}
 }
 

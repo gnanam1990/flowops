@@ -11,15 +11,17 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/internal/ascpintake"
 	"github.com/gnanam1990/flowops/pkg/purchasespec"
 	"github.com/gnanam1990/flowops/pkg/sellerquote"
 )
 
 var (
-	ErrInvalidIdentity  = errors.New("authenticated ASCP agent identity is invalid")
-	ErrInvalidRequest   = errors.New("ASCP agent intake request is invalid")
-	ErrUnsupportedTerms = errors.New("seller quote uses unsupported deployment terms")
+	ErrInvalidIdentity       = errors.New("authenticated ASCP agent identity is invalid")
+	ErrInvalidRequest        = errors.New("ASCP agent intake request is invalid")
+	ErrUnsupportedTerms      = errors.New("seller quote uses unsupported deployment terms")
+	ErrAdaptationUnavailable = errors.New("adaptation grant intake is unavailable")
 )
 
 type Identity struct {
@@ -46,10 +48,15 @@ type CreateRequest struct {
 	ReasonRef            *purchasespec.ReasonRef       `json:"reasonRef,omitempty"`
 	SellerQuote          sellerquote.Quote             `json:"sellerQuote"`
 	SellerQuoteSignature string                        `json:"sellerQuoteSignature"`
+	AdaptationGrantID    string                        `json:"adaptationGrantId,omitempty"`
 }
 
 type DirectoryResolver interface {
 	EvidenceForQuote(context.Context, sellerquote.Quote) (string, sellerquote.DirectoryEvidence, error)
+}
+
+type AdaptationReader interface {
+	GetGrant(context.Context, string, string, string) (ascpadaptation.Record, error)
 }
 
 type Config struct {
@@ -60,6 +67,8 @@ type Config struct {
 	ChainID           uint64
 	Asset             string
 	SchemeVersion     uint16
+	AdaptationSigner  string
+	Adaptations       AdaptationReader
 }
 
 type Service struct {
@@ -70,6 +79,8 @@ type Service struct {
 	chainID           string
 	asset             string
 	schemeVersion     uint16
+	adaptationSigner  string
+	adaptations       AdaptationReader
 }
 
 func New(cfg Config) (*Service, error) {
@@ -79,9 +90,13 @@ func New(cfg Config) (*Service, error) {
 		len(cfg.Asset) != 42 || strings.ToLower(cfg.Asset) != cfg.Asset || !common.IsHexAddress(cfg.Asset) || common.HexToAddress(cfg.Asset) == (common.Address{}) {
 		return nil, errors.New("valid durable intake, reader, directory resolver, chain, asset, and scheme are required")
 	}
+	if cfg.AdaptationSigner != "" && (len(cfg.AdaptationSigner) != 42 || strings.ToLower(cfg.AdaptationSigner) != cfg.AdaptationSigner || !common.IsHexAddress(cfg.AdaptationSigner) || common.HexToAddress(cfg.AdaptationSigner) == (common.Address{})) {
+		return nil, errors.New("adaptation signer must be a canonical nonzero address")
+	}
 	return &Service{
 		intake: cfg.Intake, reader: cfg.Reader, directory: cfg.Directory, directoryContract: cfg.DirectoryContract,
 		chainID: fmt.Sprint(cfg.ChainID), asset: cfg.Asset, schemeVersion: cfg.SchemeVersion,
+		adaptationSigner: cfg.AdaptationSigner, adaptations: cfg.Adaptations,
 	}, nil
 }
 
@@ -109,11 +124,26 @@ func (s *Service) Create(ctx context.Context, identity Identity, idempotencyKey 
 	if quote.PurchaseSpecHash != spec.PurchaseSpecHash || quote.ChainID != s.chainID || quote.Asset != s.asset || quote.SchemeVersion != s.schemeVersion {
 		return ascpintake.Operation{}, ErrUnsupportedTerms
 	}
+	var adaptation *ascpadaptation.SignedGrant
+	if request.AdaptationGrantID != "" {
+		if !validOperationID(request.AdaptationGrantID) {
+			return ascpintake.Operation{}, fmt.Errorf("%w: adaptationGrantId", ErrInvalidRequest)
+		}
+		if s.adaptations == nil || s.adaptationSigner == "" {
+			return ascpintake.Operation{}, ErrAdaptationUnavailable
+		}
+		record, err := s.adaptations.GetGrant(ctx, identity.OrganizationID, identity.AgentID, request.AdaptationGrantID)
+		if err != nil {
+			return ascpintake.Operation{}, err
+		}
+		adaptation = &record.Artifact
+	}
 	intakeRequest := ascpintake.Request{
 		OrganizationID: identity.OrganizationID, ActorID: identity.AgentID, IdempotencyKey: idempotencyKey,
 		DirectoryContract: s.directoryContract, Quote: quote, Signature: request.SellerQuoteSignature,
 		Expected:              sellerquote.ExpectedTerms{PurchaseSpecHash: spec.PurchaseSpecHash, SchemeVersion: s.schemeVersion, ChainID: s.chainID, Asset: s.asset},
 		CanonicalPurchaseSpec: spec.CanonicalJSON, RequestBody: body,
+		Adaptation: adaptation, AdaptationSigner: s.adaptationSigner,
 	}
 	if replayed, found, err := s.intake.Replay(ctx, intakeRequest); err != nil || found {
 		return replayed, err

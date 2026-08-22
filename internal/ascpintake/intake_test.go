@@ -17,6 +17,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gnanam1990/flowops/internal/ascpadaptation"
 	"github.com/gnanam1990/flowops/pkg/purchasespec"
 	"github.com/gnanam1990/flowops/pkg/sellerquote"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -89,6 +90,121 @@ func TestCreateHasOneConcurrentNonceOwner(t *testing.T) {
 	}
 }
 
+func TestAdaptationGrantIssuesIdempotentlyAndConsumesWithIntentAtomically(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	store := NewMemoryStore()
+	key := quoteKey(t)
+	var signerCalls atomic.Int32
+	issuer, err := ascpadaptation.NewIssuer(adaptationSigner{key: key, calls: &signerCalls}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants, err := ascpadaptation.NewService(issuer, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := ascpadaptation.IssueRequest{
+		ReasonClass: ascpadaptation.ReasonTooExpensive, OriginalIntentID: hash(80), OrganizationID: "org_1", AgentID: "agent_1", TaskID: "task_1",
+		AllowedCategory: "research", MaxAmountAtomic: "42", AllowedSellerSet: []string{hash(2)}, IssuedAt: now.Unix(),
+	}
+	firstGrant, err := grants.Issue(context.Background(), issue)
+	if err != nil || firstGrant.Replayed {
+		t.Fatalf("first grant=%+v err=%v", firstGrant, err)
+	}
+	replayedGrant, err := grants.Issue(context.Background(), issue)
+	if err != nil || !replayedGrant.Replayed || replayedGrant.Artifact.Grant.GrantID != firstGrant.Artifact.Grant.GrantID {
+		t.Fatalf("grant replay=%+v err=%v", replayedGrant, err)
+	}
+	changedIssue := issue
+	changedIssue.MaxAmountAtomic = "41"
+	if _, err := grants.Issue(context.Background(), changedIssue); !errors.Is(err, ascpadaptation.ErrIssueConflict) {
+		t.Fatalf("changed issue error=%v", err)
+	}
+	if signerCalls.Load() != 1 {
+		t.Fatalf("exact retry or conflict reached signer calls=%d", signerCalls.Load())
+	}
+
+	random := bytes.NewReader(bytes.Repeat([]byte{4}, 96))
+	service, err := New(store, func() time.Time { return now }, random)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validRequest(t)
+	request.Adaptation = &firstGrant.Artifact
+	request.AdaptationSigner = strings.ToLower(crypto.PubkeyToAddress(key.PublicKey).Hex())
+	created, err := service.Create(context.Background(), request)
+	if err != nil || created.AdaptationGrantID != firstGrant.Artifact.Grant.GrantID {
+		t.Fatalf("adapted create=%+v err=%v", created, err)
+	}
+	consumed, err := store.GetGrant(context.Background(), "org_1", "agent_1", created.AdaptationGrantID)
+	if err != nil || consumed.ConsumedOperationID != created.OperationID {
+		t.Fatalf("consumed=%+v err=%v", consumed, err)
+	}
+	now = now.Add(31 * time.Minute)
+	replay, err := service.Create(context.Background(), request)
+	if err != nil || !replay.Replayed || replay.OperationID != created.OperationID {
+		t.Fatalf("expired exact replay=%+v err=%v", replay, err)
+	}
+	now = time.Unix(1_800_000_060, 0).UTC()
+	second := request
+	second.IdempotencyKey = "adapted_second"
+	second.Quote.QuoteNonce = hash(81)
+	second.Signature = signQuote(t, second.Quote)
+	if _, err := service.Create(context.Background(), second); !errors.Is(err, ascpadaptation.ErrGrantConsumed) {
+		t.Fatalf("second grant use error=%v", err)
+	}
+}
+
+func TestAdaptationGrantHasOneConcurrentIntentWinner(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	store := NewMemoryStore()
+	key := quoteKey(t)
+	issuer, _ := ascpadaptation.NewIssuer(adaptationSigner{key: key}, func() time.Time { return now })
+	grants, _ := ascpadaptation.NewService(issuer, store)
+	record, err := grants.Issue(context.Background(), ascpadaptation.IssueRequest{
+		ReasonClass: ascpadaptation.ReasonWrongSeller, OriginalIntentID: hash(90), OrganizationID: "org_1", AgentID: "agent_1", TaskID: "task_1",
+		AllowedCategory: "research", MaxAmountAtomic: "42", AllowedSellerSet: []string{hash(2)}, IssuedAt: now.Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids atomic.Uint64
+	service := &Service{store: store, clock: func() time.Time { return now }, newID: func() (string, error) { return hash(ids.Add(200)), nil }}
+	const callers = 32
+	results := make(chan error, callers)
+	var wait sync.WaitGroup
+	for index := 0; index < callers; index++ {
+		request := validRequest(t)
+		request.IdempotencyKey = fmt.Sprintf("grant_race_%d", index)
+		request.Quote.QuoteNonce = hash(uint64(300 + index))
+		request.Signature = signQuote(t, request.Quote)
+		request.Adaptation = &record.Artifact
+		request.AdaptationSigner = strings.ToLower(crypto.PubkeyToAddress(key.PublicKey).Hex())
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, err := service.Create(context.Background(), request)
+			results <- err
+		}()
+	}
+	wait.Wait()
+	close(results)
+	winners, consumed := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			winners++
+		case errors.Is(err, ascpadaptation.ErrGrantConsumed):
+			consumed++
+		default:
+			t.Fatalf("unexpected grant race error=%v", err)
+		}
+	}
+	if winners != 1 || consumed != callers-1 {
+		t.Fatalf("winners=%d consumed=%d", winners, consumed)
+	}
+}
+
 func TestFailedValidationNeverClaimsNonce(t *testing.T) {
 	store := NewMemoryStore()
 	service := &Service{store: store, clock: func() time.Time { return time.Unix(1_800_000_000, 0) }, newID: func() (string, error) { return hash(77), nil }}
@@ -119,7 +235,7 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store, err := NewPostgresStore(db)
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +246,7 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	mock.ExpectQuery(`INSERT INTO ascp_intents`).WithArgs(
 		input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, input.IdempotencyKey, input.CanonicalInputHash,
 		input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(input.Operation.DirectoryVersion), input.Operation.DirectoryContract, input.Operation.SellerSigner,
-		input.QuoteJSON, input.PurchaseSpecJSON, input.PurchaseSpecJSON, input.RequestBody, input.Operation.CreatedAt,
+		input.QuoteJSON, input.PurchaseSpecJSON, input.PurchaseSpecJSON, input.RequestBody, "", "", input.Operation.CreatedAt,
 	).WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 	mock.ExpectCommit()
 	created, replayed, err := store.Create(context.Background(), input)
@@ -141,8 +257,8 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO ascp_intents`).WillReturnRows(sqlmock.NewRows([]string{"created_at"}))
 	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).WithArgs("org_1", "agent_1", Endpoint, "intake_1").WillReturnRows(
-		sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "created_at", "canonical_input_hash"}).AddRow(
-			input.Operation.OperationID, "org_1", "agent_1", input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(9), input.Operation.DirectoryContract, input.Operation.SellerSigner, now, input.CanonicalInputHash,
+		sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "adaptation_grant_id", "created_at", "canonical_input_hash"}).AddRow(
+			input.Operation.OperationID, "org_1", "agent_1", input.Operation.QuoteHash, input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(9), input.Operation.DirectoryContract, input.Operation.SellerSigner, "", now, input.CanonicalInputHash,
 		),
 	)
 	mock.ExpectCommit()
@@ -152,10 +268,10 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	}
 	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
 		WithArgs(input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID).
-		WillReturnRows(sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "created_at"}).AddRow(
+		WillReturnRows(sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "adaptation_grant_id", "created_at"}).AddRow(
 			input.Operation.OperationID, input.Operation.OrganizationID, input.Operation.ActorID, input.Operation.QuoteHash,
 			input.Operation.PurchaseSpecHash, input.Operation.QuoteNonce, int64(9), input.Operation.DirectoryContract,
-			input.Operation.SellerSigner, now,
+			input.Operation.SellerSigner, "", now,
 		))
 	read, err := store.Get(context.Background(), input.Operation.OrganizationID, input.Operation.ActorID, input.Operation.OperationID)
 	if err != nil || read.OperationID != input.Operation.OperationID || read.CreatedAt != now.Unix() {
@@ -163,7 +279,7 @@ func TestPostgresStorePersistsAndReplaysSameOperation(t *testing.T) {
 	}
 	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
 		WithArgs(input.Operation.OperationID, input.Operation.OrganizationID, "agent_other").
-		WillReturnRows(sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "created_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash", "quote_nonce", "directory_version", "directory_contract", "seller_signer", "adaptation_grant_id", "created_at"}))
 	if _, err := store.Get(context.Background(), input.Operation.OrganizationID, "agent_other", input.Operation.OperationID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-actor read error=%v", err)
 	}
@@ -230,6 +346,21 @@ func sign(t *testing.T, key *ecdsa.PrivateKey, quote sellerquote.Quote) string {
 		t.Fatal(err)
 	}
 	return "0x" + hex.EncodeToString(signature)
+}
+
+type adaptationSigner struct {
+	key   *ecdsa.PrivateKey
+	calls *atomic.Int32
+}
+
+func (s adaptationSigner) SignDigest(ctx context.Context, digest []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.calls != nil {
+		s.calls.Add(1)
+	}
+	return crypto.Sign(digest, s.key)
 }
 
 func hash(value uint64) string { return fmt.Sprintf("0x%064x", value) }
