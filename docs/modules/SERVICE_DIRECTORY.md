@@ -3,10 +3,11 @@
 ## Why and entry
 
 `contracts/src/ServiceDirectory.sol` is the governed source of active seller
-and resource roots. A future escrow/signer checks its current root and proves
-the exact seller/resource leaves before any money lock. The contract's entry
-points are proposal, governor approval/cancellation, delayed activation, and
-one-way protective overlay calls.
+and resource roots. `ASCPCallEscrow` checks its current root and proves the exact
+seller/resource leaves before every new money lock; the legacy `CallEscrow`
+does not consume this directory. The contract's entry points are proposal,
+governor approval/cancellation, delayed activation, and one-way protective
+overlay calls.
 
 ## Inputs, outputs, and boundaries
 
@@ -20,6 +21,13 @@ The governor contract approves a full proposal hash; activation waits one hour
 for ordinary changes or 24 hours for payout/key authority changes. The active
 output is `currentVersion()` plus `currentRoot()`. `verifySeller` and
 `verifyResource` accept only proofs against that current version/root.
+
+The proposal's `workflowPayloadHash` is recomputed on-chain from the exact
+version predecessor, roots, blob/location hashes, change class, activation
+request, Base chain, directory address, workflow ID, and approval selector. Governor
+approval emits `GovernanceWorkflowBound` with the immutable workflow ID and
+payload hash. `cancelVersion` requires a separate exact `DIRECTORY_CANCEL`
+workflow binding and emits the same receipt event beside `VersionCancelled`.
 
 `pauseSeller(true)` and `setQuoteKeyRevoked(true)` require a pauser
 authorization. Their `false` variants require the governor. No directory call
@@ -38,8 +46,9 @@ payment.
 - Missing/unavailable directory blobs are not handled by this contract. The
   approval/reconciliation service must freeze affected intake until a verified,
   governor-recorded replacement is available.
-- The current `CallEscrow` does not consume this directory; that integration is
-  intentionally a later audited migration.
+- The legacy `CallEscrow` does not consume this directory. `ASCPCallEscrow`
+  does enforce the current directory version, leaf proofs, pause overlay, and
+  quote-key revocation at every new lock.
 
 Run `forge test --match-path contracts/test/ServiceDirectory.t.sol -vv` for
 the focused test and fuzz suite.

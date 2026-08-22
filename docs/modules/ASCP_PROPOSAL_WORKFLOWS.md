@@ -40,6 +40,12 @@ Chain-backed workflows transition from `PROPOSED` to
 independent finalized-receipt verifier, can reach `APPROVED`. The main API is
 currently wired without that verifier and therefore fails closed.
 
+Chain governance contracts now recompute the exact approved payload and emit a
+shared workflow-binding event with the action event. See
+`ASCP_GOVERNANCE_WORKFLOW_BINDINGS.md`. The independent finalized receipt
+observer and one-time receipt ownership check remain the next completion
+boundary; contract events alone do not mutate workflow state.
+
 ## Persistence and operations
 
 Migration `0027_ascp_proposal_workflows.sql` adds the authoritative workflow,

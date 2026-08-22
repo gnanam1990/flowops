@@ -33,7 +33,7 @@ For an allowance, the module reconstructs the only permitted `approve(spender,ne
 
 ## Outputs and interfaces
 
-Successful actions emit `LockExecuted` or `AllowanceExecuted`; governance emits authorizer, allowlist, cap, pause, and nonce-invalidation events. Public state supports reconciliation of authorizer epoch, pause, allowlist code hashes, consumed nonces, pending/active caps, lifetime executed principal, and per-day executed principal.
+Successful actions emit `LockExecuted` or `AllowanceExecuted`; governance emits authorizer, allowlist, cap, pause, and nonce-invalidation events plus the exact `GovernanceWorkflowBound` receipt event. Every Safe-only governance function now requires `workflowId` and `workflowPayloadHash`; the hash binds chain, module, workflow ID, selector, current-state preconditions, and proposed values. Public state supports reconciliation of authorizer epoch, pause, allowlist code hashes, consumed nonces, pending/active caps, lifetime executed principal, and per-day executed principal.
 
 The Safe must implement `execTransactionFromModule(address,uint256,bytes,uint8) returns (bool)` and enable this module through its owner-governed module lifecycle. The configured token must expose ERC-20 `allowance` and `approve`. Escrows must expose the reviewed `ASCPCallEscrow` ABI and exact runtime code hash.
 

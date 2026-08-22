@@ -22,7 +22,10 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
 
     uint64 public constant MAX_AUTHORIZATION_WINDOW = 10 minutes;
     uint64 public constant CAP_ACTIVATION_DELAY = 1 hours;
+    // Keep synchronized with governanceworkflow.MaxGovernanceNonceInvalidations.
+    uint256 public constant MAX_GOVERNANCE_NONCE_INVALIDATIONS = 100;
     uint8 private constant SAFE_OPERATION_CALL = 0;
+    bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("ASCP_SPEND_MODULE_GOVERNANCE_V1");
 
     bytes32 public constant LOCK_AUTHORIZATION_TYPEHASH = keccak256(
         "LockAuthorization(bytes32 orgDomain,address safe,bytes32 operationId,bytes32 commitmentHash,bytes32 calldataHash,address escrow,uint256 amount,uint64 validAfter,uint64 validBefore,bytes32 nonce,uint64 leadershipEpoch,uint64 authorizerEpoch)"
@@ -105,6 +108,9 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     event CapsActivated(uint256 perTransaction, uint256 perDay, uint256 allowanceCeiling);
     event EmergencyPauseSet(bool paused);
     event NonceInvalidated(bytes32 indexed nonce);
+    event GovernanceWorkflowBound(
+        bytes32 indexed workflowId, bytes32 indexed workflowPayloadHash, bytes4 indexed functionSelector
+    );
 
     error NotSafe(address caller);
     error InvalidContract(address account);
@@ -126,6 +132,12 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     error SafeExecutionFailed();
     error InvalidCaps();
     error CapsNotReady(uint64 activatesAt);
+    error CapsAlreadyPending(uint64 activatesAt);
+    error CapsUnchanged();
+    error EscrowAllowlistUnchanged(address escrow, bytes32 runtimeCodeHash);
+    error InvalidNonceInvalidationCount(uint256 count);
+    error InvalidWorkflowBinding();
+    error PauseUnchanged(bool paused);
 
     modifier onlySafe() {
         if (msg.sender != safe) revert NotSafe(msg.sender);
@@ -269,14 +281,37 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
         );
     }
 
-    function setSpendAuthorizer(address newAuthorizer) external onlySafe {
+    function setSpendAuthorizer(address newAuthorizer, bytes32 workflowId, bytes32 workflowPayloadHash)
+        external
+        onlySafe
+    {
         if (newAuthorizer == address(0)) revert InvalidAuthorizer();
+        _requireGovernanceWorkflow(
+            this.setSpendAuthorizer.selector,
+            keccak256(abi.encode(spendAuthorizer, authorizerEpoch, newAuthorizer)),
+            workflowId,
+            workflowPayloadHash
+        );
         spendAuthorizer = newAuthorizer;
         authorizerEpoch += 1;
         emit SpendAuthorizerSet(newAuthorizer, authorizerEpoch);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setSpendAuthorizer.selector);
     }
 
-    function setEscrowAllowlist(address escrow, bytes32 runtimeCodeHash) external onlySafe {
+    function setEscrowAllowlist(
+        address escrow,
+        bytes32 runtimeCodeHash,
+        bytes32 workflowId,
+        bytes32 workflowPayloadHash
+    ) external onlySafe {
+        bytes32 currentCodeHash = escrowAllowlist[escrow];
+        if (currentCodeHash == runtimeCodeHash) revert EscrowAllowlistUnchanged(escrow, runtimeCodeHash);
+        _requireGovernanceWorkflow(
+            this.setEscrowAllowlist.selector,
+            keccak256(abi.encode(escrow, currentCodeHash, runtimeCodeHash)),
+            workflowId,
+            workflowPayloadHash
+        );
         if (runtimeCodeHash != bytes32(0)) {
             if (escrow.code.length == 0) revert InvalidContract(escrow);
             bytes32 actual = escrow.codehash;
@@ -284,13 +319,35 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
         }
         escrowAllowlist[escrow] = runtimeCodeHash;
         emit EscrowAllowlistSet(escrow, runtimeCodeHash);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setEscrowAllowlist.selector);
     }
 
-    function scheduleCaps(Caps calldata newCaps) external onlySafe {
+    function scheduleCaps(Caps calldata newCaps, bytes32 workflowId, bytes32 workflowPayloadHash) external onlySafe {
         _validateCaps(newCaps);
+        if (pendingCaps.activatesAt != 0) revert CapsAlreadyPending(pendingCaps.activatesAt);
+        if (
+            newCaps.perTransaction == caps.perTransaction && newCaps.perDay == caps.perDay
+                && newCaps.allowanceCeiling == caps.allowanceCeiling
+        ) revert CapsUnchanged();
+        _requireGovernanceWorkflow(
+            this.scheduleCaps.selector,
+            keccak256(
+                abi.encode(
+                    caps.perTransaction,
+                    caps.perDay,
+                    caps.allowanceCeiling,
+                    newCaps.perTransaction,
+                    newCaps.perDay,
+                    newCaps.allowanceCeiling
+                )
+            ),
+            workflowId,
+            workflowPayloadHash
+        );
         uint64 activatesAt = uint64(block.timestamp) + CAP_ACTIVATION_DELAY;
         pendingCaps = PendingCaps(newCaps, activatesAt);
         emit CapsScheduled(newCaps.perTransaction, newCaps.perDay, newCaps.allowanceCeiling, activatesAt);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.scheduleCaps.selector);
     }
 
     function activateCaps() external {
@@ -303,19 +360,61 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
         emit CapsActivated(pending.values.perTransaction, pending.values.perDay, pending.values.allowanceCeiling);
     }
 
-    function setEmergencyPause(bool paused) external onlySafe {
+    function setEmergencyPause(bool paused, bytes32 workflowId, bytes32 workflowPayloadHash) external onlySafe {
+        if (emergencyPaused == paused) revert PauseUnchanged(paused);
+        _requireGovernanceWorkflow(
+            this.setEmergencyPause.selector,
+            keccak256(abi.encode(emergencyPaused, paused)),
+            workflowId,
+            workflowPayloadHash
+        );
         emergencyPaused = paused;
         emit EmergencyPauseSet(paused);
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.setEmergencyPause.selector);
     }
 
-    function invalidateNonces(bytes32[] calldata nonces) external onlySafe {
+    function invalidateNonces(bytes32[] calldata nonces, bytes32 workflowId, bytes32 workflowPayloadHash)
+        external
+        onlySafe
+    {
         uint256 length = nonces.length;
+        if (length == 0 || length > MAX_GOVERNANCE_NONCE_INVALIDATIONS) {
+            revert InvalidNonceInvalidationCount(length);
+        }
+        _requireGovernanceWorkflow(
+            this.invalidateNonces.selector, keccak256(abi.encode(nonces)), workflowId, workflowPayloadHash
+        );
         for (uint256 i; i < length; ++i) {
             bytes32 nonce = nonces[i];
             if (nonce == bytes32(0) || usedNonces[nonce]) revert NonceAlreadyUsed(nonce);
             usedNonces[nonce] = true;
             emit NonceInvalidated(nonce);
         }
+        emit GovernanceWorkflowBound(workflowId, workflowPayloadHash, this.invalidateNonces.selector);
+    }
+
+    function governancePayloadHash(bytes32 workflowId, bytes4 functionSelector, bytes32 argumentsHash)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                GOVERNANCE_PAYLOAD_DOMAIN, block.chainid, address(this), workflowId, functionSelector, argumentsHash
+            )
+        );
+    }
+
+    function _requireGovernanceWorkflow(
+        bytes4 functionSelector,
+        bytes32 argumentsHash,
+        bytes32 workflowId,
+        bytes32 workflowPayloadHash
+    ) private view {
+        if (
+            workflowId == bytes32(0) || workflowPayloadHash == bytes32(0)
+                || workflowPayloadHash != governancePayloadHash(workflowId, functionSelector, argumentsHash)
+        ) revert InvalidWorkflowBinding();
     }
 
     function _requireActiveAuthorization(

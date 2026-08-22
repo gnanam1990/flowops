@@ -10,7 +10,11 @@ contract DirectoryGovernor {
     }
 
     function cancel(ServiceDirectory directory, uint64 versionId, bytes32 proposalHash) external {
-        directory.cancelVersion(versionId, proposalHash);
+        bytes32 workflowId = keccak256(abi.encode("cancel-workflow", versionId, proposalHash));
+        bytes32 payloadHash = directory.governancePayloadHash(
+            workflowId, directory.cancelVersion.selector, keccak256(abi.encode(versionId, proposalHash))
+        );
+        directory.cancelVersion(versionId, proposalHash, workflowId, payloadHash);
     }
 
     function setSellerPaused(ServiceDirectory directory, bytes32 sellerId, bool paused) external {
@@ -88,8 +92,15 @@ contract ServiceDirectoryTest is Test {
         ServiceDirectory.AdminActionAuthorization memory authorization = _proposalAuthorization(proposal, 11);
         bytes memory signature = _sign(PUBLISHER_KEY, authorization);
 
-        ServiceDirectory.DirectoryProposal memory substituted = proposal;
+        ServiceDirectory.DirectoryProposal memory substituted =
+            abi.decode(abi.encode(proposal), (ServiceDirectory.DirectoryProposal));
         substituted.newRoot = keccak256("substituted-root");
+        vm.expectRevert(ServiceDirectory.InvalidWorkflowBinding.selector);
+        vm.prank(relayer);
+        directory.proposeVersion(substituted, authorization, signature);
+
+        substituted = abi.decode(abi.encode(proposal), (ServiceDirectory.DirectoryProposal));
+        substituted.proposerNonce = proposal.proposerNonce + 1;
         vm.expectRevert(ServiceDirectory.InvalidAuthorization.selector);
         vm.prank(relayer);
         directory.proposeVersion(substituted, authorization, signature);
@@ -135,6 +146,67 @@ contract ServiceDirectoryTest is Test {
             )
         );
         governor.cancel(directory, 1, secondHash);
+    }
+
+    function testDirectoryProposalAndCancellationRejectWorkflowPayloadSubstitution() public {
+        (,, bytes32 root) = _leavesAndRoot();
+        ServiceDirectory.DirectoryProposal memory proposal =
+            _proposal(root, 1, 25, ServiceDirectory.ChangeClass.Ordinary, uint64(block.timestamp));
+        proposal.workflowPayloadHash = keccak256("wrong-payload");
+        ServiceDirectory.AdminActionAuthorization memory authorization = _proposalAuthorization(proposal, 25);
+        bytes memory signature = _sign(PUBLISHER_KEY, authorization);
+        vm.expectRevert(ServiceDirectory.InvalidWorkflowBinding.selector);
+        vm.prank(relayer);
+        directory.proposeVersion(proposal, authorization, signature);
+
+        proposal.workflowPayloadHash = directory.directoryProposalWorkflowPayloadHash(proposal);
+        bytes32 proposalHash = _propose(proposal, PUBLISHER_KEY, 26);
+        bytes32 cancelWorkflowId = keccak256("cancel-workflow");
+        bytes32 wrong = directory.governancePayloadHash(
+            cancelWorkflowId, directory.cancelVersion.selector, keccak256(abi.encode(uint64(1), bytes32(uint256(1))))
+        );
+        vm.expectRevert(ServiceDirectory.InvalidWorkflowBinding.selector);
+        vm.prank(address(governor));
+        directory.cancelVersion(1, proposalHash, cancelWorkflowId, wrong);
+
+        bytes32 exact = directory.governancePayloadHash(
+            cancelWorkflowId, directory.cancelVersion.selector, keccak256(abi.encode(uint64(1), proposalHash))
+        );
+        vm.expectRevert(ServiceDirectory.InvalidWorkflowBinding.selector);
+        vm.prank(address(governor));
+        directory.cancelVersion(1, proposalHash, keccak256("wrong-workflow"), exact);
+    }
+
+    function testGovernancePayloadMatchesPublishedGoGoldenVector() public {
+        address fixedDirectory = 0x1111111111111111111111111111111111111111;
+        vm.etch(fixedDirectory, address(directory).code);
+        vm.chainId(8453);
+        ServiceDirectory.DirectoryProposal memory proposal = ServiceDirectory.DirectoryProposal({
+            versionId: 2,
+            previousVersion: 1,
+            previousRoot: bytes32(uint256(5)),
+            newRoot: bytes32(uint256(6)),
+            blobContentHash: bytes32(uint256(7)),
+            locationsHash: bytes32(uint256(8)),
+            changeClass: ServiceDirectory.ChangeClass.PayoutOrAuthorityAffecting,
+            requestedActivatesAt: 1_800_000_000,
+            workflowId: bytes32(uint256(10)),
+            workflowPayloadHash: bytes32(0),
+            proposerNonce: 11
+        });
+        assertEq(
+            ServiceDirectory(fixedDirectory).directoryProposalWorkflowPayloadHash(proposal),
+            0xf577289b92b129c625813d0725e72da6c048a94651ad07508083ecc3a01f24b9
+        );
+        assertEq(
+            ServiceDirectory(fixedDirectory)
+                .governancePayloadHash(
+                    proposal.workflowId,
+                    ServiceDirectory(fixedDirectory).cancelVersion.selector,
+                    keccak256(abi.encode(uint64(2), bytes32(uint256(9))))
+                ),
+            0xdffa3dea6724afbc06b8e60d4306cd37fd64c84cf20c506aa29f188791eb2b08
+        );
     }
 
     function testProtectiveOverlaysOnlyAllowHotKeyToTighten() public {
@@ -229,8 +301,8 @@ contract ServiceDirectoryTest is Test {
         uint256 nonce,
         ServiceDirectory.ChangeClass changeClass,
         uint64 requestedAt
-    ) internal pure returns (ServiceDirectory.DirectoryProposal memory) {
-        return ServiceDirectory.DirectoryProposal({
+    ) internal view returns (ServiceDirectory.DirectoryProposal memory proposal) {
+        proposal = ServiceDirectory.DirectoryProposal({
             versionId: version,
             previousVersion: 0,
             previousRoot: bytes32(0),
@@ -240,9 +312,10 @@ contract ServiceDirectoryTest is Test {
             changeClass: changeClass,
             requestedActivatesAt: requestedAt,
             workflowId: keccak256(abi.encode("workflow", nonce)),
-            workflowPayloadHash: keccak256(abi.encode("workflow-payload", nonce)),
+            workflowPayloadHash: bytes32(0),
             proposerNonce: nonce
         });
+        proposal.workflowPayloadHash = directory.directoryProposalWorkflowPayloadHash(proposal);
     }
 
     function _proposalAuthorization(ServiceDirectory.DirectoryProposal memory proposal, uint256 nonce)
