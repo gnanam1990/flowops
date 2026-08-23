@@ -422,7 +422,8 @@ function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number]
 
 function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Map<string, string>, observedAt: Date): Approval {
 	if (!isIdentifier(raw.approvalId) || !/^0x[0-9a-f]{64}$/.test(raw.reviewDigest) || !/^0x[0-9a-f]{64}$/.test(raw.operationId) ||
-		!isIdentifier(raw.agentId) || !isBoundedText(raw.taskId, 1024) || !isBoundedText(raw.category, 1024) ||
+		!isIdentifier(raw.agentId) || (raw.taskId !== "" && !isBoundedText(raw.taskId, 1024)) ||
+		(raw.category !== "" && !isBoundedText(raw.category, 1024)) ||
 		!/^0x[0-9a-f]{40}$/.test(raw.recipient) || !/^0x[0-9a-f]{40}$/.test(raw.asset) || !validUnsignedAtomic(raw.amountAtomic)) {
 		throw new Error("invalid ASCP approval");
 	}
@@ -435,7 +436,7 @@ function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Ma
 		id: raw.approvalId,
 		agent,
 		agentMark: initials(agent),
-		title: raw.category || `Task ${raw.taskId}`,
+		title: raw.category || (raw.taskId ? `Task ${raw.taskId}` : `Approval ${shortDigest(raw.approvalId)}`),
 		vendor: shortAddress(raw.recipient),
 		amount: `${formatAtomic(raw.amountAtomic)} atomic`,
 		requested: age(requestedAt, observedAt),
@@ -599,7 +600,8 @@ function validReconciliation(value: ControlReconciliation | undefined): value is
 function validASCP(value: ControlASCP | undefined): value is ControlASCP {
 	if (!value || typeof value.available !== "boolean" || !Array.isArray(value.pendingApprovals) || !Array.isArray(value.assets) || !Array.isArray(value.agentBudgets) || !Array.isArray(value.activity)) return false;
 	if (!value.assets.every((asset) => /^0x[0-9a-f]{40}$/.test(asset.asset) && validSignedAtomic(asset.walletDeltaAtomic) &&
-		[asset.escrowRestrictedAtomic, asset.recognizedExpenseAtomic, asset.spentTodayAtomic, asset.reservedAtomic, asset.pendingChainAtomic, asset.unresolvedAtomic].every(validUnsignedAtomic))) return false;
+		[asset.escrowRestrictedAtomic, asset.recognizedExpenseAtomic, asset.spentTodayAtomic].every(validSignedAtomic) &&
+		[asset.reservedAtomic, asset.pendingChainAtomic, asset.unresolvedAtomic].every(validUnsignedAtomic))) return false;
 	if (!value.agentBudgets.every((budget) => isIdentifier(budget.agentId) && typeof budget.activePolicy === "boolean" && typeof budget.policyConfigurationValid === "boolean" &&
 		[budget.dailyLimitAtomic, budget.spentTodayAtomic, budget.reservedAtomic, budget.availableAtomic].every((amount) => amount === "" || validUnsignedAtomic(amount)))) return false;
 	return true;

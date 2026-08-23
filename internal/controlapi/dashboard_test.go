@@ -65,6 +65,7 @@ func TestPostgresDashboardProjectionUsesDurableASCPRecords(t *testing.T) {
 	if !projection.Available || len(projection.PendingApprovals) != 1 || projection.PendingApprovals[0].ApprovalID != approvalID {
 		t.Fatalf("approval projection = %+v", projection.PendingApprovals)
 	}
+	// Ledger-backed fields are signed posting deltas; operation exposure is unsigned.
 	if len(projection.Assets) != 1 || projection.Assets[0].RecognizedExpenseAtomic != "25" ||
 		projection.Assets[0].EscrowRestrictedAtomic != "-25" || projection.Assets[0].ReservedAtomic != "25" ||
 		projection.Assets[0].PendingChainAtomic != "25" {

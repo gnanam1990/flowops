@@ -69,8 +69,10 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
   const exactDigest = `0x${"b".repeat(64)}`;
 	const ascpApprovalId = `0x${"c".repeat(64)}`;
 	const exactASCPReview = `0x${"d".repeat(64)}`;
+	const staleASCPReview = `0x${"e".repeat(64)}`;
   let decisionRequests = 0;
 	let ascpDecisionRequests = 0;
+	let currentASCPReview = staleASCPReview;
   let stepPrincipal = "owner_live";
   const upstream = createServer(async (request, response) => {
     const json = (status, body) => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(body)); };
@@ -87,7 +89,7 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
 	  return json(200, {
 		organizationId: "org_live",
 		pendingApprovals: [{ requestId: "req_live_1", requestDigest: exactDigest }],
-		ascp: { pendingApprovals: [{ approvalId: ascpApprovalId, reviewDigest: exactASCPReview }] },
+		ascp: { pendingApprovals: [{ approvalId: ascpApprovalId, reviewDigest: currentASCPReview }] },
 	  });
     }
     if (request.url === "/v1/approvals/req_live_1/decision") {
@@ -112,6 +114,10 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
 	  assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString("utf8")), { reviewSnapshotHash: exactASCPReview, action: "APPROVE" });
 	  return json(200, { command: { id: "cmd_ascp_1", organizationId: "org_live", actorId: "owner_live", kind: "ascp.approval.decide", state: "SUCCEEDED" } });
 	}
+	if (request.url === "/v1/commands/cmd_ascp_1") {
+	  assert.equal(request.headers.authorization, `Bearer ${siteToken}`);
+	  return json(200, { id: "cmd_ascp_1", organizationId: "org_live", actorId: "owner_live", kind: "ascp.approval.decide", state: "SUCCEEDED" });
+	}
     json(404, { error: { code: "NOT_FOUND" } });
   });
   await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
@@ -129,6 +135,7 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
   assert.deepEqual(await submitted.json(), { commandId: "cmd_live_1", state: "SUCCEEDED", kind: "approval.decide", errorCode: "", auditId: "" });
   assert.equal(decisionRequests, 1);
 
+	currentASCPReview = exactASCPReview;
 	const ascpSubmitted = await render({
 	  path: "/api/flowops/commands", method: "POST",
 	  headers: { ...identityHeaders, "content-type": "application/json" },
@@ -136,6 +143,15 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
 	});
 	assert.equal(ascpSubmitted.status, 200);
 	assert.deepEqual(await ascpSubmitted.json(), { commandId: "cmd_ascp_1", state: "SUCCEEDED", kind: "ascp.approval.decide", errorCode: "", auditId: "" });
+	assert.equal(ascpDecisionRequests, 1);
+
+	const invalidASCP = await render({
+	  path: "/api/flowops/commands", method: "POST",
+	  headers: { ...identityHeaders, "content-type": "application/json" },
+	  body: JSON.stringify({ type: "ascp-approval", approvalId: "not-a-hash", action: "APPROVE", operationId: "op_ascp_invalid", stepUpToken }), env,
+	});
+	assert.equal(invalidASCP.status, 400);
+	assert.equal((await invalidASCP.json()).error.code, "INVALID_COMMAND");
 	assert.equal(ascpDecisionRequests, 1);
 
   stepPrincipal = "owner_substituted";
@@ -152,6 +168,9 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
   const recovered = await render({ path: "/api/flowops/commands/cmd_live_1", headers: identityHeaders, env });
   assert.equal(recovered.status, 200);
   assert.deepEqual(await recovered.json(), { commandId: "cmd_live_1", state: "SUCCEEDED", kind: "approval.decide", errorCode: "", auditId: "" });
+	const recoveredASCP = await render({ path: "/api/flowops/commands/cmd_ascp_1", headers: identityHeaders, env });
+	assert.equal(recoveredASCP.status, 200);
+	assert.deepEqual(await recoveredASCP.json(), { commandId: "cmd_ascp_1", state: "SUCCEEDED", kind: "ascp.approval.decide", errorCode: "", auditId: "" });
 });
 
 test("renders a fail-closed public control room without illustrative organization data", async () => {
@@ -398,13 +417,13 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 		  available: true,
 		  pendingApprovals: [{
 			approvalId: `0x${"3".repeat(64)}`, reviewDigest: `0x${"4".repeat(64)}`,
-			operationId: `0x${"5".repeat(64)}`, agentId: "agent_live", taskId: "task_ascp_live",
-			category: "Verified data", reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_live_1",
+			operationId: `0x${"5".repeat(64)}`, agentId: "agent_live", taskId: "",
+			category: "", reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_live_1",
 			recipient: `0x${"1".repeat(40)}`, asset: `0x${"2".repeat(40)}`, amountAtomic: "2500000",
 			requestedAt: new Date(now.getTime() - 20_000).toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
 		  }],
 		  assets: [{
-			asset: `0x${"2".repeat(40)}`, walletDeltaAtomic: "-2250000", escrowRestrictedAtomic: "500000",
+			asset: `0x${"2".repeat(40)}`, walletDeltaAtomic: "-2250000", escrowRestrictedAtomic: "-500000",
 			recognizedExpenseAtomic: "1750000", spentTodayAtomic: "500000", reservedAtomic: "2500000",
 			pendingChainAtomic: "250000", unresolvedAtomic: "125000",
 		  }],
@@ -451,6 +470,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 	assert.match(html, /Daily usage<\/span><strong>5%/);
 	assert.match(html, /Payment lock submitted/);
 	assert.match(html, /2,500,000 atomic/);
+	assert.match(html, /Approval 0x333333…333333/);
   assert.doesNotMatch(html, /On track|Spendable now/);
   assert.doesNotMatch(html, /Northstar Labs|\$15,140\.00|Signal Harbor/);
   assert.doesNotMatch(html, new RegExp(exchangeCredential));

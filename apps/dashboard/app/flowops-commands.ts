@@ -126,7 +126,7 @@ function validateCommandInput(input: DashboardCommandInput): void {
     return;
   }
 	if (input.type === "ascp-approval") {
-		if (!exactKeys(input, ["action", "approvalId", "operationId", "stepUpToken", "type"]) || !IDENTIFIER.test(input.approvalId) ||
+		if (!exactKeys(input, ["action", "approvalId", "operationId", "stepUpToken", "type"]) || !/^0x[0-9a-f]{64}$/.test(input.approvalId) ||
 			(input.action !== "APPROVE" && input.action !== "REJECT")) {
 			throw new DashboardCommandError(400, "INVALID_COMMAND", "The ASCP approval decision is invalid.");
 		}

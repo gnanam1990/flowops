@@ -100,6 +100,68 @@ func TestBootstrapAgentRefusesToReviveRevokedCredentialByReplay(t *testing.T) {
 	}
 }
 
+func TestBootstrapAgentRejectsPersistedNonActiveAgent(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2030, 1, 15, 12, 0, 0, 0, time.UTC)
+	input := agentBootstrapFixture(now)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(agentProvisioningLock).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT organization_id,principal_id,role,status`).WithArgs(input.OwnerMembershipID).WillReturnRows(
+		sqlmock.NewRows([]string{"organization_id", "principal_id", "role", "status"}).AddRow(input.OrganizationID, input.ActorID, RoleOwner, "ACTIVE"))
+	mock.ExpectQuery(`SELECT organization_id,id,customer_id,name,purpose,status,updated_at`).WithArgs(input.OrganizationID, input.AgentID).WillReturnRows(
+		sqlmock.NewRows([]string{"organization_id", "id", "customer_id", "name", "purpose", "status", "updated_at"}).AddRow(
+			input.OrganizationID, input.AgentID, input.CustomerID, input.AgentName, input.Purpose, AgentQuarantined, now))
+	mock.ExpectRollback()
+	if _, err := BootstrapAgent(context.Background(), db, input, now); !errors.Is(err, ErrProvisioningConflict) {
+		t.Fatalf("quarantined agent replay error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBootstrapAgentIsNoOpAfterRestartForExactMaterial(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2030, 1, 15, 12, 0, 0, 0, time.UTC)
+	input := agentBootstrapFixture(now)
+	policyJSON, _ := json.Marshal(input.Policy)
+	tokenDigest := TokenDigest(input.CredentialToken)
+	scopesJSON, _ := json.Marshal(agentCredentialScopes)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(agentProvisioningLock).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT organization_id,principal_id,role,status`).WithArgs(input.OwnerMembershipID).WillReturnRows(
+		sqlmock.NewRows([]string{"organization_id", "principal_id", "role", "status"}).AddRow(input.OrganizationID, input.ActorID, RoleOwner, "ACTIVE"))
+	mock.ExpectQuery(`SELECT organization_id,id,customer_id,name,purpose,status,updated_at`).WithArgs(input.OrganizationID, input.AgentID).WillReturnRows(
+		sqlmock.NewRows([]string{"organization_id", "id", "customer_id", "name", "purpose", "status", "updated_at"}).AddRow(
+			input.OrganizationID, input.AgentID, input.CustomerID, input.AgentName, input.Purpose, AgentActive, now))
+	mock.ExpectQuery(`SELECT config,active FROM policies`).WithArgs(input.OrganizationID, input.AgentID, input.Policy.Version).WillReturnRows(
+		sqlmock.NewRows([]string{"config", "active"}).AddRow(policyJSON, true))
+	mock.ExpectQuery(`SELECT organization_id,principal_id,principal_kind,role,agent_id,token_digest,scopes,expires_at,revoked_at`).WithArgs(input.CredentialID).WillReturnRows(
+		sqlmock.NewRows([]string{"organization_id", "principal_id", "principal_kind", "role", "agent_id", "token_digest", "scopes", "expires_at", "revoked_at"}).AddRow(
+			input.OrganizationID, input.CredentialPrincipalID, PrincipalAgent, RoleAgent, input.AgentID, tokenDigest[:], scopesJSON, input.CredentialExpiresAt, nil))
+	mock.ExpectCommit()
+
+	result, err := BootstrapAgent(context.Background(), db, input, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AgentCreated || result.PolicyCreated || result.CredentialCreated {
+		t.Fatalf("exact replay after restart mutated state: %+v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBootstrapAgentRejectsDisabledPolicyAndUnsafeCredential(t *testing.T) {
 	now := time.Date(2030, 1, 15, 12, 0, 0, 0, time.UTC)
 	for name, mutate := range map[string]func(*AgentBootstrap){

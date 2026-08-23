@@ -33,7 +33,7 @@ the session boundary.
 
 - Overview with separately labelled ASCP subledger delta, reserved, pending, and unresolved amounts.
 - Exact-intent approval inbox with amount, recipient, rail, expiry, reason, and frozen-intent explanation.
-- Agent directory with purpose, current task, signer state, cap, and spend.
+- Agent directory with purpose, latest recorded task, signer state, cap, and spend.
 - Economic activity timeline spanning approval, settlement, escrow release, refund, and security events.
 - Security and recovery surface showing observer agreement, last trusted block, risks, and no-silent-retry posture.
 - Developer surface for the MCP connection shape, redacted request outcomes, and dependency health.
@@ -52,9 +52,11 @@ Public and unavailable mutations remain locked. In live mode, approve, deny, and
 pause accept a fresh step-up credential in a password field held only in client
 memory. A same-origin server bridge exchanges the Sites identity again, reads
 the step-up credential's safe claims from the control plane, and requires an
-exact organization, principal, and role match before sending a command. The
-bridge re-reads the pending approval and supplies its current full request
-digest; the browser cannot choose the authoritative digest.
+exact organization, principal, and role match before sending a command. For
+legacy approvals, the bridge re-reads the pending approval and supplies its
+current full `requestDigest`. For ASCP approvals, it re-fetches the current
+`reviewDigest` and submits that exact value as `reviewSnapshotHash`. The browser
+cannot choose either authoritative binding.
 
 The browser records an unresolved command ID, or before an ID is known, a random
 operation ID plus a digest of the non-secret action fields. It stores neither

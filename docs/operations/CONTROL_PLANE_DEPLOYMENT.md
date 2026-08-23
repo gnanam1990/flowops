@@ -2,10 +2,12 @@
 
 ## Allowed posture
 
-This runbook deploys one control-plane replica for owner-only live dashboard
-reads. Economic writes remain disabled in the Sites dashboard. Do not provision
-agent credentials, active policies, step-up sessions, wallet signers, or
-production Base value as part of this procedure.
+The infrastructure-deployment phase of this runbook deploys one control-plane
+replica for owner-only live dashboard reads. Economic writes remain disabled in
+the Sites dashboard. Do not provision agent credentials, active policies,
+step-up sessions, wallet signers, or production Base value during that phase.
+The separately gated post-deployment provisioning phase below may create only
+the scoped agent, policy, and credential records it explicitly describes.
 
 ## Required infrastructure
 
@@ -510,7 +512,13 @@ the exact organization name, no fabricated financial totals, and the chain's
 fail-safe startup state. An unauthenticated request, wrong email, wrong project,
 wrong user key, old token, or revoked membership must show no live tenant data.
 
-## Real agent, policy, and credential bootstrap
+## Separate post-deployment provisioning phase
+
+The infrastructure and owner-enrollment procedure above must be complete before
+entering this phase. This is a distinct provisioning ceremony and is not part
+of deploying the control-plane service or Sites application.
+
+### Real agent, policy, and credential bootstrap
 
 Do not insert agent or policy rows by hand. After owner enrollment, the offline
 `agent-bootstrap` command creates one active agent, one compiled active policy,

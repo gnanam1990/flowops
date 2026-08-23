@@ -43,8 +43,10 @@ type DashboardApproval struct {
 }
 
 // DashboardAsset contains subledger effects and operation exposure, not an
-// ERC-20 balance. WalletDeltaAtomic can be negative and must be labelled as a
-// recognized delta by consumers.
+// ERC-20 balance. WalletDeltaAtomic, EscrowRestrictedAtomic,
+// RecognizedExpenseAtomic, and SpentTodayAtomic are signed posting deltas.
+// ReservedAtomic, PendingChainAtomic, and UnresolvedAtomic are unsigned
+// operation exposure and are rejected if the durable aggregate is negative.
 type DashboardAsset struct {
 	Asset                   string `json:"asset"`
 	WalletDeltaAtomic       string `json:"walletDeltaAtomic"`
@@ -114,8 +116,8 @@ func (s *PostgresStore) dashboardApprovals(ctx context.Context, organizationID s
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT a.approval_id,a.review_snapshot_hash,i.operation_id,i.actor_id,
 		       COALESCE(i.purchase_spec_json->>'taskId',''),COALESCE(i.purchase_spec_json->>'category',''),
-		       d.reason,d.policy_version,d.review_json->>'payTo',d.review_json->>'asset',
-		       d.review_json->>'amountBaseUnits',a.requested_at,a.expires_at
+		       d.reason,d.policy_version,COALESCE(d.review_json->>'payTo',''),COALESCE(d.review_json->>'asset',''),
+		       COALESCE(d.review_json->>'amountBaseUnits',''),a.requested_at,a.expires_at
 		FROM ascp_approvals a
 		JOIN ascp_intents i ON i.operation_id=a.intent_id AND i.organization_id=a.organization_id
 		JOIN ascp_policy_decisions d ON d.operation_id=i.operation_id AND d.approval_id=a.approval_id AND d.organization_id=a.organization_id
@@ -406,15 +408,15 @@ func (s *PostgresStore) dashboardActivity(ctx context.Context, organizationID st
 			WHERE o.organization_id=$1
 			UNION ALL
 			SELECT a.approval_id,'ASCP_APPROVAL',a.state,i.actor_id,COALESCE(i.purchase_spec_json->>'taskId',''),
-			       d.review_json->>'asset',d.review_json->>'amountBaseUnits',d.reason,
+			       COALESCE(d.review_json->>'asset',''),COALESCE(d.review_json->>'amountBaseUnits',''),d.reason,
 			       COALESCE(a.decided_at,a.requested_at)
 			FROM ascp_approvals a JOIN ascp_intents i ON i.operation_id=a.intent_id AND i.organization_id=a.organization_id
-			JOIN ascp_policy_decisions d ON d.operation_id=i.operation_id AND d.organization_id=a.organization_id
+			JOIN ascp_policy_decisions d ON d.operation_id=i.operation_id AND d.approval_id=a.approval_id AND d.organization_id=a.organization_id
 			WHERE a.organization_id=$1
 			UNION ALL
 			SELECT d.decision_id,'POLICY_DECISION',d.outcome,d.agent_id,
-			       COALESCE(i.purchase_spec_json->>'taskId',''),d.review_json->>'asset',
-			       d.review_json->>'amountBaseUnits',d.reason,d.evaluated_at
+			       COALESCE(i.purchase_spec_json->>'taskId',''),COALESCE(d.review_json->>'asset',''),
+			       COALESCE(d.review_json->>'amountBaseUnits',''),d.reason,d.evaluated_at
 			FROM ascp_policy_decisions d
 			JOIN ascp_intents i ON i.operation_id=d.operation_id AND i.organization_id=d.organization_id
 			WHERE d.organization_id=$1
