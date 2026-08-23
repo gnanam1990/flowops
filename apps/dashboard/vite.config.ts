@@ -1,4 +1,5 @@
 import vinext from "vinext";
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import hostingConfig from "./.openai/hosting.json" with { type: "json" };
 import { isLoopbackHostname } from "./app/local-auth-boundary.ts";
@@ -6,6 +7,7 @@ import { sites } from "./build/sites-vite-plugin.ts";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
+const DASHBOARD_DIRECTORY = fileURLToPath(new URL(".", import.meta.url));
 
 const { d1, r2 } = hostingConfig;
 
@@ -13,7 +15,7 @@ const { d1, r2 } = hostingConfig;
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 export default defineConfig(async ({ mode }) => {
-  const resolvedEnv = loadEnv(mode, process.cwd(), ["FLOWOPS_LOCAL_AUTH_ENABLED"]);
+  const resolvedEnv = loadEnv(mode, DASHBOARD_DIRECTORY, ["FLOWOPS_LOCAL_AUTH_ENABLED"]);
   const localAuthValue = resolvedEnv.FLOWOPS_LOCAL_AUTH_ENABLED ?? "false";
   const localAuthRequested = localAuthValue === "true";
 

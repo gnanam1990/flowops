@@ -10,10 +10,11 @@ const configPath = fileURLToPath(new URL("../vite.config.ts", import.meta.url));
 test("loads loopback-only local auth from an ignored mode-specific env file", async (t) => {
   const mode = "flowops-config-regression";
   const envPath = fileURLToPath(new URL(`../.env.${mode}.local`, import.meta.url));
+  await rm(envPath, { force: true });
+  t.after(() => rm(envPath, { force: true }));
   const envFile = await open(envPath, "wx");
   await envFile.writeFile("FLOWOPS_LOCAL_AUTH_ENABLED=true\n");
   await envFile.close();
-  t.after(() => rm(envPath, { force: true }));
 
   const loaded = await loadConfigFromFile(
     { command: "serve", mode },
