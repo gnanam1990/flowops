@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -102,6 +103,16 @@ func TestBindActionBuildsExactExecutableGovernanceCalls(t *testing.T) {
 				bound.ContractAddress != test.action.ContractAddress || bound.FunctionSelector != wantSelector ||
 				!strings.HasPrefix(bound.Calldata, wantSelector) || len(bound.Calldata) <= len(wantSelector) {
 				t.Fatalf("bound=%+v digest=%s selector=%s", bound, digest.Hex(), wantSelector)
+			}
+			if test.action.Type == ActionSpendInvalidateNonces {
+				wantCalldata, err := packCall(test.signature, []abi.Type{uint256ArrayType, bytes32Type, bytes32Type},
+					[]*big.Int{big.NewInt(7), big.NewInt(8)}, common.HexToHash(vectorWorkflow), digest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if bound.Calldata != "0x"+hex.EncodeToString(wantCalldata) {
+					t.Fatalf("nonce calldata=%s want=%x", bound.Calldata, wantCalldata)
+				}
 			}
 			var decoded Action
 			if err := json.Unmarshal(bound.CanonicalAction, &decoded); err != nil {
