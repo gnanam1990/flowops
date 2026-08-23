@@ -22,8 +22,8 @@ type Section =
 type ControlRoomProps = {
   snapshot: DashboardSnapshot;
   proposalAnchor: ProposalAnchorDeployment;
-  viewer: { name: string; email: string };
-  accountHref: string;
+  viewer: { name: string; email: string; authenticated: boolean };
+  accountHref: string | null;
 };
 
 const navItems: { id: Section; label: string; mark: string }[] = [
@@ -193,10 +193,17 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
               <span aria-hidden="true">●</span>
               <i>{snapshot.risks.length}</i>
             </button>
-            <a className="viewer account-link" href={accountHref} aria-label={snapshot.mode === "live" ? `Sign out ${viewer.name}` : "Sign in to FlowOps"}>
-              <span>{initials(viewer.name)}</span>
-              <strong>{snapshot.mode === "live" ? shortName(viewer.name) : "Sign in"}</strong>
-            </a>
+            {accountHref ? (
+              <a className="viewer account-link" href={accountHref} aria-label={viewer.authenticated ? `Sign out ${viewer.name}` : "Sign in to FlowOps"}>
+                <span>{initials(viewer.name)}</span>
+                <strong>{viewer.authenticated ? shortName(viewer.name) : "Sign in"}</strong>
+              </a>
+            ) : (
+              <span className="viewer account-link account-link-disabled" aria-label="Local sign-in is disabled">
+                <span>PV</span>
+                <strong>Local sign-in disabled</strong>
+              </span>
+            )}
           </div>
         </header>
 
@@ -221,6 +228,7 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
               onAgents={() => openSection("agents")}
               onActivity={() => openSection("activity")}
               accountHref={accountHref}
+              authenticated={viewer.authenticated}
             />
           ) : null}
           {section === "approvals" ? (
@@ -325,6 +333,7 @@ function Overview({
   onAgents,
   onActivity,
   accountHref,
+  authenticated,
 }: {
   snapshot: DashboardSnapshot;
   onApprovals: () => void;
@@ -332,7 +341,8 @@ function Overview({
   onApproval: (approval: Approval) => void;
   onAgents: () => void;
   onActivity: () => void;
-  accountHref: string;
+  accountHref: string | null;
+  authenticated: boolean;
 }) {
   const [range, setRange] = useState<"24h" | "7d" | "30d">("7d");
   return (
@@ -352,7 +362,13 @@ function Overview({
         <div className="command-actions">
           {snapshot.mode === "public" ? (
             <>
-              <a className="primary-button account-cta" href={accountHref}>Sign in to control room <span>→</span></a>
+              {accountHref && !authenticated ? (
+                <a className="primary-button account-cta" href={accountHref}>Sign in to control room <span>→</span></a>
+              ) : (
+                <button className="primary-button account-cta" type="button" disabled>
+                  {authenticated ? "Local identity active · connect control plane" : "Enable local sign-in to continue"}
+                </button>
+              )}
               <button className="danger-button" type="button" disabled>Organization controls locked</button>
             </>
           ) : (

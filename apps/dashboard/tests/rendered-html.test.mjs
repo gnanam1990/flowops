@@ -4,12 +4,12 @@ import test from "node:test";
 
 let workerPromise;
 
-async function render({ path = "/", method = "GET", headers = {}, body, env = {} } = {}) {
+async function render({ path = "/", method = "GET", headers = {}, body, env = {}, origin = "http://localhost" } = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerPromise ??= import(workerUrl.href).then((module) => module.default);
   const worker = await workerPromise;
   return worker.fetch(
-    new Request(`http://localhost${path}`, { method, headers: { accept: "text/html", ...headers }, body }),
+    new Request(`${origin}${path}`, { method, headers: { accept: "text/html", ...headers }, body }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ...env },
     { waitUntil() {}, passThroughOnException() {} },
   );
@@ -151,7 +151,9 @@ test("renders a fail-closed public control room without illustrative organizatio
   assert.match(html, /Live Base operations/);
   assert.match(html, /Status unavailable/);
   assert.match(html, /Base observer/);
-  assert.match(html, /Sign in to control room/);
+  assert.match(html, /Local sign-in disabled/);
+  assert.match(html, /Enable local sign-in to continue/);
+  assert.doesNotMatch(html, /href="\/signin-with-chatgpt/);
   assert.match(html, /Pending chain evidence/);
   assert.match(html, /Non-custodial/);
   assert.match(html, /Observer quorum/);
@@ -163,6 +165,46 @@ test("renders a fail-closed public control room without illustrative organizatio
   assert.match(html, /USDC deposits/);
   assert.match(html, /Do not send ETH or tokens/);
   assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
+});
+
+test("uses Sites auth only on hosted origins and never exposes its reserved route as a broken local link", async () => {
+  const response = await render({ origin: "https://flowops.example" });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /href="\/signin-with-chatgpt\?return_to=%2F"/);
+  assert.match(html, /Sign in to control room/);
+  assert.doesNotMatch(html, /Local sign-in disabled/);
+});
+
+test("provides explicit loopback-only local sign-in and sign-out without granting membership", async () => {
+  const disabled = await render({ path: "/api/local-auth/signin?return_to=%2F" });
+  assert.equal(disabled.status, 404);
+
+  const env = { FLOWOPS_LOCAL_AUTH_ENABLED: "true" };
+  const signIn = await render({ path: "/api/local-auth/signin?return_to=%2F", env });
+  assert.equal(signIn.status, 303);
+  assert.equal(signIn.headers.get("location"), "http://localhost/");
+  const cookie = signIn.headers.get("set-cookie") ?? "";
+  assert.match(cookie, /^flowops-local-session=active;/);
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /SameSite=Strict/);
+
+  const signedIn = await render({ headers: { cookie: "flowops-local-session=active" }, env });
+  assert.equal(signedIn.status, 200);
+  const signedInHtml = await signedIn.text();
+  assert.match(signedInHtml, /Local Developer/);
+  assert.match(signedInHtml, /Local identity active · connect control plane/);
+  assert.match(signedInHtml, /href="\/api\/local-auth\/signout\?return_to=%2F"/);
+  assert.match(signedInHtml, /Public operational status is not configured/);
+  assert.doesNotMatch(signedInHtml, /Live control plane|Acme Operators/);
+
+  const signOut = await render({ path: "/api/local-auth/signout?return_to=%2F", env });
+  assert.equal(signOut.status, 303);
+  assert.match(signOut.headers.get("set-cookie") ?? "", /^flowops-local-session=;/);
+  assert.match(signOut.headers.get("set-cookie") ?? "", /Max-Age=0/);
+
+  const remote = await render({ path: "/api/local-auth/signin?return_to=%2F", env, origin: "https://flowops.example" });
+  assert.equal(remote.status, 404);
 });
 
 test("shows a configured proposal address only as experimental and never as production", async () => {
@@ -362,7 +404,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
     env: configuredEnvironment(`http://127.0.0.1:${address.port}`, exchangeCredential),
   });
   const hostileHtml = await hostile.text();
-  assert.doesNotMatch(hostileHtml, /<img src=x|<script>|<a href="https:\/\/attacker\.example"/);
+  assert.doesNotMatch(hostileHtml, /<img src=x|<script>swap|<a href="https:\/\/attacker\.example"/);
   assert.match(hostileHtml, /&lt;img src=x onerror=&quot;send_calls\(\)&quot;&gt;/);
   assert.match(hostileHtml, /&lt;script&gt;swap\(&quot;USDC&quot;,&quot;ETH&quot;\)&lt;\/script&gt;/);
   assert.match(hostileHtml, /0x1111…1111/);

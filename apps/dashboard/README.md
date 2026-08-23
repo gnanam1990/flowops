@@ -22,6 +22,12 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+The hosted `/signin-with-chatgpt` route exists only inside a Sites deployment.
+For an explicit loopback-only local identity, set
+`FLOWOPS_LOCAL_AUTH_ENABLED=true`. The local session is HTTP-only, lasts eight
+hours, and never grants FlowOps organization membership by itself. Live member
+data still requires the authorized control-plane exchange configuration below.
+
 Copy `.env.example` to an ignored local environment file only when testing
 against an authorized control plane. The exchange token is server-only and must
 be configured through Sites environment variables in hosted deployments.

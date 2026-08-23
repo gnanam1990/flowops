@@ -14,6 +14,12 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  // Shell variables are not automatically Worker bindings in vinext dev.
+  // Forward only this non-secret, loopback-gated developer flag.
+  vars: {
+    FLOWOPS_LOCAL_AUTH_ENABLED:
+      process.env.FLOWOPS_LOCAL_AUTH_ENABLED ?? "false",
+  },
   d1_databases: d1
     ? [
         {

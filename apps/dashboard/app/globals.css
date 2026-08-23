@@ -80,6 +80,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #79a2ff; outline-
 .icon-button { position: relative; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: var(--panel); cursor: pointer; }.icon-button > span { font-size: 6px; }.icon-button i { position: absolute; top: -4px; right: -4px; display: grid; width: 15px; height: 15px; place-items: center; border: 2px solid var(--paper); border-radius: 50%; color: #fff; background: var(--red); font-size: 7px; font-style: normal; }
 .viewer { display: flex; align-items: center; gap: 7px; padding: 3px 9px 3px 3px; border: 1px solid var(--line); border-radius: 5px; color: var(--text); background: var(--panel); cursor: pointer; }.viewer > span { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 4px; color: #fff; background: var(--blue); font-size: 8px; font-weight: 800; }.viewer strong { font-size: 10px; }
 .account-link,.account-cta { text-decoration: none; }
+.account-link-disabled { color: var(--muted); cursor: not-allowed; opacity: .62; }
 .breadcrumb { color: var(--muted); font-size: 10px; }.mobile-brand { display: none; }
 
 .main-content { max-width: 1500px; margin: 0 auto; padding: 30px 30px 72px; }

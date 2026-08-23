@@ -1,4 +1,4 @@
-import { chatGPTSignInPath, chatGPTSignOutPath, getChatGPTUser } from "./chatgpt-auth";
+import { accountPathForUser, getChatGPTUser } from "./chatgpt-auth";
 import { ControlRoom } from "./control-room";
 import { dashboardForUser } from "./flowops-adapter";
 import { loadProposalAnchorDeployment } from "./proposal-anchor";
@@ -9,6 +9,7 @@ export default async function Home() {
   const user = await getChatGPTUser();
   const snapshot = await dashboardForUser(user);
   const proposalAnchor = loadProposalAnchorDeployment();
+  const accountHref = await accountPathForUser(user);
 
   return (
     <ControlRoom
@@ -17,8 +18,9 @@ export default async function Home() {
       viewer={{
         name: user?.displayName ?? "Public visitor",
         email: user?.email ?? "",
+        authenticated: user !== null,
       }}
-      accountHref={user ? chatGPTSignOutPath("/") : chatGPTSignInPath("/")}
+      accountHref={accountHref}
     />
   );
 }
