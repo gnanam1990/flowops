@@ -1504,6 +1504,7 @@ type DashboardSnapshot struct {
 	Agents           []Agent                         `json:"agents"`
 	Organization     Organization                    `json:"organization"`
 	Reconciliation   reconciliation.OrganizationView `json:"reconciliation"`
+	ASCP             DashboardProjection             `json:"ascp"`
 }
 
 func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -1535,14 +1536,23 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 			approvals = append(approvals, record)
 		}
 	}
-	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: s.chain.Status(), GeneratedAt: s.clock().UTC()}
+	now := s.clock().UTC()
+	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: s.chain.Status(), GeneratedAt: now}
 	if s.reconciliation != nil {
 		reconciliationView = s.reconciliation.OrganizationView(principal.OrganizationID)
 	}
+	ascpView := unavailableDashboardProjection()
+	if reader, ok := s.store.(DashboardReader); ok {
+		ascpView, err = reader.DashboardProjection(r.Context(), principal.OrganizationID, now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", err, true, "")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, DashboardSnapshot{
-		Live: true, GeneratedAt: s.clock().UTC(), OrganizationID: principal.OrganizationID,
+		Live: true, GeneratedAt: now, OrganizationID: principal.OrganizationID,
 		Chain: s.chain.Status(), PendingApprovals: approvals, Agents: agents, Organization: organization,
-		Reconciliation: reconciliationView,
+		Reconciliation: reconciliationView, ASCP: ascpView,
 	})
 }
 
