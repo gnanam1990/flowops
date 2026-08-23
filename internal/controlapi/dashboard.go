@@ -383,15 +383,17 @@ func (s *PostgresStore) dashboardAgentBudgets(ctx context.Context, organizationI
 	result := make([]DashboardAgentBudget, 0, len(keys))
 	for _, agentID := range keys {
 		value := budgets[agentID]
-		value.item.SpentTodayAtomic = value.spent.String()
-		value.item.ReservedAtomic = value.reserved.String()
 		if value.item.PolicyConfigurationValid {
+			value.item.SpentTodayAtomic = value.spent.String()
+			value.item.ReservedAtomic = value.reserved.String()
 			limit, _ := new(big.Int).SetString(value.item.DailyLimitAtomic, 10)
 			available := new(big.Int).Sub(limit, new(big.Int).Add(value.spent, value.reserved))
 			if available.Sign() < 0 {
 				available.SetInt64(0)
 			}
 			value.item.AvailableAtomic = available.String()
+		} else {
+			value.item.DailyLimitAtomic = ""
 		}
 		result = append(result, value.item)
 	}

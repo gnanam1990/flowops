@@ -23,6 +23,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/envelope"
 	"github.com/gnanam1990/flowops/pkg/pilotlimits"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -48,6 +49,15 @@ type memoryStore struct {
 	organizationPaused   map[string]bool
 	exchangeToken        string
 	siteSessions         *SiteSessionCodec
+}
+
+type dashboardErrorStore struct {
+	*memoryStore
+	err error
+}
+
+func (s dashboardErrorStore) DashboardProjection(context.Context, string, time.Time) (DashboardProjection, error) {
+	return DashboardProjection{}, s.err
 }
 
 func newMemoryStore(now func() time.Time) *memoryStore {
@@ -706,6 +716,32 @@ func TestSitesExchangeIsMembershipBoundAndNeverCarriesStepUp(t *testing.T) {
 	status, _ = doRequest(t, client, http.MethodGet, server.URL+"/v1/dashboard/snapshot", siteToken, "", nil)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("revoked membership status = %d", status)
+	}
+}
+
+func TestDashboardSnapshotDegradesOnlyMissingASCPDeploymentSchema(t *testing.T) {
+	_, store, chain, lifecycle, journal, now := setupHandler(t)
+	defer journal.Close()
+	server, err := NewServer(ServerConfig{
+		Store:     dashboardErrorStore{memoryStore: store, err: &pgconn.PgError{Code: "42P01", Message: "relation does not exist"}},
+		Lifecycle: lifecycle, Chain: chain, Clock: func() time.Time { return now }, SiteSessions: store.siteSessions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	status, snapshot := doRequest(t, httpServer.Client(), http.MethodGet, httpServer.URL+"/v1/dashboard/snapshot", ownerTokenA, "", nil)
+	if status != http.StatusOK || snapshot["organizationId"] != "org_a" || snapshot["live"] != true {
+		t.Fatalf("dashboard rollout snapshot = %d %+v", status, snapshot)
+	}
+	ascp, ok := snapshot["ascp"].(map[string]any)
+	if !ok || ascp["available"] != false {
+		t.Fatalf("dashboard ASCP rollout state = %+v", snapshot["ascp"])
+	}
+	if dashboardSchemaUnavailable(errors.New("database unavailable")) {
+		t.Fatal("non-schema database errors must not be suppressed")
 	}
 }
 

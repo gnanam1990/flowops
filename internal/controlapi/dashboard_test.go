@@ -94,3 +94,36 @@ func TestDashboardProjectionRejectsInvalidScope(t *testing.T) {
 		t.Fatal("expected zero projection time to fail closed")
 	}
 }
+
+func TestDashboardAgentBudgetSuppressesIncomparableMultiAssetTotals(t *testing.T) {
+	store, mock, db := newMockStore(t)
+	defer db.Close()
+	now := time.Date(2030, 1, 15, 12, 0, 0, 0, time.UTC)
+	config := policy.Config{
+		Version: "policy_multi", Enabled: true, AllowedChainIDs: []uint64{84532}, AllowedRails: []envelope.Rail{envelope.RailEscrow},
+		AllowedAssets:     []string{"0x1111111111111111111111111111111111111111", "0x2222222222222222222222222222222222222222"},
+		AllowedRecipients: []string{"0x3333333333333333333333333333333333333333"}, PerActionLimitAtomic: "100",
+		AutoApproveThresholdAtomic: "10", TaskBudgetAtomic: "500", DailyBudgetAtomic: "1000",
+	}
+	policyJSON, _ := json.Marshal(config)
+	mock.ExpectQuery(`SELECT a\.id,p\.version,p\.config`).WithArgs("org_a").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "version", "config"}).AddRow("agent_a", config.Version, policyJSON))
+	dimension := ascpexecauth.BudgetDimensionID(ascpexecauth.BudgetDimensionAgentDay, "org_a", "agent_a", "2030-01-15")
+	dimensionJSON, _ := json.Marshal([]string{dimension})
+	mock.ExpectQuery(`SELECT i\.actor_id,rd\.dimension_id`).WithArgs("org_a", string(dimensionJSON)).WillReturnRows(sqlmock.NewRows([]string{
+		"actor_id", "dimension_id", "amount_base_units", "state", "refundable",
+	}).AddRow("agent_a", dimension, "25", "CONSUMED_ON_RELEASE", true))
+	mock.ExpectQuery(`SELECT DISTINCT ON \(actor_id\)`).WithArgs("org_a").WillReturnRows(sqlmock.NewRows([]string{"actor_id", "task_id"}))
+
+	budgets, err := store.dashboardAgentBudgets(t.Context(), "org_a", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(budgets) != 1 || !budgets[0].ActivePolicy || budgets[0].PolicyConfigurationValid || budgets[0].Asset != "" ||
+		budgets[0].DailyLimitAtomic != "" || budgets[0].SpentTodayAtomic != "" || budgets[0].ReservedAtomic != "" || budgets[0].AvailableAtomic != "" {
+		t.Fatalf("multi-asset budget leaked incomparable atomic totals: %+v", budgets)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

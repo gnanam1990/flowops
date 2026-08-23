@@ -110,6 +110,17 @@ func BootstrapAgent(ctx context.Context, db *sql.DB, input AgentBootstrap, now t
 		input.OrganizationID, input.AgentID, input.Policy.Version).Scan(&storedPolicy, &policyActive)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
+		var activeVersion string
+		activeErr := tx.QueryRowContext(ctx, `
+			SELECT version FROM policies
+			WHERE organization_id=$1 AND agent_id=$2 AND active=true
+			FOR UPDATE`, input.OrganizationID, input.AgentID).Scan(&activeVersion)
+		if activeErr == nil {
+			return AgentBootstrapResult{}, fmt.Errorf("%w: active policy %s", ErrProvisioningConflict, activeVersion)
+		}
+		if !errors.Is(activeErr, sql.ErrNoRows) {
+			return AgentBootstrapResult{}, fmt.Errorf("read active agent policy: %w", activeErr)
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO policies (organization_id,agent_id,version,config,active,activated_at)
 			VALUES ($1,$2,$3,$4,true,$5)`, input.OrganizationID, input.AgentID, input.Policy.Version, policyJSON, now.UTC()); err != nil {
@@ -192,6 +203,9 @@ func (input AgentBootstrap) validate(now time.Time) error {
 	}
 	if !input.CredentialExpiresAt.Equal(input.CredentialExpiresAt.UTC().Truncate(time.Second)) {
 		return errors.New("agent bootstrap credential expiry must use canonical whole-second UTC precision")
+	}
+	if !identifierPattern.MatchString(input.Policy.Version) {
+		return errors.New("agent bootstrap policy version is invalid")
 	}
 	if _, err := policy.Compile(input.Policy); err != nil || !input.Policy.Enabled {
 		return errors.New("agent bootstrap policy is invalid or disabled")

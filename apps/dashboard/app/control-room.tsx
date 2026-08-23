@@ -390,7 +390,7 @@ function Overview({
 		  <small><i /> {snapshot.mode === "live" ? `ASCP PostgreSQL subledger · ${snapshot.money.asset} · not a wallet balance` : "Private by default · sign in with an authorized membership"}</small>
           <div className="balance-signal" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /></div>
         </div>
-		<MoneyCard label="Wallet ledger delta" value={snapshot.money.walletDelta} tone="good" />
+		<MoneyCard label="Wallet ledger delta" value={snapshot.money.walletDelta} tone="neutral" />
         <MoneyCard label="Reserved" value={snapshot.money.reserved} tone="reserved" />
         <MoneyCard label="Pending chain evidence" value={snapshot.money.pending} tone="pending" />
         <MoneyCard label="Unresolved" value={snapshot.money.unresolved} tone="risk" />
@@ -690,7 +690,7 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
 }
 
 function MoneyCard({ label, value, tone }: { label: string; value: string; tone: string }) {
-	const detail = value === "Private" ? "Authorized members only" : value === "Not available" ? "No authoritative record" : tone === "good" ? "Recognized subledger effect" : tone === "risk" ? "Needs review" : "Tracked separately";
+	const detail = value === "Private" ? "Authorized members only" : value === "Not available" ? "No authoritative record" : tone === "neutral" ? "Signed subledger effect" : tone === "risk" ? "Needs review" : "Tracked separately";
   return <div className={`balance-card compact ${tone}`}><span>{label}</span><strong>{value}</strong><small><i /> {detail}</small></div>;
 }
 

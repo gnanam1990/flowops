@@ -89,7 +89,7 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
 	  return json(200, {
 		organizationId: "org_live",
 		pendingApprovals: [{ requestId: "req_live_1", requestDigest: exactDigest }],
-		ascp: { pendingApprovals: [{ approvalId: ascpApprovalId, reviewDigest: currentASCPReview }] },
+		ascp: { pendingApprovals: [null, { approvalId: ascpApprovalId, reviewDigest: currentASCPReview }] },
 	  });
     }
     if (request.url === "/v1/approvals/req_live_1/decision") {
@@ -466,9 +466,11 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 	assert.match(html, /Recognized economic expense/);
 	assert.match(html, /1,750,000 atomic/);
 	assert.match(html, /ASCP PostgreSQL subledger/);
+	assert.match(html, /balance-card compact neutral/);
 	assert.match(html, /Direct execution is pending chain recovery/);
 	assert.match(html, /Daily usage<\/span><strong>5%/);
 	assert.match(html, /Payment lock submitted/);
+	assert.match(html, /activity-icon pending/);
 	assert.match(html, /2,500,000 atomic/);
 	assert.match(html, /Approval 0x333333…333333/);
   assert.doesNotMatch(html, /On track|Spendable now/);

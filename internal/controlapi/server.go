@@ -29,6 +29,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 	"github.com/gnanam1990/flowops/pkg/sellerquote"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -1545,8 +1546,12 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 	if reader, ok := s.store.(DashboardReader); ok {
 		ascpView, err = reader.DashboardProjection(r.Context(), principal.OrganizationID, now)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", err, true, "")
-			return
+			if dashboardSchemaUnavailable(err) {
+				ascpView = unavailableDashboardProjection()
+			} else {
+				writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", err, true, "")
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, DashboardSnapshot{
@@ -1554,6 +1559,11 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 		Chain: s.chain.Status(), PendingApprovals: approvals, Agents: agents, Organization: organization,
 		Reconciliation: reconciliationView, ASCP: ascpView,
 	})
+}
+
+func dashboardSchemaUnavailable(err error) bool {
+	var pgError *pgconn.PgError
+	return errors.As(err, &pgError) && (pgError.Code == "42P01" || pgError.Code == "42703")
 }
 
 func (s *Server) beginCommand(w http.ResponseWriter, r *http.Request, principal Principal, kind, targetID, idempotencyKey, inputDigest string) (Command, bool, bool) {

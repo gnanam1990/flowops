@@ -68,7 +68,7 @@ export async function submitDashboardCommand(
     path = `/v1/approvals/${encodeURIComponent(input.requestId)}/decision`;
     body = { requestDigest: approval.requestDigest, action: input.action, note: input.note };
 	} else if (input.type === "ascp-approval") {
-		const snapshot = await upstreamJSON<{ organizationId: string; ascp: { pendingApprovals: Array<{ approvalId: string; reviewDigest: string }> } }>(
+		const snapshot = await upstreamJSON<{ organizationId: string; ascp: { pendingApprovals: unknown[] } }>(
 			request,
 			`${config.controlApiUrl}/v1/dashboard/snapshot`,
 			{ headers: { authorization: `Bearer ${session.accessToken}` } },
@@ -76,7 +76,11 @@ export async function submitDashboardCommand(
 		if (snapshot.organizationId !== session.organizationId || !Array.isArray(snapshot.ascp?.pendingApprovals)) {
 			throw new DashboardCommandError(502, "INVALID_CONTROL_RESPONSE", "The ASCP approval snapshot could not be verified.");
 		}
-		const approval = snapshot.ascp.pendingApprovals.find((candidate) => candidate.approvalId === input.approvalId);
+		const approval = snapshot.ascp.pendingApprovals.find((candidate): candidate is { approvalId: string; reviewDigest: string } =>
+			candidate !== null && typeof candidate === "object" &&
+			(candidate as { approvalId?: unknown }).approvalId === input.approvalId &&
+			typeof (candidate as { reviewDigest?: unknown }).reviewDigest === "string",
+		);
 		if (!approval || !/^0x[0-9a-f]{64}$/.test(approval.reviewDigest)) {
 			throw new DashboardCommandError(409, "APPROVAL_NOT_PENDING", "This exact ASCP approval is no longer pending. Refresh before deciding.");
 		}

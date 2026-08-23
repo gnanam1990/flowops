@@ -23,6 +23,7 @@ func TestBootstrapAgentCreatesActivePolicyAndDigestOnlyCredentialAtomically(t *t
 	defer db.Close()
 	now := time.Date(2030, 1, 15, 12, 0, 0, 0, time.UTC)
 	input := agentBootstrapFixture(now)
+	tokenDigest := TokenDigest(input.CredentialToken)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(agentProvisioningLock).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`SELECT organization_id,principal_id,role,status`).WithArgs(input.OwnerMembershipID).WillReturnRows(
@@ -30,10 +31,11 @@ func TestBootstrapAgentCreatesActivePolicyAndDigestOnlyCredentialAtomically(t *t
 	mock.ExpectQuery(`SELECT organization_id,id,customer_id,name,purpose,status,updated_at`).WithArgs(input.OrganizationID, input.AgentID).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO agents`).WithArgs(input.OrganizationID, input.AgentID, input.CustomerID, input.AgentName, input.Purpose).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT config,active FROM policies`).WithArgs(input.OrganizationID, input.AgentID, input.Policy.Version).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT version FROM policies`).WithArgs(input.OrganizationID, input.AgentID).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO policies`).WithArgs(input.OrganizationID, input.AgentID, input.Policy.Version, sqlmock.AnyArg(), now).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT organization_id,principal_id,principal_kind,role,agent_id,token_digest,scopes,expires_at,revoked_at`).WithArgs(input.CredentialID).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO credentials`).WithArgs(input.CredentialID, input.OrganizationID, input.CredentialPrincipalID,
-		input.AgentID, sqlmock.AnyArg(), sqlmock.AnyArg(), input.CredentialExpiresAt).WillReturnResult(sqlmock.NewResult(1, 1))
+		input.AgentID, tokenDigest[:], sqlmock.AnyArg(), input.CredentialExpiresAt).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(`INSERT INTO audit_events`).WithArgs(input.AuditID, input.OrganizationID, input.ActorID, input.AgentID,
 		jsonWithoutSecret{secret: input.CredentialToken}).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
@@ -162,10 +164,41 @@ func TestBootstrapAgentIsNoOpAfterRestartForExactMaterial(t *testing.T) {
 	}
 }
 
+func TestBootstrapAgentRejectsDifferentActivePolicyBeforeInsert(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2030, 1, 15, 12, 0, 0, 0, time.UTC)
+	input := agentBootstrapFixture(now)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs(agentProvisioningLock).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT organization_id,principal_id,role,status`).WithArgs(input.OwnerMembershipID).WillReturnRows(
+		sqlmock.NewRows([]string{"organization_id", "principal_id", "role", "status"}).AddRow(input.OrganizationID, input.ActorID, RoleOwner, "ACTIVE"))
+	mock.ExpectQuery(`SELECT organization_id,id,customer_id,name,purpose,status,updated_at`).WithArgs(input.OrganizationID, input.AgentID).WillReturnRows(
+		sqlmock.NewRows([]string{"organization_id", "id", "customer_id", "name", "purpose", "status", "updated_at"}).AddRow(
+			input.OrganizationID, input.AgentID, input.CustomerID, input.AgentName, input.Purpose, AgentActive, now))
+	mock.ExpectQuery(`SELECT config,active FROM policies`).WithArgs(input.OrganizationID, input.AgentID, input.Policy.Version).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT version FROM policies`).WithArgs(input.OrganizationID, input.AgentID).WillReturnRows(
+		sqlmock.NewRows([]string{"version"}).AddRow("policy_existing"))
+	mock.ExpectRollback()
+
+	if _, err := BootstrapAgent(context.Background(), db, input, now); !errors.Is(err, ErrProvisioningConflict) {
+		t.Fatalf("different active policy error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBootstrapAgentRejectsDisabledPolicyAndUnsafeCredential(t *testing.T) {
 	now := time.Date(2030, 1, 15, 12, 0, 0, 0, time.UTC)
 	for name, mutate := range map[string]func(*AgentBootstrap){
 		"disabled policy": func(input *AgentBootstrap) { input.Policy.Enabled = false },
+		"invalid policy version": func(input *AgentBootstrap) {
+			input.Policy.Version = "invalid policy version"
+		},
 		"multi asset budget": func(input *AgentBootstrap) {
 			input.Policy.AllowedAssets = append(input.Policy.AllowedAssets, "0x3333333333333333333333333333333333333333")
 		},
