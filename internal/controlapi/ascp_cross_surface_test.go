@@ -265,7 +265,7 @@ func TestASCPRealPostgresCrossSurfaceDurableUniqueness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	executionStore, err := ascpexecauth.NewPostgresStore(db, revalidator, func() time.Time { return now })
+	executionStore, err := ascpexecauth.NewPostgresStore(db, revalidator, integrationCapacityGate(), func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}

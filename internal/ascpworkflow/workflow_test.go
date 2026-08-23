@@ -745,7 +745,7 @@ func testHash(value uint64) string { return fmt.Sprintf("0x%064x", value) }
 
 func testReceipt(workflow Workflow) CompletionReceipt {
 	return CompletionReceipt{
-		WorkflowID: workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ChainID: workflow.ChainID,
+		WorkflowID: workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ChainAction: workflow.ChainAction, ChainID: workflow.ChainID,
 		TransactionHash: workflow.WorkflowID, BlockNumber: 100, BlockHash: testHash(11), BlockTimestamp: 1_800_000_001,
 		ConfirmedHead: 130, FinalizedHead: 120, LogIndex: 2,
 		ContractAddress: workflow.ContractAddress, EventSignature: GovernanceWorkflowBoundTopic,

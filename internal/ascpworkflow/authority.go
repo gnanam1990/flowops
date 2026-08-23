@@ -430,16 +430,4 @@ func validKind(kind Kind) bool {
 	}
 }
 
-func selector(value string) bool {
-	if len(value) != 10 || !strings.HasPrefix(value, "0x") || value != strings.ToLower(value) {
-		return false
-	}
-	for _, character := range value[2:] {
-		if !strings.ContainsRune("0123456789abcdef", character) {
-			return false
-		}
-	}
-	return true
-}
-
 var _ GovernanceActionGate = (*AuthorityVerifier)(nil)

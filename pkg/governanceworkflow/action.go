@@ -200,14 +200,19 @@ func BindAction(workflowID string, action Action) (BoundAction, error) {
 			return BoundAction{}, ErrInvalidPayload
 		}
 		value := action.SpendInvalidateNonces
-		workflowKind, signature = "MODULE_GOVERNANCE", "invalidateNonces(bytes32[],bytes32,bytes32)"
+		workflowKind, signature = "MODULE_GOVERNANCE", "invalidateNonces(uint256[],bytes32,bytes32)"
 		digest, err = SpendInvalidateNonces(action.ChainID, action.ContractAddress, workflowID, value.Nonces)
 		if err == nil {
-			nonces := make([][32]byte, len(value.Nonces))
+			nonces := make([]*big.Int, len(value.Nonces))
 			for index, nonce := range value.Nonces {
-				nonces[index] = common.HexToHash(nonce)
+				nonces[index], err = decimal(nonce)
+				if err != nil {
+					break
+				}
 			}
-			call, err = packCall(signature, []abi.Type{bytes32ArrayType, bytes32Type, bytes32Type}, nonces, common.HexToHash(workflowID), digest)
+			if err == nil {
+				call, err = packCall(signature, []abi.Type{uint256ArrayType, bytes32Type, bytes32Type}, nonces, common.HexToHash(workflowID), digest)
+			}
 		}
 	case ActionDirectoryApprove:
 		if action.DirectoryApprove == nil {

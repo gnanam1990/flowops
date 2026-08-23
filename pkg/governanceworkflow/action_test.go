@@ -70,10 +70,10 @@ func TestBindActionBuildsExactExecutableGovernanceCalls(t *testing.T) {
 			SpendPause: &SpendPauseAction{Current: false, Next: true}}, "BREAK_GLASS", "setEmergencyPause(bool,bytes32,bytes32)",
 			func() (common.Hash, error) { return SpendPause(84532, spendModule, vectorWorkflow, false, true) }},
 		{"invalidate", Action{Type: ActionSpendInvalidateNonces, ChainID: 84532, ContractAddress: spendModule,
-			SpendInvalidateNonces: &SpendInvalidateNoncesAction{Nonces: []string{hashValue(7), hashValue(8)}}},
-			"MODULE_GOVERNANCE", "invalidateNonces(bytes32[],bytes32,bytes32)",
+			SpendInvalidateNonces: &SpendInvalidateNoncesAction{Nonces: []string{"7", "8"}}},
+			"MODULE_GOVERNANCE", "invalidateNonces(uint256[],bytes32,bytes32)",
 			func() (common.Hash, error) {
-				return SpendInvalidateNonces(84532, spendModule, vectorWorkflow, []string{hashValue(7), hashValue(8)})
+				return SpendInvalidateNonces(84532, spendModule, vectorWorkflow, []string{"7", "8"})
 			}},
 		{"directory approve", Action{Type: ActionDirectoryApprove, ChainID: 84532, ContractAddress: directory,
 			DirectoryApprove: &DirectoryApproveAction{Proposal: proposal, ProposerNonce: "9"}},
