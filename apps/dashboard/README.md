@@ -27,6 +27,8 @@ For an explicit loopback-only local identity, set
 `FLOWOPS_LOCAL_AUTH_ENABLED=true`. The local session is HTTP-only, lasts eight
 hours, and never grants FlowOps organization membership by itself. Live member
 data still requires the authorized control-plane exchange configuration below.
+When this flag is enabled, the development server binds to loopback and refuses
+startup if a non-loopback host override is requested.
 
 Copy `.env.example` to an ignored local environment file only when testing
 against an authorized control plane. The exchange token is server-only and must

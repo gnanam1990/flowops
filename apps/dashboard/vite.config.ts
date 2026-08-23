@@ -1,6 +1,7 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json" with { type: "json" };
+import { isLoopbackHostname } from "./app/local-auth-boundary.ts";
 import { sites } from "./build/sites-vite-plugin.ts";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -10,6 +11,18 @@ const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
+const localAuthRequested = process.env.FLOWOPS_LOCAL_AUTH_ENABLED === "true";
+
+const localAuthLoopbackGuard = {
+  name: "flowops-local-auth-loopback-guard",
+  apply: "serve" as const,
+  configResolved(config: { server: { host?: string | boolean } }) {
+    const host = config.server.host;
+    if (localAuthRequested && (typeof host !== "string" || !isLoopbackHostname(host))) {
+      throw new Error("FLOWOPS_LOCAL_AUTH_ENABLED requires a loopback-only development server bind");
+    }
+  },
+};
 
 const localBindingConfig = {
   main: "./worker/index.ts",
@@ -50,10 +63,14 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      ...(localAuthRequested ? { host: "127.0.0.1" } : {}),
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
+      localAuthLoopbackGuard,
       vinext(),
       sites(),
       cloudflare({

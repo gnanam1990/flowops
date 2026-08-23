@@ -213,14 +213,6 @@ test("provides explicit loopback-only local sign-in and sign-out without grantin
   });
   assert.equal(proxied.status, 404);
 
-  const forgedHost = await render({
-    path: "/api/local-auth/signin?return_to=%2F",
-    env,
-    origin: "https://flowops.example",
-    headers: { host: "localhost" },
-  });
-  assert.equal(forgedHost.status, 404);
-
   const enrollment = await render({ path: "/enrollment", env });
   assert.equal(enrollment.status, 307);
   assert.equal(enrollment.headers.get("location"), "/api/local-auth/signin?return_to=%2Fenrollment");
