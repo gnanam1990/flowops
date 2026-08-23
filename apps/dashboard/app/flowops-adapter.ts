@@ -57,6 +57,59 @@ type ControlSnapshot = {
   pendingApprovals: ControlApproval[];
   agents: ControlAgent[];
 	reconciliation: ControlReconciliation;
+	ascp: ControlASCP;
+};
+
+type ControlASCP = {
+	available: boolean;
+	pendingApprovals: Array<{
+		approvalId: string;
+		reviewDigest: string;
+		operationId: string;
+		agentId: string;
+		taskId: string;
+		category: string;
+		reason: string;
+		policyVersion: string;
+		recipient: string;
+		asset: string;
+		amountAtomic: string;
+		requestedAt: string;
+		expiresAt: string;
+	}>;
+	assets: Array<{
+		asset: string;
+		walletDeltaAtomic: string;
+		escrowRestrictedAtomic: string;
+		recognizedExpenseAtomic: string;
+		spentTodayAtomic: string;
+		reservedAtomic: string;
+		pendingChainAtomic: string;
+		unresolvedAtomic: string;
+	}>;
+	agentBudgets: Array<{
+		agentId: string;
+		asset?: string;
+		dailyLimitAtomic: string;
+		spentTodayAtomic: string;
+		reservedAtomic: string;
+		availableAtomic: string;
+		currentTaskId?: string;
+		activePolicy: boolean;
+		policyVersion?: string;
+		policyConfigurationValid: boolean;
+	}>;
+	activity: Array<{
+		id: string;
+		kind: string;
+		state: string;
+		agentId?: string;
+		taskId?: string;
+		asset?: string;
+		amountAtomic?: string;
+		detail?: string;
+		occurredAt: string;
+	}>;
 };
 
 type ControlReconciliation = {
@@ -268,22 +321,23 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
 	!Number.isSafeInteger(raw.chain.respondingObservers) ||
     raw.chain.respondingObservers < 0 ||
 	raw.chain.respondingObservers > 5 ||
-	!validReconciliation(raw.reconciliation)
+	!validReconciliation(raw.reconciliation) ||
+	!validASCP(raw.ascp)
   ) {
     throw new Error("invalid dashboard snapshot");
   }
   const generatedAt = parseDate(raw.generatedAt);
-  const agents = raw.agents.map(mapAgent);
+  const budgetByAgent = new Map(raw.ascp.agentBudgets.map((budget) => [budget.agentId, budget]));
+  const agents = raw.agents.map((agent) => mapAgent(agent, budgetByAgent.get(agent.id)));
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
-  const approvals = raw.pendingApprovals.map((approval) => mapApproval(approval, names, generatedAt));
-  const activity: Activity[] = approvals.map((approval) => ({
-    id: `event-${approval.id}`,
-    time: approval.requested,
-    title: "Approval requested",
-    detail: `${approval.agent} · ${approval.vendor}`,
-    amount: approval.amount,
-    state: "approval",
-  }));
+	const approvals = [
+		...raw.pendingApprovals.map((approval) => mapApproval(approval, names, generatedAt)),
+		...raw.ascp.pendingApprovals.map((approval) => mapASCPApproval(approval, names, generatedAt)),
+	];
+	const activity = [
+		...raw.ascp.activity.map((item) => ({ occurredAt: parseDate(item.occurredAt), item: mapASCPActivity(item, names, generatedAt) })),
+		...raw.pendingApprovals.map((item) => ({ occurredAt: new Date(item.submittedAt * 1_000), item: mapLegacyApprovalActivity(item, names, generatedAt) })),
+	].sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime()).map((entry) => entry.item);
 	const risks = liveRisks(raw, agents, generatedAt);
   const checkpoint = raw.chain.lastTrusted;
   if (checkpoint && (!Number.isSafeInteger(checkpoint.blockNumber) || checkpoint.blockNumber < 0)) {
@@ -292,8 +346,10 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   const checkpointTime = checkpoint ? parseDate(checkpoint.observedAt) : null;
   const observerProgress = `${raw.chain.respondingObservers} / ${raw.chain.requiredObserverQuorum}`;
 	const unavailable = "Not available";
-	const singleAsset = raw.reconciliation.available && raw.reconciliation.assets.length === 1 ? raw.reconciliation.assets[0] : null;
-	const assetLabel = singleAsset ? shortAddress(singleAsset.asset) : raw.reconciliation.assets.length > 1 ? "Multiple assets" : "Asset unavailable";
+	const singleAsset = raw.ascp.available && raw.ascp.assets.length === 1 ? raw.ascp.assets[0] : null;
+	const assetLabel = singleAsset ? shortAddress(singleAsset.asset) : raw.ascp.assets.length > 1 ? "Multiple assets" : "No ASCP activity";
+	const singleBudget = raw.ascp.agentBudgets.length === 1 && raw.ascp.agentBudgets[0].policyConfigurationValid ? raw.ascp.agentBudgets[0] : null;
+	const dailySpentPercent = singleBudget ? atomicPercent(singleBudget.spentTodayAtomic, singleBudget.dailyLimitAtomic) : null;
   return {
     mode: "live",
     connection: {
@@ -312,14 +368,13 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     money: {
 	  asset: assetLabel,
 	  total: singleAsset ? `${formatAtomic(singleAsset.recognizedExpenseAtomic)} atomic` : unavailable,
-      available: unavailable,
-	  reserved: singleAsset ? `${formatAtomic(singleAsset.escrowLockedAtomic)} atomic` : unavailable,
-	  pending: `${raw.reconciliation.recovery.pendingFinality} item${raw.reconciliation.recovery.pendingFinality === 1 ? "" : "s"}`,
-	  unresolved: singleAsset ? `${formatAtomic(singleAsset.unresolvedAtomic)} atomic` : `${raw.reconciliation.recovery.unresolvedOutcomes} item${raw.reconciliation.recovery.unresolvedOutcomes === 1 ? "" : "s"}`,
+	  walletDelta: singleAsset ? `${formatAtomic(singleAsset.walletDeltaAtomic)} atomic` : unavailable,
+	  reserved: singleAsset ? `${formatAtomic(singleAsset.reservedAtomic)} atomic` : unavailable,
+	  pending: singleAsset ? `${formatAtomic(singleAsset.pendingChainAtomic)} atomic` : unavailable,
+	  unresolved: singleAsset ? `${formatAtomic(singleAsset.unresolvedAtomic)} atomic` : unavailable,
 	  spentToday: singleAsset ? `${formatAtomic(singleAsset.spentTodayAtomic)} atomic` : unavailable,
-	  monthlySpent: singleAsset ? `${formatAtomic(singleAsset.spentMonthAtomic)} atomic` : unavailable,
-      monthlyBudget: unavailable,
-      monthlySpentPercent: null,
+	  dailyLimit: singleBudget ? `${formatAtomic(singleBudget.dailyLimitAtomic)} atomic` : unavailable,
+	  dailySpentPercent,
     },
     approvals,
     agents,
@@ -341,7 +396,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   };
 }
 
-function mapAgent(raw: ControlAgent): Agent {
+function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number] | undefined): Agent {
   if (
     !isIdentifier(raw?.id) ||
     typeof raw.name !== "string" ||
@@ -357,12 +412,90 @@ function mapAgent(raw: ControlAgent): Agent {
     mark: initials(raw.name),
     purpose: raw.purpose || "Purpose not supplied",
     status: raw.status,
-    available: "Not available",
-    spent: "Not available",
-    limit: "Not available",
-    percent: 0,
-    task: "Task telemetry not exposed",
+	available: budget?.policyConfigurationValid ? `${formatAtomic(budget.availableAtomic)} atomic` : "No active policy",
+	spent: budget?.policyConfigurationValid ? `${formatAtomic(budget.spentTodayAtomic)} atomic` : "Unavailable",
+	limit: budget?.policyConfigurationValid ? `${formatAtomic(budget.dailyLimitAtomic)} atomic` : "Unavailable",
+	percent: budget?.policyConfigurationValid ? atomicPercent(budget.spentTodayAtomic, budget.dailyLimitAtomic) : 0,
+	task: budget?.currentTaskId || "No recorded ASCP task",
   };
+}
+
+function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Map<string, string>, observedAt: Date): Approval {
+	if (!isIdentifier(raw.approvalId) || !/^0x[0-9a-f]{64}$/.test(raw.reviewDigest) || !/^0x[0-9a-f]{64}$/.test(raw.operationId) ||
+		!isIdentifier(raw.agentId) || !isBoundedText(raw.taskId, 1024) || !isBoundedText(raw.category, 1024) ||
+		!/^0x[0-9a-f]{40}$/.test(raw.recipient) || !/^0x[0-9a-f]{40}$/.test(raw.asset) || !validUnsignedAtomic(raw.amountAtomic)) {
+		throw new Error("invalid ASCP approval");
+	}
+	const requestedAt = parseDate(raw.requestedAt);
+	const expiresAt = parseDate(raw.expiresAt);
+	if (expiresAt <= requestedAt) throw new Error("invalid ASCP approval lifetime");
+	const agent = names.get(raw.agentId) ?? raw.agentId;
+	return {
+		source: "ascp",
+		id: raw.approvalId,
+		agent,
+		agentMark: initials(agent),
+		title: raw.category || `Task ${raw.taskId}`,
+		vendor: shortAddress(raw.recipient),
+		amount: `${formatAtomic(raw.amountAtomic)} atomic`,
+		requested: age(requestedAt, observedAt),
+		expires: durationUntil(Math.floor(expiresAt.getTime() / 1000), observedAt),
+		reason: humanize(raw.reason),
+		risk: riskForReason(raw.reason),
+		rail: "Escrowed call",
+		asset: shortAddress(raw.asset),
+		policyVersion: raw.policyVersion,
+		requestDigest: shortDigest(raw.reviewDigest),
+		evidenceRefs: `Operation ${shortDigest(raw.operationId)}`,
+	};
+}
+
+function mapASCPActivity(raw: ControlASCP["activity"][number], names: Map<string, string>, observedAt: Date): Activity {
+	if (!isIdentifier(raw.id) || typeof raw.kind !== "string" || !raw.kind || typeof raw.state !== "string" || !raw.state ||
+		(raw.agentId && !isIdentifier(raw.agentId)) || (raw.taskId && !isBoundedText(raw.taskId, 1024)) ||
+		(raw.asset && !/^0x[0-9a-f]{40}$/.test(raw.asset)) || (raw.amountAtomic && !validUnsignedAtomic(raw.amountAtomic))) {
+		throw new Error("invalid ASCP activity");
+	}
+	const occurredAt = parseDate(raw.occurredAt);
+	const agent = raw.agentId ? (names.get(raw.agentId) ?? raw.agentId) : "Control plane";
+	const state = activityState(raw.kind, raw.state);
+	return {
+		id: `${raw.kind}-${raw.id}-${raw.state}`,
+		time: age(occurredAt, observedAt),
+		title: activityTitle(raw.kind, raw.state),
+		detail: [agent, raw.taskId ? `Task ${raw.taskId}` : "", raw.detail ? humanize(raw.detail) : ""].filter(Boolean).join(" · "),
+		amount: raw.amountAtomic ? `${formatAtomic(raw.amountAtomic)} atomic${raw.asset ? ` · ${shortAddress(raw.asset)}` : ""}` : undefined,
+		state,
+	};
+}
+
+function activityState(kind: string, state: string): Activity["state"] {
+	if (kind === "CONTROL_AUDIT") return "security";
+	if (kind === "ASCP_APPROVAL") return "approval";
+	if (kind === "POLICY_DECISION") return "decision";
+	if (state === "RELEASED_FINALIZED") return "released";
+	if (state === "REFUNDED_FINALIZED") return "refunded";
+	if (state.endsWith("FINALIZED")) return "settled";
+	return "pending";
+}
+
+function activityTitle(kind: string, state: string): string {
+	if (kind === "CONTROL_AUDIT") return humanize(state);
+	if (kind === "ASCP_APPROVAL") return `Approval ${humanize(state).toLowerCase()}`;
+	if (kind === "POLICY_DECISION") return `Policy ${humanize(state).toLowerCase()}`;
+	return `Payment ${humanize(state).toLowerCase()}`;
+}
+
+function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, string>, observedAt: Date): Activity {
+	const approval = mapApproval(raw, names, observedAt);
+	return {
+		id: `LEGACY_APPROVAL-${approval.id}`,
+		time: approval.requested,
+		title: "Approval requested",
+		detail: `${approval.agent} · ${approval.vendor}`,
+		amount: approval.amount,
+		state: "approval",
+	};
 }
 
 function mapApproval(raw: ControlApproval, names: Map<string, string>, observedAt: Date): Approval {
@@ -386,6 +519,7 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
   const agent = names.get(raw.intent.agentId) ?? raw.intent.agentId;
   const recipient = shortAddress(raw.intent.recipient);
   return {
+	source: "legacy",
     id: raw.requestId,
     agent,
     agentMark: initials(agent),
@@ -460,6 +594,15 @@ function validReconciliation(value: ControlReconciliation | undefined): value is
 	if (typeof recovery.readyForManualResume !== "boolean" || typeof recovery.complete !== "boolean" || !Number.isSafeInteger(value.unclassifiedLedgerTransactions) || value.unclassifiedLedgerTransactions < 0) return false;
 	if (!value.assets.every((asset) => /^0x[0-9a-f]{40}$/.test(asset.asset) && [asset.escrowLockedAtomic, asset.recognizedExpenseAtomic, asset.spentTodayAtomic, asset.spentMonthAtomic, asset.unresolvedAtomic].every(validSignedAtomic))) return false;
 	return value.exceptions.every((exception) => isIdentifier(exception.id) && typeof exception.kind === "string" && typeof exception.state === "string" && /^0x[0-9a-f]{40}$/.test(exception.asset) && validUnsignedAtomic(exception.amountAtomic) && typeof exception.firstObservedAt === "string" && typeof exception.reason === "string" && typeof exception.operatorActionNeeded === "boolean");
+}
+
+function validASCP(value: ControlASCP | undefined): value is ControlASCP {
+	if (!value || typeof value.available !== "boolean" || !Array.isArray(value.pendingApprovals) || !Array.isArray(value.assets) || !Array.isArray(value.agentBudgets) || !Array.isArray(value.activity)) return false;
+	if (!value.assets.every((asset) => /^0x[0-9a-f]{40}$/.test(asset.asset) && validSignedAtomic(asset.walletDeltaAtomic) &&
+		[asset.escrowRestrictedAtomic, asset.recognizedExpenseAtomic, asset.spentTodayAtomic, asset.reservedAtomic, asset.pendingChainAtomic, asset.unresolvedAtomic].every(validUnsignedAtomic))) return false;
+	if (!value.agentBudgets.every((budget) => isIdentifier(budget.agentId) && typeof budget.activePolicy === "boolean" && typeof budget.policyConfigurationValid === "boolean" &&
+		[budget.dailyLimitAtomic, budget.spentTodayAtomic, budget.reservedAtomic, budget.availableAtomic].every((amount) => amount === "" || validUnsignedAtomic(amount)))) return false;
+	return true;
 }
 
 function validSignedAtomic(value: unknown): value is string {
@@ -580,14 +723,13 @@ function privateMoney(): DashboardSnapshot["money"] {
   return {
     asset: "Member-only",
     total: "Private",
-    available: "Private",
+	walletDelta: "Private",
     reserved: "Private",
     pending: "Private",
     unresolved: "Private",
     spentToday: "Private",
-    monthlySpent: "Private",
-    monthlyBudget: "Private",
-    monthlySpentPercent: null,
+	dailyLimit: "Private",
+	dailySpentPercent: null,
   };
 }
 
@@ -623,6 +765,10 @@ function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(value);
 }
 
+function isBoundedText(value: unknown, maximum: number): value is string {
+	return typeof value === "string" && value.length > 0 && value.length <= maximum && value.trim() === value && !value.includes("\u0000");
+}
+
 function isChainState(value: unknown): value is DashboardSnapshot["chain"]["state"] {
   return value === "HEALTHY" || value === "SUSPECTED_STALL" || value === "HALTED" || value === "RECOVERING";
 }
@@ -653,6 +799,14 @@ function durationUntil(unixSeconds: number, now: Date): string {
 
 function formatAtomic(atomic: string): string {
   return BigInt(atomic).toLocaleString("en-US");
+}
+
+function atomicPercent(spent: string, limit: string): number {
+	const spentValue = BigInt(spent);
+	const limitValue = BigInt(limit);
+	if (limitValue <= 0n) return 0;
+	const basisPoints = spentValue * 10_000n / limitValue;
+	return Math.min(100, Number(basisPoints) / 100);
 }
 
 function initials(value: string): string {

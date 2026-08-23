@@ -12,8 +12,7 @@ export const metadata: Metadata = {
 const github = "https://github.com/gnanam1990/flowops";
 const blockscout = "https://base.blockscout.com";
 const proofLinks = [
-  { label: "Interactive product walkthrough", detail: "A 60-second, no-wallet product narrative: policy, approval, delivery evidence, refund, and Base posture.", href: "/demo", local: true },
-  { label: "Public control room", detail: "Public, non-sensitive control-plane status view. Organization records and payment controls stay private.", href: "/", local: true },
+	{ label: "Live control room", detail: "Authenticated members see only PostgreSQL-backed policy, approval, payment, ledger, and Base evidence records for their organization.", href: "/", local: true },
   { label: "Base mainnet proposal anchor", detail: "Verified, evidence-only contract. Permanently experimental and unable to accept funds or create payment vaults.", href: blockscout + "/address/0x149d03ec527ad8667d47e7b6a2d316dd54033250?tab=contract" },
   { label: "Base Sepolia escrow proof", detail: "Reference signer, capped test-USDC escrow funding, onchain acknowledgement, and terminal refund evidence.", href: github + "/blob/main/docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.md" },
 ];
@@ -38,7 +37,7 @@ export default function BaseReviewerBrief() {
         <p className="review-eyebrow">AGENTIC PAYMENTS / CONTROL + EVIDENCE</p>
         <h1>Give every agent payment a reason, a rule, and a receipt.</h1>
         <p className="review-summary">FlowOps is a Base-only control and evidence plane for autonomous agent payments. It evaluates policy, requests human approval when needed, hands a bounded authorization to a customer-managed signer, and reconciles the result against canonical Base evidence.</p>
-        <div className="review-actions"><Link href="/demo">Watch the interactive walkthrough <span>↗</span></Link><a href={github} rel="noreferrer" target="_blank">Read the public repository <span>↗</span></a></div>
+		<div className="review-actions"><Link href="/">Open the live control room <span>↗</span></Link><a href={github} rel="noreferrer" target="_blank">Read the public repository <span>↗</span></a></div>
       </section>
       <section className="review-facts" aria-label="Current status">
         <article><span>PRODUCT</span><strong>Pre-alpha · controlled-pilot design</strong><p>No production payment launch or usage claims.</p></article>
@@ -68,7 +67,7 @@ export default function BaseReviewerBrief() {
         <p>HONEST AVAILABILITY</p><h2>FlowOps is ready for reviewer evaluation and a bounded pilot—not unrestricted mainnet payments.</h2>
         <p>The next milestone is an allowlisted pilot with customer-managed signing, caps, service allowlists, manual operational review, and observable Base reconciliation. An audited payment deployment, independent security review, legal/custody review, and a separate approval are required before any unrestricted mainnet funds.</p>
       </section>
-      <footer className="review-footer"><span>FLOWOPS / BASE REVIEWER PACKAGE</span><Link href="/demo">Interactive walkthrough</Link><a href={github} rel="noreferrer" target="_blank">Repository</a><a href={blockscout + "/tx/0x7fe3986c45a1c4de2c9ca421222569ba8e41cc6b7fe9173340a3954c9306a76b"} rel="noreferrer" target="_blank">Anchor transaction</a></footer>
+	  <footer className="review-footer"><span>FLOWOPS / BASE REVIEWER PACKAGE</span><Link href="/">Live control room</Link><a href={github} rel="noreferrer" target="_blank">Repository</a><a href={blockscout + "/tx/0x7fe3986c45a1c4de2c9ca421222569ba8e41cc6b7fe9173340a3954c9306a76b"} rel="noreferrer" target="_blank">Anchor transaction</a></footer>
     </main>
   );
 }

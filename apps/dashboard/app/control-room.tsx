@@ -137,7 +137,7 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
         </div>
 
         <div className="org-card">
-          <span className="org-monogram">NL</span>
+		  <span className="org-monogram">{initials(snapshot.organization.name)}</span>
           <span>
             <strong>{snapshot.organization.name}</strong>
             <small>{snapshot.organization.plan}</small>
@@ -344,7 +344,6 @@ function Overview({
   accountHref: string | null;
   authenticated: boolean;
 }) {
-  const [range, setRange] = useState<"24h" | "7d" | "30d">("7d");
   return (
     <>
       <section className="command-header">
@@ -373,11 +372,6 @@ function Overview({
             </>
           ) : (
             <>
-              <div className="time-range" aria-label="Time range">
-                {(["24h", "7d", "30d"] as const).map((item) => (
-                  <button aria-pressed={range === item} className={range === item ? "active" : ""} key={item} onClick={() => setRange(item)} type="button">{item}</button>
-                ))}
-              </div>
               <button className="primary-button" type="button" onClick={onApprovals}>
                 Review {snapshot.approvals.length} approvals <span>→</span>
               </button>
@@ -393,10 +387,10 @@ function Overview({
         <div className="balance-card primary-balance">
 		  <span>{snapshot.mode === "live" ? "Recognized economic expense" : snapshot.mode === "public" ? "Organization economic data" : "Observed treasury / USDC"}</span>
           <strong>{snapshot.money.total}</strong>
-		  <small><i /> {snapshot.mode === "live" ? `Journal-derived · ${snapshot.money.asset} · not a wallet balance` : snapshot.mode === "public" ? "Private by default · sign in with an authorized membership" : "Read-only aggregate across customer-controlled signers"}</small>
+		  <small><i /> {snapshot.mode === "live" ? `ASCP PostgreSQL subledger · ${snapshot.money.asset} · not a wallet balance` : "Private by default · sign in with an authorized membership"}</small>
           <div className="balance-signal" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /></div>
         </div>
-        <MoneyCard label="Available" value={snapshot.money.available} tone="good" />
+		<MoneyCard label="Wallet ledger delta" value={snapshot.money.walletDelta} tone="good" />
         <MoneyCard label="Reserved" value={snapshot.money.reserved} tone="reserved" />
         <MoneyCard label="Pending chain evidence" value={snapshot.money.pending} tone="pending" />
         <MoneyCard label="Unresolved" value={snapshot.money.unresolved} tone="risk" />
@@ -430,21 +424,21 @@ function Overview({
         </section>
 
         <section className="panel budget-panel">
-          <PanelHeader kicker="Budget" title="August spend" meta={snapshot.money.monthlySpentPercent === null ? "Unavailable" : "On track"} />
+		  <PanelHeader kicker="Budget" title="Today’s policy usage" meta={snapshot.money.dailySpentPercent === null ? "Per-agent" : "Current"} />
           <div className="budget-total">
             <strong>{snapshot.money.spentToday}</strong>
             <span>spent today</span>
           </div>
           <div className="progress-label">
-            <span>Monthly usage</span>
-            <strong>{snapshot.money.monthlySpentPercent === null ? "Unavailable" : `${snapshot.money.monthlySpentPercent}%`}</strong>
+			<span>Daily usage</span>
+			<strong>{snapshot.money.dailySpentPercent === null ? "See agents" : `${snapshot.money.dailySpentPercent}%`}</strong>
           </div>
-          <div className="progress-track" aria-label={snapshot.money.monthlySpentPercent === null ? "Monthly budget usage is unavailable" : `${snapshot.money.monthlySpentPercent}% of monthly budget used`}>
-            <i style={{ width: `${snapshot.money.monthlySpentPercent ?? 0}%` }} />
+		  <div className="progress-track" aria-label={snapshot.money.dailySpentPercent === null ? "Daily budget usage is available per agent" : `${snapshot.money.dailySpentPercent}% of daily policy limit used`}>
+			<i style={{ width: `${snapshot.money.dailySpentPercent ?? 0}%` }} />
           </div>
           <div className="budget-foot">
-            <span>{snapshot.money.monthlySpent} spent</span>
-            <span>{snapshot.money.monthlyBudget} limit</span>
+			<span>{snapshot.money.spentToday} spent</span>
+			<span>{snapshot.money.dailyLimit} daily limit</span>
           </div>
           <div className="budget-note">
             <span>i</span>
@@ -464,11 +458,6 @@ function Overview({
 
         <section className="panel chain-panel">
           <PanelHeader kicker="Base truth" title="Chain health" meta={snapshot.chain.state} />
-          <div className="chain-visual" aria-hidden="true">
-            {[31, 48, 42, 68, 54, 72, 61, 79, 67, 88, 82, 94].map((height, index) => (
-              <i key={index} style={{ height: `${height}%` }} />
-            ))}
-          </div>
           <dl className="chain-facts">
             <div><dt>Observer quorum</dt><dd>{snapshot.chain.observers}</dd></div>
             <div><dt>Last trusted block</dt><dd>#{snapshot.chain.lastTrustedBlock}</dd></div>
@@ -544,7 +533,7 @@ function Agents({ agents }: { agents: Agent[] }) {
             <header><AgentMark mark={agent.mark} /><span><strong>{agent.name}</strong><small>{agent.purpose}</small></span><StatusBadge status={agent.status} /></header>
             <div className="agent-balance"><span>Available budget</span><strong>{agent.available}</strong><small>of {agent.limit}</small></div>
             <div className="progress-track small"><i style={{ width: `${agent.percent}%` }} /></div>
-            <footer><span>Current task</span><strong>{agent.task}</strong><small>Signer boundary: customer-controlled</small></footer>
+			<footer><span>Latest recorded task</span><strong>{agent.task}</strong><small>Signer boundary: customer-controlled</small></footer>
           </article>
         ))}
       </div>
@@ -560,7 +549,7 @@ function ActivityView({ activity }: { activity: Activity[] }) {
     <section className="section-stack">
       <SectionHeading eyebrow="Policy to receipt" title="Economic activity" description="A single timeline for tasks, approvals, payments, delivery evidence, refunds, and security events." />
       <div className="filter-bar" aria-label="Activity filters">
-        {(["all", "settled", "released", "refunded", "approval", "security"] as const).map((item) => <button className={filter === item ? "active" : ""} key={item} onClick={() => setFilter(item)} type="button">{capitalize(item)}</button>)}
+		{(["all", "pending", "decision", "settled", "released", "refunded", "approval", "security"] as const).map((item) => <button className={filter === item ? "active" : ""} key={item} onClick={() => setFilter(item)} type="button">{capitalize(item)}</button>)}
       </div>
       <div className="activity-view panel"><ActivityRows activity={visible} /></div>
     </section>
@@ -573,7 +562,7 @@ function Security({ risks, chain, reconciliation, authorizationsPaused, onPause 
       <SectionHeading eyebrow="Fail closed" title="Security & recovery" description="Critical controls stay visible until the underlying risk is acknowledged or canonically resolved." action={<button className="danger-button" onClick={onPause} disabled={authorizationsPaused} type="button">{authorizationsPaused ? "Authorizations paused" : "Emergency pause"}</button>} />
 	  <div className="security-grid">
         <div className="panel security-state"><span className={authorizationsPaused ? "halted-dot" : "healthy-dot"} /><div><small>Authorization state</small><strong>{authorizationsPaused ? "PAUSED" : "Protected"}</strong><p>{authorizationsPaused ? "The persistent organization gate rejects new authorization issuance." : "Organization and signer boundaries are accepting policy-valid requests."}</p></div></div>
-        <div className="panel security-state"><span className="healthy-dot" /><div><small>Base canonical state</small><strong>{chain.state}</strong><p>{chain.observers} at block #{chain.lastTrustedBlock}.</p></div></div>
+		<div className="panel security-state"><span className={chain.state === "HEALTHY" ? "healthy-dot" : "halted-dot"} /><div><small>Base canonical state</small><strong>{chain.state}</strong><p>{chain.observers} at block #{chain.lastTrustedBlock}.</p></div></div>
 	  </div>
 	  <div className="panel recovery-progress">
 		<PanelHeader kicker="Canonical recovery" title="Reconciliation progress" meta={reconciliation.complete ? "Complete" : `${reconciliation.unresolvedOutcomes} unresolved`} />
@@ -595,32 +584,11 @@ function Security({ risks, chain, reconciliation, authorizationsPaused, onPause 
 }
 
 function Developers({ snapshot }: { snapshot: DashboardSnapshot }) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
-    "idle",
-  );
-  const configuration = `{
-  "mcpServers": {
-    "flowops": {
-      "url": "https://api.flowops.dev/mcp",
-      "headers": { "Authorization": "Bearer ••••" }
-    }
-  }
-}`;
-
-  const copyConfiguration = async () => {
-    try {
-      await navigator.clipboard.writeText(configuration);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-  };
-
   return (
     <section className="section-stack">
       <SectionHeading eyebrow="Build with boundaries" title="Developer center" description="Connect agents through MCP or the SDK without giving them an unrestricted wallet or FlowOps a customer key." />
       <div className="developer-grid">
-        <article className="panel code-card"><span className="code-kicker">MCP connection</span><pre><code>{configuration}</code></pre><button type="button" onClick={copyConfiguration}>{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy unavailable" : "Copy configuration"}</button></article>
+		<article className="panel code-card"><span className="code-kicker">MCP connection</span><h2>Use the deployed control-plane endpoint</h2><p>The runtime endpoint and credential are deployment secrets and are never replaced with a sample URL in this dashboard. Follow the repository deployment runbook to configure the real MCP transport.</p></article>
         <article className="panel api-health"><PanelHeader kicker="Integration health" title="All boundaries" meta={snapshot.mode === "live" ? "Read only" : "Public status"} /><dl><div><dt>Control plane</dt><dd>{snapshot.mode === "live" ? "Membership authorized" : snapshot.connection.label}</dd></div><div><dt>Customer signer</dt><dd>Not exposed</dd></div><div><dt>x402 facilitator</dt><dd>Not exposed</dd></div><div><dt>Base observers</dt><dd>{snapshot.chain.observers}</dd></div></dl><p>{snapshot.connection.detail}</p></article>
       </div>
       <div className="panel logs-card"><PanelHeader kicker="Recent requests" title="Developer logs" meta="Unavailable" /><div className="log-row head"><span>Time</span><span>Request</span><span>Agent</span><span>Outcome</span><span>Latency</span></div><p className="empty-state">Request logs are not exposed by the current control-plane snapshot.</p></div>
@@ -649,7 +617,9 @@ function ApprovalDrawer({ approval, mode, onClose, onAction, onCommand }: { appr
     setBusy(true);
     setError("");
     try {
-      await onCommand({ type: "approval", requestId: approval.id, action, note, operationId: crypto.randomUUID(), stepUpToken });
+	  await onCommand(approval.source === "ascp"
+		? { type: "ascp-approval", approvalId: approval.id, action, operationId: crypto.randomUUID(), stepUpToken }
+		: { type: "approval", requestId: approval.id, action, note, operationId: crypto.randomUUID(), stepUpToken });
       setStepUpToken("");
       onClose();
     } catch (cause) {
@@ -668,7 +638,7 @@ function ApprovalDrawer({ approval, mode, onClose, onAction, onCommand }: { appr
         <dl className="detail-list"><div><dt>Recipient / vendor</dt><dd>{approval.vendor}</dd></div><div><dt>Agent</dt><dd>{approval.agent}</dd></div><div><dt>Task</dt><dd>{approval.title}</dd></div><div><dt>Rail</dt><dd>{approval.rail}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Policy snapshot</dt><dd className="mono">{approval.policyVersion ?? "Not exposed"}</dd></div><div><dt>Evidence refs</dt><dd className="mono">{approval.evidenceRefs ?? "Not exposed"}</dd></div><div><dt>Created</dt><dd>{approval.requested}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Request digest</dt><dd className="mono">{approval.requestDigest ?? "Not exposed"}</dd></div></dl>
         <div className="reason-box"><span>Why approval is required</span><p>{approval.reason}</p></div>
         <div className="truth-box"><strong>What this decision means</strong><p>Approval authorizes only this frozen intent. Any change to amount, recipient, task, rail, or request digest requires a new decision.</p></div>
-        {mode === "live" ? <div className="step-up-box"><label htmlFor="approval-step-up">Fresh step-up token</label><input id="approval-step-up" type="password" autoComplete="off" value={stepUpToken} onChange={(event) => setStepUpToken(event.target.value)} disabled={busy} /><label htmlFor="approval-note">Decision note</label><textarea id="approval-note" value={note} maxLength={2048} onChange={(event) => setNote(event.target.value)} disabled={busy} /><small>Held in memory for this request only. Never stored by the dashboard.</small>{error ? <p role="alert">{error}</p> : null}</div> : null}
+		{mode === "live" ? <div className="step-up-box"><label htmlFor="approval-step-up">Fresh step-up token</label><input id="approval-step-up" type="password" autoComplete="off" value={stepUpToken} onChange={(event) => setStepUpToken(event.target.value)} disabled={busy} />{approval.source === "legacy" ? <><label htmlFor="approval-note">Decision note</label><textarea id="approval-note" value={note} maxLength={2048} onChange={(event) => setNote(event.target.value)} disabled={busy} /></> : null}<small>Held in memory for this request only. Never stored by the dashboard.</small>{error ? <p role="alert">{error}</p> : null}</div> : null}
         <footer><button className="secondary-button" onClick={() => void decide("REJECT")} disabled={busy || (mode === "live" && !stepUpToken)} type="button">Deny</button><button className="primary-button" onClick={() => void decide("APPROVE")} disabled={busy || (mode === "live" && !stepUpToken)} aria-busy={busy} type="button">{busy ? "Verifying…" : "Approve exact intent"}</button></footer>
       </aside>
     </div>
@@ -720,7 +690,7 @@ function SectionHeading({ eyebrow, title, description, action }: { eyebrow: stri
 }
 
 function MoneyCard({ label, value, tone }: { label: string; value: string; tone: string }) {
-  const detail = value === "Private" ? "Authorized members only" : value === "Not available" ? "Not exposed by control plane" : tone === "good" ? "Spendable now" : tone === "risk" ? "Needs review" : "Tracked separately";
+	const detail = value === "Private" ? "Authorized members only" : value === "Not available" ? "No authoritative record" : tone === "good" ? "Recognized subledger effect" : tone === "risk" ? "Needs review" : "Tracked separately";
   return <div className={`balance-card compact ${tone}`}><span>{label}</span><strong>{value}</strong><small><i /> {detail}</small></div>;
 }
 
@@ -738,7 +708,7 @@ function ActivityRows({ activity }: { activity: Activity[] }) {
 
 function RiskRow({ risk }: { risk: Risk }) { return <article className={`risk-row ${risk.severity}`}><span>{risk.severity === "warning" ? "!" : "i"}</span><div><small>{risk.severity} · {risk.time}</small><strong>{risk.title}</strong><p>{risk.detail}</p></div><em>Open review</em></article>; }
 
-function activityMark(state: Activity["state"]) { return { settled: "✓", released: "↗", refunded: "↙", approval: "?", security: "!" }[state]; }
+function activityMark(state: Activity["state"]) { return { settled: "✓", released: "↗", refunded: "↙", approval: "?", decision: "§", security: "!", pending: "·" }[state]; }
 function initials(name: string) { return name.split(/\s|@/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "OP"; }
 function shortName(name: string) { return name.includes("@") ? name.split("@")[0] : name.split(" ")[0]; }
 function capitalize(value: string) { return value.charAt(0).toUpperCase() + value.slice(1); }

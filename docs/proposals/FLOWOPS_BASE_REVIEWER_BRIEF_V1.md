@@ -5,7 +5,7 @@ payment launch.
 
 ## Start here
 
-- Interactive product walkthrough: https://flowopsagent.xyz/demo
+- Live control room: https://flowopsagent.xyz
 - Public reviewer brief: https://flowopsagent.xyz/base
 - Public repository: https://github.com/gnanam1990/flowops
 - Base mainnet proposal anchor:
@@ -29,7 +29,7 @@ approval, to which recipient, and with what observed outcome?
 
 | Capability | Evidence | Current boundary |
 | --- | --- | --- |
-| Product walkthrough | https://flowopsagent.xyz/demo | Interactive, no wallet access or transaction |
+| Live control room | https://flowopsagent.xyz | Public health plus organization-scoped PostgreSQL and Base evidence for authorized members; no demo records |
 | Public reviewer brief | https://flowopsagent.xyz/base | Public product and evidence links |
 | Mainnet provenance | Verified FlowOpsProposalAnchor | Evidence-only; no funds or payment entry points |
 | Escrow lifecycle | Base Sepolia reference-signer proof | 0.1 test USDC and terminal refund; testnet only |

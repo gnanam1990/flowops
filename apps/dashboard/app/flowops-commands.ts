@@ -7,6 +7,7 @@ const IDENTIFIER = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 
 export type DashboardCommandInput =
   | { type: "approval"; requestId: string; action: "APPROVE" | "REJECT"; note: string; operationId: string; stepUpToken: string }
+	| { type: "ascp-approval"; approvalId: string; action: "APPROVE" | "REJECT"; operationId: string; stepUpToken: string }
   | { type: "organization-pause"; reason: string; operationId: string; stepUpToken: string };
 
 type PrincipalClaims = {
@@ -66,6 +67,21 @@ export async function submitDashboardCommand(
     }
     path = `/v1/approvals/${encodeURIComponent(input.requestId)}/decision`;
     body = { requestDigest: approval.requestDigest, action: input.action, note: input.note };
+	} else if (input.type === "ascp-approval") {
+		const snapshot = await upstreamJSON<{ organizationId: string; ascp: { pendingApprovals: Array<{ approvalId: string; reviewDigest: string }> } }>(
+			request,
+			`${config.controlApiUrl}/v1/dashboard/snapshot`,
+			{ headers: { authorization: `Bearer ${session.accessToken}` } },
+		);
+		if (snapshot.organizationId !== session.organizationId || !Array.isArray(snapshot.ascp?.pendingApprovals)) {
+			throw new DashboardCommandError(502, "INVALID_CONTROL_RESPONSE", "The ASCP approval snapshot could not be verified.");
+		}
+		const approval = snapshot.ascp.pendingApprovals.find((candidate) => candidate.approvalId === input.approvalId);
+		if (!approval || !/^0x[0-9a-f]{64}$/.test(approval.reviewDigest)) {
+			throw new DashboardCommandError(409, "APPROVAL_NOT_PENDING", "This exact ASCP approval is no longer pending. Refresh before deciding.");
+		}
+		path = `/v1/ascp/approvals/${encodeURIComponent(input.approvalId)}/decision`;
+		body = { reviewSnapshotHash: approval.reviewDigest, action: input.action };
   } else {
     path = "/v1/organization/pause";
     body = { reason: input.reason };
@@ -109,6 +125,13 @@ function validateCommandInput(input: DashboardCommandInput): void {
     }
     return;
   }
+	if (input.type === "ascp-approval") {
+		if (!exactKeys(input, ["action", "approvalId", "operationId", "stepUpToken", "type"]) || !IDENTIFIER.test(input.approvalId) ||
+			(input.action !== "APPROVE" && input.action !== "REJECT")) {
+			throw new DashboardCommandError(400, "INVALID_COMMAND", "The ASCP approval decision is invalid.");
+		}
+		return;
+	}
   if (!exactKeys(input, ["operationId", "reason", "stepUpToken", "type"])) throw new DashboardCommandError(400, "INVALID_COMMAND", "The pause request contains unsupported fields.");
   if (input.type !== "organization-pause" || typeof input.reason !== "string" || !input.reason.trim() || input.reason.length > 1_024) {
     throw new DashboardCommandError(400, "INVALID_COMMAND", "The pause reason is invalid.");
