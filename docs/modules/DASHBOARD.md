@@ -1,13 +1,13 @@
 # Operator dashboard module
 
-Status: membership-bound reads, step-up command bridge, and journal-backed reconciliation aggregates implemented; hosted step-up issuance remains gated
+Status: membership-bound PostgreSQL reads, step-up command bridge, ASCP subledger projection, and journal-backed reconciliation aggregates implemented; hosted step-up issuance remains gated
 
 Package: `apps/dashboard`
 
 ## Purpose
 
 The dashboard gives an operator one control room for governed agents and their
-money. It answers what is spendable, what is reserved, what is awaiting chain
+economic controls. It answers what policy capacity remains per agent, what is reserved, what is awaiting chain
 evidence, what is unresolved, which human decisions are pending, and whether
 Base is producing a trusted canonical head.
 
@@ -22,7 +22,7 @@ without a proved asset binding are excluded and counted visibly.
 ## Entry and identity flow
 
 The root route reads ChatGPT/Sites identity headers on the server. Anonymous
-local preview remains available. For a signed-in viewer, the Sites server
+requests receive public operational health or an explicit unavailable state—never example organization data. For a signed-in viewer, the Sites server
 derives a project-bound user hash and exchanges it with the control plane using
 a server-only project credential. Live data appears only when the exact user,
 email digest, project, and ACTIVE FlowOps membership match. Identity headers
@@ -31,29 +31,32 @@ the session boundary.
 
 ## Implemented views
 
-- Overview with separately labelled available, reserved, pending, and unresolved balances.
+- Overview with separately labelled ASCP subledger delta, reserved, pending, and unresolved amounts.
 - Exact-intent approval inbox with amount, recipient, rail, expiry, reason, and frozen-intent explanation.
-- Agent directory with purpose, current task, signer state, cap, and spend.
+- Agent directory with purpose, latest recorded task, signer state, cap, and spend.
 - Economic activity timeline spanning approval, settlement, escrow release, refund, and security events.
 - Security and recovery surface showing observer agreement, last trusted block, risks, and no-silent-retry posture.
 - Developer surface for the MCP connection shape, redacted request outcomes, and dependency health.
 - Keyboard-accessible approval drawer and emergency-pause confirmation.
 
-## Live and preview behavior
+## Live and unavailable behavior
 
-The adapter maps live organization, governed-agent, pending-approval, and Base
-checkpoint fields. It does not infer balances, budgets, logs, signer health, or
-facilitator health that the API does not expose; those values are visibly
-unavailable. Missing configuration, identity, membership, or valid upstream
-data falls back to a fully labelled preview rather than mixing sources.
+The adapter maps live organization, governed-agent, legacy and ASCP pending
+approvals, active-policy daily capacity, reservation exposure, finalized ASCP
+ledger effects, durable payment activity, and Base checkpoint fields. It does
+not infer an ERC-20 wallet balance, spendable treasury, or chain outcome from a
+database state. Missing configuration, identity, membership, or valid upstream
+data falls back to public health or a fully labelled unavailable state.
 
-Preview mutations remain locked. In live mode, approve, deny, and organization
+Public and unavailable mutations remain locked. In live mode, approve, deny, and organization
 pause accept a fresh step-up credential in a password field held only in client
 memory. A same-origin server bridge exchanges the Sites identity again, reads
 the step-up credential's safe claims from the control plane, and requires an
-exact organization, principal, and role match before sending a command. The
-bridge re-reads the pending approval and supplies its current full request
-digest; the browser cannot choose the authoritative digest.
+exact organization, principal, and role match before sending a command. For
+legacy approvals, the bridge re-reads the pending approval and supplies its
+current full `requestDigest`. For ASCP approvals, it re-fetches the current
+`reviewDigest` and submits that exact value as `reviewSnapshotHash`. The browser
+cannot choose either authoritative binding.
 
 The browser records an unresolved command ID, or before an ID is known, a random
 operation ID plus a digest of the non-secret action fields. It stores neither
@@ -68,8 +71,8 @@ until a production identity system issues the required short-lived credential.
 
 ## Inputs and outputs
 
-The input is a typed `DashboardSnapshot` produced by either an immutable preview
-fixture or the strict server adapter. The rendered output is a dynamic server
+The input is a typed `DashboardSnapshot` produced by the strict server adapter.
+Tests use deterministic fixtures, but no fixture is compiled into runtime paths. The rendered output is a dynamic server
 page and Cloudflare Worker bundle. The snapshot includes
 generation time, organization label, chain health, economic buckets, pending
 approvals, agents, activity, and risks.
@@ -91,12 +94,12 @@ also excludes the raw Sites user ID and grants no control-plane access.
 
 ## Failure states
 
-- Missing Sites identity: render anonymous preview; do not infer membership.
-- Missing control plane: show preview mode and keep writes locked.
-- Unmapped or revoked membership: show preview mode; do not reveal another
+- Missing Sites identity: render public health or unavailable status; do not infer membership.
+- Missing control plane: show unavailable mode and keep writes locked.
+- Unmapped or revoked membership: show unavailable mode; do not reveal another
   organization's existence.
 - Malformed or cross-organization upstream response: discard it completely and
-  show preview mode.
+  show unavailable mode.
 - Stale or disputed Base observations: display the last trusted block and
   unresolved state; do not report settlement or recovery.
 - Command timeout or ambiguous response: keep the command unresolved and offer
@@ -133,8 +136,8 @@ or remove that tool dependency before any feature accepts user-supplied images.
 
 - A production identity provider issues and revokes the short-lived step-up
   credential; a static pre-provisioned credential is not an accepted ceremony.
-- Available, reserved, pending, and unresolved totals reconcile with the Go
-  ledger before they replace the current unavailable labels.
+- Reconcile the ASCP PostgreSQL subledger projection against periodic independent
+  ERC-20 balance observations without relabelling subledger delta as wallet balance.
 - Base halt and recovery states propagate without stale success.
 - Accessibility checks cover keyboard focus, dialog dismissal, labels, contrast,
   reduced motion, and mobile navigation.

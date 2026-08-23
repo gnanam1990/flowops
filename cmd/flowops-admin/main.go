@@ -27,7 +27,7 @@ func main() {
 
 func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) != 1 {
-		return errors.New("use migrate, sites-bootstrap-owner, sites-rotate-token, or sites-disable-provider")
+		return errors.New("use migrate, sites-bootstrap-owner, sites-rotate-token, sites-disable-provider, or agent-bootstrap")
 	}
 	var operation func(context.Context, *sql.DB) (any, error)
 	switch args[0] {
@@ -74,8 +74,23 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 			}
 			return map[string]any{"status": "ok", "disabled": disabled}, nil
 		}
+	case "agent-bootstrap":
+		var request controlapi.AgentBootstrap
+		if err := decodeStrictJSON(input, &request); err != nil {
+			return err
+		}
+		operation = func(operationCtx context.Context, db *sql.DB) (any, error) {
+			result, err := controlapi.BootstrapAgent(operationCtx, db, request, time.Now().UTC())
+			if err != nil {
+				return nil, err
+			}
+			return struct {
+				Status string `json:"status"`
+				controlapi.AgentBootstrapResult
+			}{Status: "ok", AgentBootstrapResult: result}, nil
+		}
 	default:
-		return errors.New("use migrate, sites-bootstrap-owner, sites-rotate-token, or sites-disable-provider")
+		return errors.New("use migrate, sites-bootstrap-owner, sites-rotate-token, sites-disable-provider, or agent-bootstrap")
 	}
 	databaseURL := strings.TrimSpace(os.Getenv("FLOWOPS_DATABASE_URL"))
 	if databaseURL == "" {

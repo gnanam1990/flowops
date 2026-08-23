@@ -6,7 +6,7 @@ Status: pre-alpha, Phase 1 implementation. No mainnet funds.
 
 ## Reviewer links
 
-- Interactive walkthrough: [flowopsagent.xyz/demo](https://flowopsagent.xyz/demo)
+- Live control room: [flowopsagent.xyz](https://flowopsagent.xyz)
 - Base reviewer brief: [flowopsagent.xyz/base](https://flowopsagent.xyz/base)
 - Shareable reviewer document:
   [FLOWOPS_BASE_REVIEWER_BRIEF_V1.md](docs/proposals/FLOWOPS_BASE_REVIEWER_BRIEF_V1.md)

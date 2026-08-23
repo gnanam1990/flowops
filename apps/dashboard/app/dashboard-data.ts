@@ -20,14 +20,13 @@ export type DashboardSnapshot = {
   money: {
 	asset: string;
     total: string;
-    available: string;
+	walletDelta: string;
     reserved: string;
     pending: string;
     unresolved: string;
     spentToday: string;
-    monthlySpent: string;
-    monthlyBudget: string;
-    monthlySpentPercent: number | null;
+	dailyLimit: string;
+	dailySpentPercent: number | null;
   };
   approvals: Approval[];
   agents: Agent[];
@@ -49,6 +48,7 @@ export type DashboardSnapshot = {
 };
 
 export type Approval = {
+	source: "legacy" | "ascp";
   id: string;
   agent: string;
   agentMark: string;
@@ -85,7 +85,7 @@ export type Activity = {
   title: string;
   detail: string;
   amount?: string;
-  state: "settled" | "released" | "refunded" | "approval" | "security";
+  state: "settled" | "released" | "refunded" | "approval" | "decision" | "security" | "pending";
 };
 
 export type Risk = {

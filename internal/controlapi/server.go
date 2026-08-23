@@ -29,6 +29,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/broadcastreceipt"
 	"github.com/gnanam1990/flowops/pkg/sellerquote"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -1504,6 +1505,7 @@ type DashboardSnapshot struct {
 	Agents           []Agent                         `json:"agents"`
 	Organization     Organization                    `json:"organization"`
 	Reconciliation   reconciliation.OrganizationView `json:"reconciliation"`
+	ASCP             DashboardProjection             `json:"ascp"`
 }
 
 func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -1535,15 +1537,33 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 			approvals = append(approvals, record)
 		}
 	}
-	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: s.chain.Status(), GeneratedAt: s.clock().UTC()}
+	now := s.clock().UTC()
+	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: s.chain.Status(), GeneratedAt: now}
 	if s.reconciliation != nil {
 		reconciliationView = s.reconciliation.OrganizationView(principal.OrganizationID)
 	}
+	ascpView := unavailableDashboardProjection()
+	if reader, ok := s.store.(DashboardReader); ok {
+		ascpView, err = reader.DashboardProjection(r.Context(), principal.OrganizationID, now)
+		if err != nil {
+			if dashboardSchemaUnavailable(err) {
+				ascpView = unavailableDashboardProjection()
+			} else {
+				writeError(w, http.StatusInternalServerError, "STORE_UNAVAILABLE", err, true, "")
+				return
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, DashboardSnapshot{
-		Live: true, GeneratedAt: s.clock().UTC(), OrganizationID: principal.OrganizationID,
+		Live: true, GeneratedAt: now, OrganizationID: principal.OrganizationID,
 		Chain: s.chain.Status(), PendingApprovals: approvals, Agents: agents, Organization: organization,
-		Reconciliation: reconciliationView,
+		Reconciliation: reconciliationView, ASCP: ascpView,
 	})
+}
+
+func dashboardSchemaUnavailable(err error) bool {
+	var pgError *pgconn.PgError
+	return errors.As(err, &pgError) && (pgError.Code == "42P01" || pgError.Code == "42703")
 }
 
 func (s *Server) beginCommand(w http.ResponseWriter, r *http.Request, principal Principal, kind, targetID, idempotencyKey, inputDigest string) (Command, bool, bool) {
