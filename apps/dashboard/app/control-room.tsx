@@ -366,7 +366,7 @@ function Overview({
                 <a className="primary-button account-cta" href={accountHref}>Sign in to control room <span>→</span></a>
               ) : (
                 <button className="primary-button account-cta" type="button" disabled>
-                  {authenticated ? "Local identity active · connect control plane" : "Enable local sign-in to continue"}
+                  {authenticated ? "Identity active · authorized membership required" : "Enable local sign-in to continue"}
                 </button>
               )}
               <button className="danger-button" type="button" disabled>Organization controls locked</button>

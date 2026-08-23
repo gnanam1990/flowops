@@ -266,7 +266,7 @@ func (o *Observer) rules(kind ascpworkflow.Kind) ([]reconciliation.GovernanceRul
 		return []reconciliation.GovernanceRule{
 			rule(o.spendModule, "setSpendAuthorizer(address,bytes32,bytes32)", "SpendAuthorizerSet(address,uint64)", false),
 			rule(o.spendModule, "setEscrowAllowlist(address,bytes32,bytes32,bytes32)", "EscrowAllowlistSet(address,bytes32)", false),
-			rule(o.spendModule, "invalidateNonces(bytes32[],bytes32,bytes32)", "NonceInvalidated(bytes32)", true),
+			rule(o.spendModule, "invalidateNonces(uint256[],bytes32,bytes32)", "NonceInvalidated(uint256)", true),
 		}, nil
 	case ascpworkflow.DirectoryCancel:
 		return []reconciliation.GovernanceRule{rule(o.directory, "cancelVersion(uint64,bytes32,bytes32,bytes32)", "VersionCancelled(bytes32,uint64,address)", false)}, nil

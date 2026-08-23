@@ -1,5 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { isLoopbackHostname } from "./local-auth-boundary";
 
 export type ChatGPTUser = {
   userId: string;
@@ -61,7 +62,7 @@ export async function requireChatGPTUser(
   const user = await getChatGPTUser();
   if (user) return user;
 
-  redirect(chatGPTSignInPath(returnTo));
+  redirect((await accountPathForUser(null, returnTo)) ?? "/");
 }
 
 export function chatGPTSignInPath(returnTo: string): string {
@@ -85,7 +86,8 @@ export async function accountPathForUser(user: ChatGPTUser | null, returnTo = "/
 
 export function localAuthRedirect(request: Request, signedIn: boolean): Response {
   const url = new URL(request.url);
-  if (!localAuthEnabled(localHostname(url.hostname))) {
+  const trustedLocalRequest = request.headers.get(LOCAL_REQUEST_HEADER) === "1" && isLoopbackHostname(url.hostname);
+  if (!localAuthEnabled(trustedLocalRequest)) {
     return Response.json({ error: "LOCAL_AUTH_UNAVAILABLE" }, {
       status: 404,
       headers: { "cache-control": "no-store" },
@@ -110,10 +112,6 @@ function localAuthPath(path: string, returnTo: string): string {
 
 function localAuthEnabled(localRequest: boolean): boolean {
   return process.env.FLOWOPS_LOCAL_AUTH_ENABLED === "true" && localRequest;
-}
-
-function localHostname(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
 function safeRelativeReturnPath(value: string): string {

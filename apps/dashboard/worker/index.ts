@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the FlowOps operator dashboard. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { isTrustedLocalRequest } from "../app/local-auth-boundary";
 
 interface Env {
   ASSETS: Fetcher;
@@ -46,7 +47,7 @@ const worker = {
     exposeServerEnvironment(env);
     const url = new URL(request.url);
     const requestHeaders = new Headers(request.headers);
-    requestHeaders.set("x-flowops-loopback-request", isLoopbackHostname(url.hostname) ? "1" : "0");
+    requestHeaders.set("x-flowops-loopback-request", isTrustedLocalRequest(request) ? "1" : "0");
     request = new Request(request, { headers: requestHeaders });
 
     if (url.pathname === "/_vinext/image") {
@@ -63,10 +64,6 @@ const worker = {
     return handler.fetch(request, env, ctx);
   },
 };
-
-function isLoopbackHostname(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
-}
 
 function exposeServerEnvironment(env: Env): void {
   for (const key of SERVER_ENVIRONMENT_KEYS) {

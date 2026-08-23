@@ -193,7 +193,7 @@ test("provides explicit loopback-only local sign-in and sign-out without grantin
   assert.equal(signedIn.status, 200);
   const signedInHtml = await signedIn.text();
   assert.match(signedInHtml, /Local Developer/);
-  assert.match(signedInHtml, /Local identity active · connect control plane/);
+  assert.match(signedInHtml, /Identity active · authorized membership required/);
   assert.match(signedInHtml, /href="\/api\/local-auth\/signout\?return_to=%2F"/);
   assert.match(signedInHtml, /Public operational status is not configured/);
   assert.doesNotMatch(signedInHtml, /Live control plane|Acme Operators/);
@@ -205,6 +205,25 @@ test("provides explicit loopback-only local sign-in and sign-out without grantin
 
   const remote = await render({ path: "/api/local-auth/signin?return_to=%2F", env, origin: "https://flowops.example" });
   assert.equal(remote.status, 404);
+
+  const proxied = await render({
+    path: "/api/local-auth/signin?return_to=%2F",
+    env,
+    headers: { "cf-connecting-ip": "203.0.113.10" },
+  });
+  assert.equal(proxied.status, 404);
+
+  const forgedHost = await render({
+    path: "/api/local-auth/signin?return_to=%2F",
+    env,
+    origin: "https://flowops.example",
+    headers: { host: "localhost" },
+  });
+  assert.equal(forgedHost.status, 404);
+
+  const enrollment = await render({ path: "/enrollment", env });
+  assert.equal(enrollment.status, 307);
+  assert.equal(enrollment.headers.get("location"), "/api/local-auth/signin?return_to=%2Fenrollment");
 });
 
 test("shows a configured proposal address only as experimental and never as production", async () => {

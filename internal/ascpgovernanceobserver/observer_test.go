@@ -208,7 +208,7 @@ func TestGovernanceRuleSelectorsAndTopicsMatchContractABI(t *testing.T) {
 		{"setEscrowAllowlist(address,bytes32,bytes32,bytes32)", "0x7a22532a", "EscrowAllowlistSet(address,bytes32)", "0x02b8c7e709e3f27c20a4ecb3669d2682fcba9309e1902881bf1814c71b9f6eb3"},
 		{"scheduleCaps((uint256,uint256,uint256),bytes32,bytes32)", "0x4863f194", "CapsScheduled(uint256,uint256,uint256,uint64)", "0x6040444013009a863522866cc7dc4131940355951a105ea775750a7cdb24f163"},
 		{"setEmergencyPause(bool,bytes32,bytes32)", "0x97fd05e8", "EmergencyPauseSet(bool)", "0xc8b290589fc182b8da42313f406cbe272a988911356e5dfcf9d3afccfac6a8f2"},
-		{"invalidateNonces(bytes32[],bytes32,bytes32)", "0xdb7e096a", "NonceInvalidated(bytes32)", "0xb024b3933035941c9887c66d2e351d64ce67c4cf4681410bcbddf138f97a97dd"},
+		{"invalidateNonces(uint256[],bytes32,bytes32)", "0xc011e67d", "NonceInvalidated(uint256)", "0x4d9dbebf1d909894d9c26fe228c27cec643b2cb490124e5b658f4edd203c20c1"},
 		{"approveVersion(uint64,bytes32)", "0x0bf45ed9", "VersionApproved(bytes32,uint64,address,uint64,uint64)", "0x68e3d7e42d2c57374760341c7d800e7bafc59288eb48bc28a7ce23a9349d40c7"},
 		{"cancelVersion(uint64,bytes32,bytes32,bytes32)", "0xcc34e4d1", "VersionCancelled(bytes32,uint64,address)", "0x7f3fed08b4017fbaa9bde1ad44c31b29cd63d8876f878607694dcbe875a75a8f"},
 	}

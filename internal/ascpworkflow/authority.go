@@ -384,7 +384,7 @@ func expectedAuthoritySurface(action ChainAction) (string, string, string, strin
 	case ActionSpendPause:
 		function, event, wantsWorkflowEvent = "setEmergencyPause(bool,bytes32,bytes32)", "EmergencyPauseSet(bool)", true
 	case ActionSpendInvalidateNonces:
-		function, event, wantsWorkflowEvent = "invalidateNonces(bytes32[],bytes32,bytes32)", "NonceInvalidated(bytes32)", true
+		function, event, wantsWorkflowEvent = "invalidateNonces(uint256[],bytes32,bytes32)", "NonceInvalidated(uint256)", true
 	case ActionSafeEnableModule:
 		function, event = "enableModule(address)", "EnabledModule(address)"
 	case ActionSafeDisableModule:
