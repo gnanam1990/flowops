@@ -1,5 +1,6 @@
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { isLoopbackHostname } from "./local-auth-boundary";
 
 export type ChatGPTUser = {
   userId: string;
@@ -17,12 +18,28 @@ const PERCENT_ENCODED_UTF8 = "percent-encoded-utf-8";
 const SIGN_IN_PATH = "/signin-with-chatgpt";
 const SIGN_OUT_PATH = "/signout-with-chatgpt";
 const CALLBACK_PATH = "/callback";
+const LOCAL_SIGN_IN_PATH = "/api/local-auth/signin";
+const LOCAL_SIGN_OUT_PATH = "/api/local-auth/signout";
+const LOCAL_SESSION_COOKIE = "flowops-local-session";
+const LOCAL_SESSION_VALUE = "active";
+const LOCAL_REQUEST_HEADER = "x-flowops-loopback-request";
+
+const LOCAL_USER: ChatGPTUser = {
+  userId: "flowops-local-developer",
+  displayName: "Local Developer",
+  email: "local@flowops.invalid",
+  fullName: "Local Developer",
+};
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
   const userId = requestHeaders.get(USER_ID_HEADER);
   const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!userId || !email) return null;
+  if (!userId || !email) {
+    if (!localAuthEnabled(requestHeaders.get(LOCAL_REQUEST_HEADER) === "1")) return null;
+    const cookieStore = await cookies();
+    return cookieStore.get(LOCAL_SESSION_COOKIE)?.value === LOCAL_SESSION_VALUE ? LOCAL_USER : null;
+  }
 
   const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
   const fullName =
@@ -45,7 +62,7 @@ export async function requireChatGPTUser(
   const user = await getChatGPTUser();
   if (user) return user;
 
-  redirect(chatGPTSignInPath(returnTo));
+  redirect((await accountPathForUser(null, returnTo)) ?? "/");
 }
 
 export function chatGPTSignInPath(returnTo: string): string {
@@ -56,6 +73,45 @@ export function chatGPTSignInPath(returnTo: string): string {
 export function chatGPTSignOutPath(returnTo = "/"): string {
   const safeReturnTo = safeRelativeReturnPath(returnTo);
   return `${SIGN_OUT_PATH}?return_to=${encodeURIComponent(safeReturnTo)}`;
+}
+
+export async function accountPathForUser(user: ChatGPTUser | null, returnTo = "/"): Promise<string | null> {
+  const requestHeaders = await headers();
+  if (requestHeaders.get(LOCAL_REQUEST_HEADER) === "1") {
+    if (!localAuthEnabled(true)) return null;
+    return localAuthPath(user ? LOCAL_SIGN_OUT_PATH : LOCAL_SIGN_IN_PATH, returnTo);
+  }
+  return user ? chatGPTSignOutPath(returnTo) : chatGPTSignInPath(returnTo);
+}
+
+export function localAuthRedirect(request: Request, signedIn: boolean): Response {
+  const url = new URL(request.url);
+  const trustedLocalRequest = request.headers.get(LOCAL_REQUEST_HEADER) === "1" && isLoopbackHostname(url.hostname);
+  if (!localAuthEnabled(trustedLocalRequest)) {
+    return Response.json({ error: "LOCAL_AUTH_UNAVAILABLE" }, {
+      status: 404,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+  const returnTo = safeRelativeReturnPath(url.searchParams.get("return_to") ?? "/");
+  const target = new URL(returnTo, url.origin);
+  const maxAge = signedIn ? 8 * 60 * 60 : 0;
+  return new Response(null, {
+    status: 303,
+    headers: {
+      "cache-control": "no-store",
+      location: target.href,
+      "set-cookie": `${LOCAL_SESSION_COOKIE}=${signedIn ? LOCAL_SESSION_VALUE : ""}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`,
+    },
+  });
+}
+
+function localAuthPath(path: string, returnTo: string): string {
+  return `${path}?return_to=${encodeURIComponent(safeRelativeReturnPath(returnTo))}`;
+}
+
+function localAuthEnabled(localRequest: boolean): boolean {
+  return process.env.FLOWOPS_LOCAL_AUTH_ENABLED === "true" && localRequest;
 }
 
 function safeRelativeReturnPath(value: string): string {
@@ -77,7 +133,9 @@ function isReservedAuthPath(pathname: string): boolean {
   return (
     pathname === SIGN_IN_PATH ||
     pathname === SIGN_OUT_PATH ||
-    pathname === CALLBACK_PATH
+    pathname === CALLBACK_PATH ||
+    pathname === LOCAL_SIGN_IN_PATH ||
+    pathname === LOCAL_SIGN_OUT_PATH
   );
 }
 

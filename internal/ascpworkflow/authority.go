@@ -384,7 +384,7 @@ func expectedAuthoritySurface(action ChainAction) (string, string, string, strin
 	case ActionSpendPause:
 		function, event, wantsWorkflowEvent = "setEmergencyPause(bool,bytes32,bytes32)", "EmergencyPauseSet(bool)", true
 	case ActionSpendInvalidateNonces:
-		function, event, wantsWorkflowEvent = "invalidateNonces(bytes32[],bytes32,bytes32)", "NonceInvalidated(bytes32)", true
+		function, event, wantsWorkflowEvent = "invalidateNonces(uint256[],bytes32,bytes32)", "NonceInvalidated(uint256)", true
 	case ActionSafeEnableModule:
 		function, event = "enableModule(address)", "EnabledModule(address)"
 	case ActionSafeDisableModule:
@@ -428,18 +428,6 @@ func validKind(kind Kind) bool {
 	default:
 		return false
 	}
-}
-
-func selector(value string) bool {
-	if len(value) != 10 || !strings.HasPrefix(value, "0x") || value != strings.ToLower(value) {
-		return false
-	}
-	for _, character := range value[2:] {
-		if !strings.ContainsRune("0123456789abcdef", character) {
-			return false
-		}
-	}
-	return true
 }
 
 var _ GovernanceActionGate = (*AuthorityVerifier)(nil)

@@ -344,10 +344,14 @@ func TestPostgresStoreRetriesSerializableIntakeConflict(t *testing.T) {
 	input := storeInput(now)
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO ascp_financial_tombstones`).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 	mock.ExpectQuery(`INSERT INTO ascp_intents`).
 		WillReturnError(&pgconn.PgError{Code: "40001", Message: "concurrent idempotency insert"})
 	mock.ExpectRollback()
 	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO ascp_financial_tombstones`).
+		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 	mock.ExpectQuery(`INSERT INTO ascp_intents`).
 		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(now))
 	mock.ExpectCommit()
@@ -375,11 +379,11 @@ func TestPostgresStoreResolvesConcurrentQuoteConflictByDurableScope(t *testing.T
 	input := storeInput(now)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO ascp_intents`).
-		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_intents_quote_nonce_unique"})
+	mock.ExpectQuery(`INSERT INTO ascp_financial_tombstones`).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_financial_tombstones_quote_nonce_unique"})
 	mock.ExpectRollback()
 	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
-		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, input.IdempotencyKey).
+		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, LogicalOperation, input.IdempotencyKey).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash",
 			"quote_nonce", "directory_version", "directory_contract", "seller_signer",
@@ -399,11 +403,11 @@ func TestPostgresStoreResolvesConcurrentQuoteConflictByDurableScope(t *testing.T
 	changed := input
 	changed.CanonicalInputHash = strings.Repeat("b", 64)
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO ascp_intents`).
-		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_intents_quote_nonce_unique"})
+	mock.ExpectQuery(`INSERT INTO ascp_financial_tombstones`).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_financial_tombstones_quote_nonce_unique"})
 	mock.ExpectRollback()
 	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
-		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, input.IdempotencyKey).
+		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, LogicalOperation, input.IdempotencyKey).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash",
 			"quote_nonce", "directory_version", "directory_contract", "seller_signer",
@@ -421,11 +425,11 @@ func TestPostgresStoreResolvesConcurrentQuoteConflictByDurableScope(t *testing.T
 	secondEffect := input
 	secondEffect.IdempotencyKey = "intake_second_effect"
 	mock.ExpectBegin()
-	mock.ExpectQuery(`INSERT INTO ascp_intents`).
-		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_intents_quote_nonce_unique"})
+	mock.ExpectQuery(`INSERT INTO ascp_financial_tombstones`).
+		WillReturnError(&pgconn.PgError{Code: "23505", ConstraintName: "ascp_financial_tombstones_quote_nonce_unique"})
 	mock.ExpectRollback()
 	mock.ExpectQuery(`SELECT operation_id, organization_id, actor_id, quote_hash`).
-		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, secondEffect.IdempotencyKey).
+		WithArgs(input.Operation.OrganizationID, input.Operation.ActorID, Endpoint, LogicalOperation, secondEffect.IdempotencyKey).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"operation_id", "organization_id", "actor_id", "quote_hash", "purchase_spec_hash",
 			"quote_nonce", "directory_version", "directory_contract", "seller_signer",

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -70,10 +71,10 @@ func TestBindActionBuildsExactExecutableGovernanceCalls(t *testing.T) {
 			SpendPause: &SpendPauseAction{Current: false, Next: true}}, "BREAK_GLASS", "setEmergencyPause(bool,bytes32,bytes32)",
 			func() (common.Hash, error) { return SpendPause(84532, spendModule, vectorWorkflow, false, true) }},
 		{"invalidate", Action{Type: ActionSpendInvalidateNonces, ChainID: 84532, ContractAddress: spendModule,
-			SpendInvalidateNonces: &SpendInvalidateNoncesAction{Nonces: []string{hashValue(7), hashValue(8)}}},
-			"MODULE_GOVERNANCE", "invalidateNonces(bytes32[],bytes32,bytes32)",
+			SpendInvalidateNonces: &SpendInvalidateNoncesAction{Nonces: []string{"7", "8"}}},
+			"MODULE_GOVERNANCE", "invalidateNonces(uint256[],bytes32,bytes32)",
 			func() (common.Hash, error) {
-				return SpendInvalidateNonces(84532, spendModule, vectorWorkflow, []string{hashValue(7), hashValue(8)})
+				return SpendInvalidateNonces(84532, spendModule, vectorWorkflow, []string{"7", "8"})
 			}},
 		{"directory approve", Action{Type: ActionDirectoryApprove, ChainID: 84532, ContractAddress: directory,
 			DirectoryApprove: &DirectoryApproveAction{Proposal: proposal, ProposerNonce: "9"}},
@@ -102,6 +103,16 @@ func TestBindActionBuildsExactExecutableGovernanceCalls(t *testing.T) {
 				bound.ContractAddress != test.action.ContractAddress || bound.FunctionSelector != wantSelector ||
 				!strings.HasPrefix(bound.Calldata, wantSelector) || len(bound.Calldata) <= len(wantSelector) {
 				t.Fatalf("bound=%+v digest=%s selector=%s", bound, digest.Hex(), wantSelector)
+			}
+			if test.action.Type == ActionSpendInvalidateNonces {
+				wantCalldata, err := packCall(test.signature, []abi.Type{uint256ArrayType, bytes32Type, bytes32Type},
+					[]*big.Int{big.NewInt(7), big.NewInt(8)}, common.HexToHash(vectorWorkflow), digest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if bound.Calldata != "0x"+hex.EncodeToString(wantCalldata) {
+					t.Fatalf("nonce calldata=%s want=%x", bound.Calldata, wantCalldata)
+				}
 			}
 			var decoded Action
 			if err := json.Unmarshal(bound.CanonicalAction, &decoded); err != nil {

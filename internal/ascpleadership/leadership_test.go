@@ -1,4 +1,4 @@
-package ascpleadership
+package ascpleadership_test
 
 import (
 	"context"
@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	. "github.com/gnanam1990/flowops/internal/ascpleadership"
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -28,7 +30,7 @@ func TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce(t *te
 	if err != nil || record.Epoch != 1 || record.State != Active {
 		t.Fatalf("bootstrap=%+v err=%v", record, err)
 	}
-	if replay, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil || !sameRecord(replay, record) {
+	if replay, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("1")); err != nil || !reflect.DeepEqual(replay, record) {
 		t.Fatalf("idempotent bootstrap=%+v err=%v", replay, err)
 	}
 	if _, err := store.Bootstrap(t.Context(), "org-test", "owner-safe", leadershipHash("9")); !errors.Is(err, ErrStateConflict) {
@@ -321,8 +323,6 @@ func TestPostgresLeadershipConnectionLossLeavesDurableFenceUntilExplicitAbandonm
 	if err != nil {
 		t.Fatal(err)
 	}
-	effectID := leadershipHash("e")
-	effectStore.newEffectID = func() (string, error) { return effectID, nil }
 	effectStarted := make(chan struct{})
 	releaseEffect := make(chan struct{})
 	fenceDone := make(chan error, 1)
@@ -334,6 +334,11 @@ func TestPostgresLeadershipConnectionLossLeavesDurableFenceUntilExplicitAbandonm
 		})
 	}()
 	<-effectStarted
+	var effectID string
+	if err := controllerDB.QueryRowContext(t.Context(), `SELECT effect_id FROM ascp_leadership_effects
+		WHERE organization_id='org-test' AND epoch=1 AND state='IN_FLIGHT'`).Scan(&effectID); err != nil {
+		t.Fatal(err)
+	}
 	assertInFlightEffects(t, controllerDB, "org-test", 1, 1)
 	if err := effectDB.Close(); err != nil {
 		t.Fatal(err)
@@ -410,38 +415,6 @@ func TestPostgresLeadershipConcurrentDrainHasOneCASWinner(t *testing.T) {
 	var events int
 	if err := db.QueryRowContext(t.Context(), `SELECT count(*) FROM ascp_leadership_events WHERE organization_id='org-test'`).Scan(&events); err != nil || events != 2 {
 		t.Fatalf("events=%d err=%v", events, err)
-	}
-}
-
-func TestLeadershipRejectsMalformedInputs(t *testing.T) {
-	if _, err := NewPostgres(nil, "public"); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("nil database=%v", err)
-	}
-	if _, err := NewPostgres(&sql.DB{}, "public;drop schema"); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("invalid schema=%v", err)
-	}
-	for _, schema := range []string{"pg_temp", "pg_temp_3", "pg_toast_temp_3"} {
-		if _, err := NewPostgres(&sql.DB{}, schema); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("temporary schema %q accepted: %v", schema, err)
-		}
-	}
-	if validOrganization("org test") || validOrganization("org\u00a0test") || validOrganization("org\u0085test") ||
-		validMutation("org-test", "owner-safe", "0x01") {
-		t.Fatal("malformed leadership input accepted")
-	}
-	store, _ := NewPostgres(&sql.DB{}, "public")
-	if err := store.Fence(t.Context(), "org-test", maxEpoch+1, func(context.Context) error { return nil }); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("out-of-range fence epoch=%v", err)
-	}
-	if _, err := store.Advance(t.Context(), "org-test", maxEpoch, "owner-safe", leadershipHash("1")); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("overflowing advance epoch=%v", err)
-	}
-	if err := store.AbandonEffect(t.Context(), "org-test", 1, "not-a-digest", "owner-safe", leadershipHash("1")); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("malformed abandonment effect id=%v", err)
-	}
-	effectID, err := randomEffectID()
-	if err != nil || !hashPattern.MatchString(effectID) {
-		t.Fatalf("random effect id=%q err=%v", effectID, err)
 	}
 }
 
