@@ -506,9 +506,45 @@ evidence supports a reviewed resolution.
 8. Deploy a new private Sites version so the new environment revision is active.
 
 Bootstrap is successful only when a signed-in owner sees `Live control plane`,
-the exact organization name, no preview financial totals, and the chain's
+the exact organization name, no fabricated financial totals, and the chain's
 fail-safe startup state. An unauthenticated request, wrong email, wrong project,
 wrong user key, old token, or revoked membership must show no live tenant data.
+
+## Real agent, policy, and credential bootstrap
+
+Do not insert agent or policy rows by hand. After owner enrollment, the offline
+`agent-bootstrap` command creates one active agent, one compiled active policy,
+and one expiring agent credential in a single serializable transaction. It
+requires the exact ACTIVE owner membership created above and writes an
+append-only `agent.bootstrapped` audit event. The raw credential is accepted
+over stdin, stored only as a SHA-256 digest, omitted from output and audit JSON,
+and must be destroyed after delivery to the customer-controlled agent runtime.
+
+1. Prepare a strict JSON request outside the repository containing
+   `auditId`, `actorId`, `organizationId`, `ownerMembershipId`, `agentId`,
+   `customerId`, `agentName`, `purpose`, the complete real `policy`,
+   `credentialId`, `credentialPrincipalId`, a newly generated
+   `credentialToken`, and `credentialExpiresAt`.
+2. Verify the policy names only the reviewed Base chain, escrow rail, asset,
+   recipients, approval thresholds, and atomic limits intended for this agent.
+   Disabled or invalid policies fail before the transaction begins.
+3. Feed the owner-only request file to
+   `/flowops/flowops-admin agent-bootstrap` using the transient provisioning
+   database credential. Never pass the JSON or token as a command argument.
+4. Deliver the credential once through the approved secret channel, then
+   destroy the request file. A replay with exactly the same material is a
+   no-op; any changed agent, policy, token, expiry, or scope fails with a
+   provisioning conflict.
+5. Configure the customer signer binding separately through its step-up-gated
+   control-plane command. An active agent and policy do not create signer
+   authority, directory evidence, escrow funds, or a transaction.
+
+After the real directory observer has materialized current quote evidence, use
+the agent credential with `/agent/v1/intents` (or the MCP facade) to create the
+first real operation. The private dashboard must then show the same agent,
+latest task, policy limit, reservation exposure, ASCP approval, operation
+state, and finalized ledger effects. Empty durable tables render empty or
+unavailable states; they are never filled with sample records.
 
 ## Rotation
 
@@ -517,13 +553,13 @@ Generate a replacement token and prepare a strict stdin request for
 membership, actor, organization, project, and a fresh audit ID.
 
 Update Sites with the new token immediately after the database rotation. A
-brief fail-closed preview window is acceptable; accepting both old and new
+brief fail-closed unavailable window is acceptable; accepting both old and new
 tokens is not. Verify the old token fails exchange and the new token succeeds.
 
 ## Recovery and rollback
 
 - A failed container health check never replaces the last healthy deployment.
-- If Sites cannot exchange membership, leave the dashboard in preview mode and
+- If Sites cannot exchange membership, leave the dashboard in unavailable mode and
   inspect API health, provider status, membership status, and environment
   revision. Never substitute a different tenant to make the dashboard render.
 - Preserve the PostgreSQL database and reconciliation volume during rollback.
