@@ -194,17 +194,18 @@ test("renders a fail-closed public control room without illustrative organizatio
   );
   assert.match(html, /Live Base operations/);
   assert.match(html, /Status unavailable/);
-  assert.match(html, /Base observer/);
+	assert.match(html, /Base network unavailable/);
   assert.match(html, /Local sign-in disabled/);
   assert.match(html, /Enable local sign-in to continue/);
   assert.doesNotMatch(html, /href="\/signin-with-chatgpt/);
   assert.match(html, /Pending chain evidence/);
   assert.match(html, /Non-custodial/);
   assert.match(html, /Observer quorum/);
-  assert.match(html, /real public health data/);
+	assert.match(html, /Public health evidence is unavailable/);
   assert.match(html, /Organization controls locked/);
   assert.match(html, /Economic activity/);
-  assert.match(html, /No Base mainnet proposal anchor is deployed/);
+	assert.match(html, /No Base mainnet proposal anchor is deployed/);
+	assert.match(html, /Source verified<\/dt><dd>Unavailable/);
   assert.match(html, /Production contracts remain structurally blocked/);
   assert.match(html, /USDC deposits/);
   assert.match(html, /Do not send ETH or tokens/);
@@ -276,6 +277,7 @@ test("shows a configured proposal address only as experimental and never as prod
   assert.match(html, /not a factory, vault, escrow, audited release, or production payment contract/i);
   assert.match(html, /Production ready/);
   assert.match(html, /Source verified/);
+	assert.match(html, /Source verified<\/dt><dd>Yes/);
   assert.match(html, /Vault creation/);
   assert.match(html, /USDC deposits/);
   assert.match(html, /Do not send ETH or tokens/);
@@ -297,6 +299,7 @@ test("renders validated live public health without exposing organization records
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       controlPlane: "AVAILABLE",
+	  chainId: 8453,
       chainState: "RECOVERING",
       authorizationsPaused: true,
       requiredObservers: 2,
@@ -338,6 +341,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   const exchangeCredential = "sites-exchange-test-credential-000000000001";
   const sessionToken = "fos_v1.test-payload.test-signature";
   const now = new Date();
+	const baseSepoliaUSDC = "0x036cbd53842c5426634e7929541ec2318f3dcf7e";
   let snapshotOrganizationId = "org_live";
   let organizationPaused = false;
   let organizationName = "Acme Operators";
@@ -372,6 +376,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
         organizationId: snapshotOrganizationId,
         organization: { id: snapshotOrganizationId, name: organizationName, authorizationsPaused: organizationPaused },
         chain: {
+		  chainId: 84532,
           state: "HEALTHY",
           reason: "independent observers agree",
           requiredObserverQuorum: 2,
@@ -386,8 +391,9 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
           approvalExpiresAt: Math.floor(now.getTime() / 1000) + 300,
           decision: { reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_live_1" },
           intent: {
+			chainId: 84532,
             agentId: "agent_live", taskId: "task_live", rail: "X402",
-            recipient: `0x${"1".repeat(40)}`, asset: `0x${"2".repeat(40)}`,
+			recipient: `0x${"1".repeat(40)}`, asset: baseSepoliaUSDC,
             amountAtomic: "1250000", purpose: approvalPurpose,
           },
         }],
@@ -401,13 +407,13 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 			readyForManualResume: false, complete: false,
 		  },
 		  assets: [{
-			asset: `0x${"2".repeat(40)}`, escrowLockedAtomic: "250000",
+			asset: baseSepoliaUSDC, escrowLockedAtomic: "250000",
 			recognizedExpenseAtomic: "1750000", spentTodayAtomic: "500000",
 			spentMonthAtomic: "1750000", unresolvedAtomic: "125000",
 		  }],
 		  exceptions: [{
 			id: "exec_unresolved", kind: "DIRECT_EXECUTION", state: "PENDING_CHAIN_RECOVERY",
-			asset: `0x${"2".repeat(40)}`, amountAtomic: "125000",
+			asset: baseSepoliaUSDC, amountAtomic: "125000",
 			firstObservedAt: new Date(now.getTime() - 60_000).toISOString(),
 			reason: "canonical outcome remains unresolved", operatorActionNeeded: true,
 		  }],
@@ -419,22 +425,23 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 			approvalId: `0x${"3".repeat(64)}`, reviewDigest: `0x${"4".repeat(64)}`,
 			operationId: `0x${"5".repeat(64)}`, agentId: "agent_live", taskId: "",
 			category: "", reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_live_1",
-			recipient: `0x${"1".repeat(40)}`, asset: `0x${"2".repeat(40)}`, amountAtomic: "2500000",
+			chainId: 84532,
+			recipient: `0x${"1".repeat(40)}`, asset: baseSepoliaUSDC, assetSymbol: "USDC", assetDecimals: 6, amountAtomic: "2500000",
 			requestedAt: new Date(now.getTime() - 20_000).toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
 		  }],
 		  assets: [{
-			asset: `0x${"2".repeat(40)}`, walletDeltaAtomic: "-2250000", escrowRestrictedAtomic: "-500000",
+			asset: baseSepoliaUSDC, walletDeltaAtomic: "-2250000", escrowRestrictedAtomic: "-500000",
 			recognizedExpenseAtomic: "1750000", spentTodayAtomic: "500000", reservedAtomic: "2500000",
 			pendingChainAtomic: "250000", unresolvedAtomic: "125000",
 		  }],
 		  agentBudgets: [{
-			agentId: "agent_live", asset: `0x${"2".repeat(40)}`, dailyLimitAtomic: "10000000",
+			agentId: "agent_live", asset: baseSepoliaUSDC, dailyLimitAtomic: "10000000",
 			spentTodayAtomic: "500000", reservedAtomic: "2500000", availableAtomic: "7000000",
 			currentTaskId: "task_ascp_live", activePolicy: true, policyVersion: "policy_live_1", policyConfigurationValid: true,
 		  }],
 		  activity: [{
 			id: `0x${"5".repeat(64)}`, kind: "PAYMENT_OPERATION", state: "LOCK_SUBMITTED", agentId: "agent_live",
-			taskId: "task_ascp_live", asset: `0x${"2".repeat(40)}`, amountAtomic: "250000", detail: "verified_data",
+			taskId: "task_ascp_live", asset: baseSepoliaUSDC, amountAtomic: "250000", detail: "verified_data",
 			occurredAt: new Date(now.getTime() - 10_000).toISOString(),
 		  }],
 		},
@@ -461,17 +468,17 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.match(html, /Acme Operators/);
   assert.match(html, /2 \/ 2 agree/);
   assert.match(html, /Buy verified dataset/);
-  assert.match(html, /1,250,000 atomic/);
-  assert.match(html, /0x2222…2222/);
+	assert.match(html, /1\.250000 USDC/);
+	assert.match(html, /Base Sepolia \(84532\)/);
 	assert.match(html, /Recognized economic expense/);
-	assert.match(html, /1,750,000 atomic/);
+	assert.match(html, /1\.750000 USDC/);
 	assert.match(html, /ASCP PostgreSQL subledger/);
 	assert.match(html, /balance-card compact neutral/);
 	assert.match(html, /Direct execution is pending chain recovery/);
 	assert.match(html, /Daily usage<\/span><strong>5%/);
 	assert.match(html, /Payment lock submitted/);
 	assert.match(html, /activity-icon pending/);
-	assert.match(html, /2,500,000 atomic/);
+	assert.match(html, /2\.500000 USDC/);
 	assert.match(html, /Approval 0x333333…333333/);
   assert.doesNotMatch(html, /On track|Spendable now/);
   assert.doesNotMatch(html, /Northstar Labs|\$15,140\.00|Signal Harbor/);

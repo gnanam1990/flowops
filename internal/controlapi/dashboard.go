@@ -37,9 +37,35 @@ type DashboardApproval struct {
 	PolicyVersion string    `json:"policyVersion"`
 	Recipient     string    `json:"recipient"`
 	Asset         string    `json:"asset"`
+	ChainID       uint64    `json:"chainId"`
+	AssetSymbol   string    `json:"assetSymbol,omitempty"`
+	AssetDecimals *uint8    `json:"assetDecimals,omitempty"`
 	AmountAtomic  string    `json:"amountAtomic"`
 	RequestedAt   time.Time `json:"requestedAt"`
 	ExpiresAt     time.Time `json:"expiresAt"`
+}
+
+func decorateDashboardApprovals(projection *DashboardProjection, chainID uint64) {
+	for index := range projection.PendingApprovals {
+		approval := &projection.PendingApprovals[index]
+		approval.ChainID = chainID
+		symbol, decimals, known := knownDashboardAsset(chainID, approval.Asset)
+		if known {
+			approval.AssetSymbol = symbol
+			approval.AssetDecimals = &decimals
+		}
+	}
+}
+
+func knownDashboardAsset(chainID uint64, asset string) (string, uint8, bool) {
+	switch {
+	case chainID == 8453 && asset == "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913":
+		return "USDC", 6, true
+	case chainID == 84532 && asset == "0x036cbd53842c5426634e7929541ec2318f3dcf7e":
+		return "USDC", 6, true
+	default:
+		return "", 0, false
+	}
 }
 
 // DashboardAsset contains subledger effects and operation exposure, not an

@@ -408,6 +408,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	status := s.chain.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"controlPlane":         "AVAILABLE",
+		"chainId":              status.ChainID,
 		"chainState":           status.State,
 		"authorizationsPaused": status.AuthorizationsPaused,
 		"requiredObservers":    status.RequiredObserverQuorum,
@@ -1538,7 +1539,8 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	now := s.clock().UTC()
-	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: s.chain.Status(), GeneratedAt: now}
+	chainStatus := s.chain.Status()
+	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: chainStatus, GeneratedAt: now}
 	if s.reconciliation != nil {
 		reconciliationView = s.reconciliation.OrganizationView(principal.OrganizationID)
 	}
@@ -1554,9 +1556,10 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
+	decorateDashboardApprovals(&ascpView, chainStatus.ChainID)
 	writeJSON(w, http.StatusOK, DashboardSnapshot{
 		Live: true, GeneratedAt: now, OrganizationID: principal.OrganizationID,
-		Chain: s.chain.Status(), PendingApprovals: approvals, Agents: agents, Organization: organization,
+		Chain: chainStatus, PendingApprovals: approvals, Agents: agents, Organization: organization,
 		Reconciliation: reconciliationView, ASCP: ascpView,
 	})
 }

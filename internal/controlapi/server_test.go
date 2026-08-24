@@ -409,7 +409,7 @@ func TestOperatorReconciliationIsTenantBoundAndQuarantinePreservesUnprovenOutcom
 
 func newHealthyChain(now time.Time) *mutableChain {
 	return &mutableChain{status: reconciliation.ChainStatus{
-		State: reconciliation.StateHealthy, StateChangedAt: now.Add(-time.Minute),
+		ChainID: 84532, State: reconciliation.StateHealthy, StateChangedAt: now.Add(-time.Minute),
 		LastTrusted: &reconciliation.Checkpoint{BlockNumber: 100, BlockHash: "0x" + strings.Repeat("1", 64), BlockTime: now.Add(-time.Second), ObservedAt: now},
 	}}
 }
