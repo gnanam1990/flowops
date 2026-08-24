@@ -145,6 +145,7 @@ func setMainnetReleaseRuntime(t *testing.T) releaseadmission.Manifest {
 			{Name: "ascp_call_escrow", Address: observerAddress(12), RuntimeCodeHash: observerDigest(12), DeploymentTx: observerDigest(22), DeploymentBlock: 102, SourceVerified: true},
 			{Name: "ascp_spend_module", Address: observerAddress(13), RuntimeCodeHash: observerDigest(13), DeploymentTx: observerDigest(23), DeploymentBlock: 103, SourceVerified: true},
 		},
+		Deployer:    observerAddress(14),
 		Safe:        releaseadmission.SafeBinding{Address: observerAddress(1), Owners: []string{observerAddress(2), observerAddress(3), observerAddress(4)}, Threshold: 2},
 		Authorities: releaseadmission.AuthorityBinding{Governor: observerAddress(1), DirectoryPublisher: observerAddress(5), DirectoryPauser: observerAddress(6), RegistryAdmin: observerAddress(7), SpendAuthorizer: observerAddress(8)},
 		Pilot:       releaseadmission.PilotBinding{MaxPerActionAtomic: releaseadmission.InitialMaxPerActionAtomic, MaxOutstandingAtomic: releaseadmission.InitialMaxOutstandingAtomic},

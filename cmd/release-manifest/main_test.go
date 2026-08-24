@@ -75,6 +75,7 @@ func commandManifest(now time.Time) releaseadmission.Manifest {
 			{Name: "ascp_call_escrow", Address: a(12), RuntimeCodeHash: d(12), DeploymentTx: d(22), DeploymentBlock: 102, SourceVerified: true},
 			{Name: "ascp_spend_module", Address: a(13), RuntimeCodeHash: d(13), DeploymentTx: d(23), DeploymentBlock: 103, SourceVerified: true},
 		},
+		Deployer:    a(14),
 		Safe:        releaseadmission.SafeBinding{Address: a(1), Owners: []string{a(2), a(3), a(4)}, Threshold: 2},
 		Authorities: releaseadmission.AuthorityBinding{Governor: a(1), DirectoryPublisher: a(5), DirectoryPauser: a(6), RegistryAdmin: a(7), SpendAuthorizer: a(8)},
 		Pilot:       releaseadmission.PilotBinding{MaxPerActionAtomic: "1000000", MaxOutstandingAtomic: "10000000"},

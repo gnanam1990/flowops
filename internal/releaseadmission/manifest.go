@@ -120,6 +120,7 @@ type Manifest struct {
 	RuntimeEnabled          bool              `json:"runtimeEnabled"`
 	Asset                   AssetBinding      `json:"asset"`
 	Contracts               []ContractBinding `json:"contracts"`
+	Deployer                string            `json:"deployer"`
 	Safe                    SafeBinding       `json:"safe"`
 	Authorities             AuthorityBinding  `json:"authorities"`
 	Pilot                   PilotBinding      `json:"pilot"`
@@ -232,7 +233,7 @@ func ValidateUnsigned(manifest Manifest, now time.Time) error {
 		manifest.SettlementWindowSeconds < 30*60 || manifest.SettlementWindowSeconds > 30*24*60*60 {
 		return errors.New("release manifest has invalid governance or settlement observation bounds")
 	}
-	if err := validateSafeAndAuthorities(manifest.Safe, manifest.Authorities, manifest.Contracts); err != nil {
+	if err := validateSafeAndAuthorities(manifest.Deployer, manifest.Safe, manifest.Authorities, manifest.Contracts); err != nil {
 		return err
 	}
 	if manifest.Pilot.MaxPerActionAtomic != InitialMaxPerActionAtomic || manifest.Pilot.MaxOutstandingAtomic != InitialMaxOutstandingAtomic {
@@ -399,18 +400,21 @@ func validateContracts(contracts []ContractBinding) error {
 	return nil
 }
 
-func validateSafeAndAuthorities(safe SafeBinding, authorities AuthorityBinding, contracts []ContractBinding) error {
-	if !canonicalAddress(safe.Address) || len(safe.Owners) < 3 || safe.Threshold < 2 || int(safe.Threshold) > len(safe.Owners) ||
+func validateSafeAndAuthorities(deployer string, safe SafeBinding, authorities AuthorityBinding, contracts []ContractBinding) error {
+	if !canonicalAddress(deployer) || !canonicalAddress(safe.Address) || len(safe.Owners) < 3 || safe.Threshold < 2 || int(safe.Threshold) > len(safe.Owners) ||
 		int(safe.Threshold)*3 < len(safe.Owners)*2 {
-		return errors.New("release Safe must have a canonical address and a two-of-three-or-stronger threshold")
+		return errors.New("release deployer and Safe must be canonical with a two-of-three-or-stronger threshold")
 	}
-	seen := map[string]struct{}{safe.Address: {}}
+	seen := map[string]struct{}{deployer: {}, safe.Address: {}}
+	if deployer == safe.Address {
+		return errors.New("release deployer, Safe, owners, and authorities must be independently assigned")
+	}
 	for _, owner := range safe.Owners {
 		if !canonicalAddress(owner) {
 			return errors.New("release Safe owners must be canonical non-zero addresses")
 		}
 		if _, duplicate := seen[owner]; duplicate {
-			return errors.New("release Safe owners and Safe address must be distinct")
+			return errors.New("release deployer, Safe owners, and Safe address must be distinct")
 		}
 		seen[owner] = struct{}{}
 	}

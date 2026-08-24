@@ -7,7 +7,8 @@ Accepted for implementation. No Base mainnet deployment or funding is authorized
 ## Decision
 
 FlowOps will admit Base mainnet only through a current, Ed25519-signed release
-manifest. The manifest binds the exact reviewed source commit, external-review
+manifest. The manifest binds the exact reviewed source commit, designated
+deployer, external-review
 digest, typed-data registry, paid-RPC admission, canonical USDC code hash,
 complete ASCP contract graph, deployment transactions and blocks, Safe owners
 and threshold, independently assigned authority roles, initial pilot limits,
