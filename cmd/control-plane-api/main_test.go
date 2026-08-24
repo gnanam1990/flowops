@@ -18,7 +18,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 		"FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64",
 		"FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS", "FLOWOPS_ASCP_ADAPTATION_KEY_ID",
 		"FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET", "FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT",
-		"FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", "FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK",
+		"FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", "FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", "FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK",
 		"FLOWOPS_BASE_RPC_PROVIDERS_JSON",
 		"FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC",
 	} {
@@ -98,6 +98,35 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	t.Setenv("FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "02")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("noncanonical adaptation key epoch was accepted")
+	}
+}
+
+func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
+	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("r", ed25519.SeedSize)))
+	setObserverRuntime(t)
+	setMainnetReleaseRuntime(t)
+	t.Setenv("FLOWOPS_DATABASE_URL", strings.Join([]string{"postgres", "://flowops@localhost/flowops?sslmode=require"}, ""))
+	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
+	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
+	t.Setenv("FLOWOPS_SITE_SESSION_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
+	t.Setenv("FLOWOPS_RECONCILIATION_JOURNAL", "/var/lib/flowops/reconciliation.log")
+	t.Setenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT", observerAddress(10))
+	t.Setenv("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", observerAddress(11))
+	t.Setenv("FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", observerAddress(12))
+	t.Setenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", observerAddress(13))
+	t.Setenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK", "100")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.observerConfig.ChainID != 8453 || cfg.ascpAgentRegistryContract != observerAddress(11) {
+		t.Fatalf("mainnet config=%+v", cfg)
+	}
+
+	t.Setenv("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", observerAddress(99))
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "signed Base mainnet release") {
+		t.Fatalf("registry substitution error=%v", err)
 	}
 }
 

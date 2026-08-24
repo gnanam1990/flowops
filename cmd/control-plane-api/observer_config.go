@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/internal/releaseadmission"
 	"github.com/gnanam1990/flowops/internal/rpcadmission"
 	"github.com/gnanam1990/flowops/pkg/envelope"
 )
@@ -22,6 +23,7 @@ type observerRuntimeConfig struct {
 	timeout                time.Duration
 	reconciliationInterval time.Duration
 	reconciliationTimeout  time.Duration
+	releaseManifest        *releaseadmission.Manifest
 }
 
 func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
@@ -34,6 +36,9 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 		return observerRuntimeConfig{}, err
 	}
 	admissionRaw := strings.TrimSpace(os.Getenv("FLOWOPS_BASE_RPC_ADMISSION_JSON"))
+	releaseRaw := strings.TrimSpace(os.Getenv("FLOWOPS_BASE_MAINNET_RELEASE_MANIFEST_JSON"))
+	releaseKeyRaw := strings.TrimSpace(os.Getenv("FLOWOPS_BASE_MAINNET_RELEASE_PUBLIC_KEY_B64"))
+	var releaseManifest *releaseadmission.Manifest
 	if chainID == 8453 {
 		admission, err := rpcadmission.DecodeProductionAdmission(admissionRaw)
 		if err != nil {
@@ -42,17 +47,39 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 		if err := rpcadmission.ValidateProduction(providers, admission); err != nil {
 			return observerRuntimeConfig{}, fmt.Errorf("Base mainnet RPC admission: %w", err)
 		}
-		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_CHAIN_ID must remain 84532 until the separate Base mainnet gate is approved")
+		manifest, err := releaseadmission.Decode(releaseRaw)
+		if err != nil {
+			return observerRuntimeConfig{}, err
+		}
+		publicKey, err := releaseadmission.DecodePublicKey(releaseKeyRaw)
+		if err != nil {
+			return observerRuntimeConfig{}, err
+		}
+		if err := releaseadmission.Verify(manifest, publicKey, time.Now().UTC()); err != nil {
+			return observerRuntimeConfig{}, fmt.Errorf("Base mainnet release admission: %w", err)
+		}
+		if err := releaseadmission.BindRPCAdmission(manifest, admission); err != nil {
+			return observerRuntimeConfig{}, err
+		}
+		releaseManifest = &manifest
 	}
-	if chainID != 84532 {
+	if chainID != 84532 && chainID != 8453 {
 		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_CHAIN_ID supports Base Sepolia or Base mainnet only")
 	}
-	if admissionRaw != "" {
+	if chainID == 84532 && admissionRaw != "" {
 		return observerRuntimeConfig{}, errors.New("FLOWOPS_BASE_RPC_ADMISSION_JSON must be unset for Base Sepolia")
+	}
+	if chainID == 84532 && (releaseRaw != "" || releaseKeyRaw != "") {
+		return observerRuntimeConfig{}, errors.New("Base mainnet release admission must be unset for Base Sepolia")
 	}
 	escrowContract, escrowAsset, escrowReleaseWindow, err := parseEscrowDeployment()
 	if err != nil {
 		return observerRuntimeConfig{}, err
+	}
+	if releaseManifest != nil {
+		if err := releaseadmission.BindObserver(*releaseManifest, escrowAsset, escrowContract, escrowReleaseWindow); err != nil {
+			return observerRuntimeConfig{}, err
+		}
 	}
 	if _, err := reconciliation.NewObserverSet(chainID, providers, nil, nil); err != nil {
 		return observerRuntimeConfig{}, fmt.Errorf("Base observer configuration: %w", err)
@@ -127,6 +154,7 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	return observerRuntimeConfig{
 		providers: providers, interval: interval, timeout: timeout,
 		reconciliationInterval: reconciliationInterval, reconciliationTimeout: reconciliationTimeout,
+		releaseManifest: releaseManifest,
 		engine: reconciliation.Config{
 			ChainID: chainID, EscrowContract: escrowContract, EscrowAsset: escrowAsset, EscrowReleaseWindow: escrowReleaseWindow,
 			ObserverQuorum: observerQuorum, HaltConfirmations: haltConfirmations,

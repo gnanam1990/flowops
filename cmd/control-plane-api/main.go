@@ -40,6 +40,7 @@ import (
 	"github.com/gnanam1990/flowops/internal/directoryreader"
 	"github.com/gnanam1990/flowops/internal/mcp"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
+	"github.com/gnanam1990/flowops/internal/releaseadmission"
 	"github.com/gnanam1990/flowops/pkg/pilotlimits"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -49,37 +50,39 @@ const (
 )
 
 type startupConfig struct {
-	address                 string
-	databaseURL             string
-	envelopeKeyID           string
-	envelopeKey             ed25519.PrivateKey
-	siteSessionKey          []byte
-	reconciliation          string
-	trustProxy              bool
-	applyMigrations         bool
-	operatorKey             []byte
-	keeperCallbackKey       []byte
-	mcpAllowedOrigins       []string
-	observerRPCs            []reconciliation.RPCProvider
-	observerConfig          reconciliation.Config
-	observerInterval        time.Duration
-	observerTimeout         time.Duration
-	reconciliationInterval  time.Duration
-	reconciliationTimeout   time.Duration
-	signerReceiptKeys       []controlapi.BroadcastKey
-	pilotLimits             *pilotlimits.Limits
-	ascpDirectoryContract   string
-	ascpCallEscrowContract  string
-	ascpSpendModuleContract string
-	ascpGovernanceFromBlock uint64
-	ascpDirectoryMaxAge     time.Duration
-	ascpMaxActiveOperations int
-	ascpAdaptationSigner    string
-	ascpAdaptationKeyID     string
-	ascpAdaptationKeyEpoch  uint64
-	ascpAdaptationHSM       string
-	ascpAdaptationTimeout   time.Duration
-	ascpAuthorityRules      []ascpworkflow.AuthorityRule
+	address                   string
+	databaseURL               string
+	envelopeKeyID             string
+	envelopeKey               ed25519.PrivateKey
+	siteSessionKey            []byte
+	reconciliation            string
+	trustProxy                bool
+	applyMigrations           bool
+	operatorKey               []byte
+	keeperCallbackKey         []byte
+	mcpAllowedOrigins         []string
+	observerRPCs              []reconciliation.RPCProvider
+	observerConfig            reconciliation.Config
+	observerInterval          time.Duration
+	observerTimeout           time.Duration
+	reconciliationInterval    time.Duration
+	reconciliationTimeout     time.Duration
+	baseMainnetRelease        *releaseadmission.Manifest
+	signerReceiptKeys         []controlapi.BroadcastKey
+	pilotLimits               *pilotlimits.Limits
+	ascpDirectoryContract     string
+	ascpAgentRegistryContract string
+	ascpCallEscrowContract    string
+	ascpSpendModuleContract   string
+	ascpGovernanceFromBlock   uint64
+	ascpDirectoryMaxAge       time.Duration
+	ascpMaxActiveOperations   int
+	ascpAdaptationSigner      string
+	ascpAdaptationKeyID       string
+	ascpAdaptationKeyEpoch    uint64
+	ascpAdaptationHSM         string
+	ascpAdaptationTimeout     time.Duration
+	ascpAuthorityRules        []ascpworkflow.AuthorityRule
 }
 
 func main() {
@@ -93,6 +96,14 @@ func run(ctx context.Context) (returnErr error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
+	}
+	if cfg.baseMainnetRelease != nil {
+		admissionCtx, admissionCancel := context.WithTimeout(ctx, 15*time.Second)
+		verifyErr := releaseadmission.VerifyCodeQuorum(admissionCtx, cfg.observerRPCs, *cfg.baseMainnetRelease, nil)
+		admissionCancel()
+		if verifyErr != nil {
+			return fmt.Errorf("verify Base mainnet release bytecode: %w", verifyErr)
+		}
 	}
 	db, err := sql.Open("pgx", cfg.databaseURL)
 	if err != nil {
@@ -482,14 +493,15 @@ func loadConfig() (startupConfig, error) {
 		address: strings.TrimSpace(os.Getenv("FLOWOPS_CONTROL_ADDR")), databaseURL: strings.TrimSpace(os.Getenv("FLOWOPS_DATABASE_URL")),
 		envelopeKeyID: strings.TrimSpace(os.Getenv("FLOWOPS_ENVELOPE_KEY_ID")),
 		envelopeKey:   key, siteSessionKey: siteSessionKey,
-		reconciliation:          strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
-		mcpAllowedOrigins:       splitMCPOrigins(os.Getenv("FLOWOPS_MCP_ALLOWED_ORIGINS")),
-		ascpDirectoryContract:   strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT"))),
-		ascpCallEscrowContract:  strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_CALL_ESCROW_CONTRACT"))),
-		ascpSpendModuleContract: strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT"))),
-		ascpAdaptationSigner:    strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS"))),
-		ascpAdaptationKeyID:     strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_KEY_ID")),
-		ascpAdaptationHSM:       strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET")),
+		reconciliation:            strings.TrimSpace(os.Getenv("FLOWOPS_RECONCILIATION_JOURNAL")),
+		mcpAllowedOrigins:         splitMCPOrigins(os.Getenv("FLOWOPS_MCP_ALLOWED_ORIGINS")),
+		ascpDirectoryContract:     strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT"))),
+		ascpAgentRegistryContract: strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT"))),
+		ascpCallEscrowContract:    strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_CALL_ESCROW_CONTRACT"))),
+		ascpSpendModuleContract:   strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT"))),
+		ascpAdaptationSigner:      strings.ToLower(strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS"))),
+		ascpAdaptationKeyID:       strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_KEY_ID")),
+		ascpAdaptationHSM:         strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET")),
 	}
 	ascpDirectoryMaxAge, err := parseDurationEnv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE", os.Getenv("FLOWOPS_ASCP_DIRECTORY_MAX_AGE"), time.Minute)
 	if err != nil {
@@ -550,6 +562,7 @@ func loadConfig() (startupConfig, error) {
 	cfg.observerTimeout = observerRuntime.timeout
 	cfg.reconciliationInterval = observerRuntime.reconciliationInterval
 	cfg.reconciliationTimeout = observerRuntime.reconciliationTimeout
+	cfg.baseMainnetRelease = observerRuntime.releaseManifest
 	authorityRulesRaw := strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON"))
 	if authorityRulesRaw != "" {
 		cfg.ascpAuthorityRules, err = ascpworkflow.ParseAuthorityRules(authorityRulesRaw)
@@ -570,13 +583,18 @@ func loadConfig() (startupConfig, error) {
 			return startupConfig{}, errors.New("FLOWOPS_ASCP_DIRECTORY_CONTRACT requires the reviewed escrow deployment tuple")
 		}
 	}
+	if cfg.ascpAgentRegistryContract != "" && !canonicalContract(cfg.ascpAgentRegistryContract) {
+		return startupConfig{}, errors.New("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT must be a non-zero canonical address")
+	}
 	governanceFromBlockRaw := strings.TrimSpace(os.Getenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK"))
-	governanceConfigured := cfg.ascpCallEscrowContract != "" || cfg.ascpSpendModuleContract != "" || governanceFromBlockRaw != ""
+	governanceConfigured := cfg.ascpAgentRegistryContract != "" || cfg.ascpCallEscrowContract != "" || cfg.ascpSpendModuleContract != "" || governanceFromBlockRaw != ""
 	if governanceConfigured {
 		if cfg.ascpDirectoryContract == "" || !canonicalContract(cfg.ascpCallEscrowContract) ||
 			!canonicalContract(cfg.ascpSpendModuleContract) || cfg.ascpCallEscrowContract == cfg.ascpSpendModuleContract ||
-			cfg.ascpCallEscrowContract == cfg.ascpDirectoryContract || cfg.ascpSpendModuleContract == cfg.ascpDirectoryContract {
-			return startupConfig{}, errors.New("governance observation requires three distinct canonical ASCP contract addresses")
+			cfg.ascpCallEscrowContract == cfg.ascpDirectoryContract || cfg.ascpSpendModuleContract == cfg.ascpDirectoryContract ||
+			(cfg.ascpAgentRegistryContract != "" && (cfg.ascpAgentRegistryContract == cfg.ascpDirectoryContract ||
+				cfg.ascpAgentRegistryContract == cfg.ascpCallEscrowContract || cfg.ascpAgentRegistryContract == cfg.ascpSpendModuleContract)) {
+			return startupConfig{}, errors.New("governance observation requires distinct canonical ASCP contract addresses")
 		}
 		fromBlock, err := strconv.ParseUint(governanceFromBlockRaw, 10, 64)
 		if err != nil || fromBlock == 0 || strconv.FormatUint(fromBlock, 10) != governanceFromBlockRaw {
@@ -601,6 +619,21 @@ func loadConfig() (startupConfig, error) {
 	}
 	if cfg.observerConfig.ChainID == 8453 {
 		if err := cfg.pilotLimits.RequireInitialBaseMainnetProfile(); err != nil {
+			return startupConfig{}, err
+		}
+		if observerRuntime.releaseManifest == nil {
+			return startupConfig{}, errors.New("Base mainnet release admission is unavailable")
+		}
+		if !canonicalContract(cfg.ascpAgentRegistryContract) || cfg.ascpCallEscrowContract != cfg.observerConfig.EscrowContract {
+			return startupConfig{}, errors.New("Base mainnet requires the complete ASCP contract tuple and exact reconciliation escrow binding")
+		}
+		if err := releaseadmission.BindRuntime(*observerRuntime.releaseManifest, releaseadmission.RuntimeBindings{
+			EscrowAsset: cfg.observerConfig.EscrowAsset, DirectoryContract: cfg.ascpDirectoryContract,
+			AgentRegistry: cfg.ascpAgentRegistryContract, CallEscrow: cfg.ascpCallEscrowContract,
+			SpendModule: cfg.ascpSpendModuleContract, PilotPerAction: cfg.pilotLimits.MaxPerActionAtomic(),
+			PilotOutstanding: cfg.pilotLimits.MaxOutstandingAtomic(), GovernanceFromBlock: cfg.ascpGovernanceFromBlock,
+			SettlementWindowSeconds: cfg.observerConfig.EscrowReleaseWindow,
+		}); err != nil {
 			return startupConfig{}, err
 		}
 	}

@@ -1,9 +1,17 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gnanam1990/flowops/internal/releaseadmission"
+	"github.com/gnanam1990/flowops/internal/rpcadmission"
 )
 
 func TestParseObserverProvidersRejectsUnsafeOrAmbiguousSets(t *testing.T) {
@@ -61,18 +69,18 @@ func TestLoadObserverRuntimeConfigValidatesTimingThresholdsAndChain(t *testing.T
 			}
 		})
 	}
-	t.Run("Base mainnet remains gated", func(t *testing.T) {
+	t.Run("Base mainnet accepts only a signed exact release", func(t *testing.T) {
 		setObserverRuntime(t)
-		t.Setenv("FLOWOPS_BASE_CHAIN_ID", "8453")
-		t.Setenv("FLOWOPS_BASE_RPC_PROVIDERS_JSON", `[{"name":"rpc_alpha","url":"https://alpha.vendor.example/v1/secret"},{"name":"rpc_beta","url":"https://beta.vendor.example/v1/secret"}]`)
-		t.Setenv("FLOWOPS_BASE_RPC_ADMISSION_JSON", `{"schemaVersion":1,"providers":[{"name":"rpc_alpha","operator":"vendor_alpha","failureDomain":"vendor_alpha_global","serviceTier":"paid","productionEligible":true},{"name":"rpc_beta","operator":"vendor_beta","failureDomain":"vendor_beta_global","serviceTier":"paid","productionEligible":true}]}`)
-		if _, err := loadObserverRuntimeConfig(); err == nil || !strings.Contains(err.Error(), "mainnet gate") {
-			t.Fatalf("mainnet observer config error = %v", err)
+		setMainnetReleaseRuntime(t)
+		cfg, err := loadObserverRuntimeConfig()
+		if err != nil || cfg.engine.ChainID != 8453 || cfg.releaseManifest == nil {
+			t.Fatalf("mainnet observer config=%+v error=%v", cfg, err)
 		}
 	})
 	t.Run("Base mainnet requires production RPC admission before the promotion gate", func(t *testing.T) {
 		setObserverRuntime(t)
 		t.Setenv("FLOWOPS_BASE_CHAIN_ID", "8453")
+		t.Setenv("FLOWOPS_BASE_RPC_PROVIDERS_JSON", `[{"name":"rpc_alpha","url":"https://alpha.vendor.example/v1/secret"},{"name":"rpc_beta","url":"https://beta.vendor.example/v1/secret"}]`)
 		if _, err := loadObserverRuntimeConfig(); err == nil || !strings.Contains(err.Error(), "ADMISSION_JSON is required") {
 			t.Fatalf("missing admission error = %v", err)
 		}
@@ -99,3 +107,59 @@ func TestLoadObserverRuntimeConfigValidatesTimingThresholdsAndChain(t *testing.T
 		}
 	})
 }
+
+func setMainnetReleaseRuntime(t *testing.T) releaseadmission.Manifest {
+	t.Helper()
+	const admissionRaw = `{"schemaVersion":1,"providers":[{"name":"rpc_alpha","operator":"vendor_alpha","failureDomain":"vendor_alpha_global","serviceTier":"paid","productionEligible":true},{"name":"rpc_beta","operator":"vendor_beta","failureDomain":"vendor_beta_global","serviceTier":"paid","productionEligible":true}]}`
+	admission, err := rpcadmission.DecodeProductionAdmission(admissionRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admissionDigest, err := releaseadmission.RPCAdmissionSHA256(admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	manifest := releaseadmission.Manifest{
+		SchemaVersion: 1, ReleaseID: "release_test_mainnet", Network: releaseadmission.BaseMainnetNetwork,
+		ChainID: releaseadmission.BaseMainnetChainID, SourceCommit: strings.Repeat("a", 40),
+		TypedDataManifestSHA256: releaseadmission.TypedDataManifestSHA256, ExternalReviewSHA256: observerDigest(1),
+		RPCAdmissionSHA256: admissionDigest, GovernanceFromBlock: 100, SettlementWindowSeconds: 3600,
+		ReviewedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), RuntimeEnabled: true,
+		Asset: releaseadmission.AssetBinding{Address: releaseadmission.BaseMainnetUSDC, Symbol: "USDC", Decimals: releaseadmission.USDCDecimals, RuntimeCodeHash: observerDigest(2)},
+		Contracts: []releaseadmission.ContractBinding{
+			{Name: "service_directory", Address: observerAddress(10), RuntimeCodeHash: observerDigest(10), DeploymentTx: observerDigest(20), DeploymentBlock: 100, SourceVerified: true},
+			{Name: "agent_registry", Address: observerAddress(11), RuntimeCodeHash: observerDigest(11), DeploymentTx: observerDigest(21), DeploymentBlock: 101, SourceVerified: true},
+			{Name: "ascp_call_escrow", Address: observerAddress(12), RuntimeCodeHash: observerDigest(12), DeploymentTx: observerDigest(22), DeploymentBlock: 102, SourceVerified: true},
+			{Name: "ascp_spend_module", Address: observerAddress(13), RuntimeCodeHash: observerDigest(13), DeploymentTx: observerDigest(23), DeploymentBlock: 103, SourceVerified: true},
+		},
+		Safe:        releaseadmission.SafeBinding{Address: observerAddress(1), Owners: []string{observerAddress(2), observerAddress(3), observerAddress(4)}, Threshold: 2},
+		Authorities: releaseadmission.AuthorityBinding{Governor: observerAddress(1), DirectoryPublisher: observerAddress(5), DirectoryPauser: observerAddress(6), RegistryAdmin: observerAddress(7), SpendAuthorizer: observerAddress(8)},
+		Pilot:       releaseadmission.PilotBinding{MaxPerActionAtomic: releaseadmission.InitialMaxPerActionAtomic, MaxOutstandingAtomic: releaseadmission.InitialMaxOutstandingAtomic},
+		SignerKeyID: "release_test_key",
+	}
+	manifest, err = releaseadmission.Sign(manifest, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FLOWOPS_BASE_CHAIN_ID", "8453")
+	t.Setenv("FLOWOPS_BASE_RPC_PROVIDERS_JSON", `[{"name":"rpc_alpha","url":"https://alpha.vendor.example/v1/secret"},{"name":"rpc_beta","url":"https://beta.vendor.example/v1/secret"}]`)
+	t.Setenv("FLOWOPS_BASE_RPC_ADMISSION_JSON", admissionRaw)
+	t.Setenv("FLOWOPS_BASE_MAINNET_RELEASE_MANIFEST_JSON", string(raw))
+	t.Setenv("FLOWOPS_BASE_MAINNET_RELEASE_PUBLIC_KEY_B64", base64.StdEncoding.EncodeToString(publicKey))
+	t.Setenv("FLOWOPS_ESCROW_CONTRACT", observerAddress(12))
+	t.Setenv("FLOWOPS_ESCROW_ASSET", releaseadmission.BaseMainnetUSDC)
+	t.Setenv("FLOWOPS_ESCROW_RELEASE_WINDOW_SECONDS", "3600")
+	return manifest
+}
+
+func observerAddress(value int) string { return fmt.Sprintf("0x%040x", value) }
+func observerDigest(value int) string  { return fmt.Sprintf("0x%064x", value) }
