@@ -43,7 +43,7 @@ func (m *operationalMetrics) middleware(next http.Handler) http.Handler {
 		if route == "" {
 			route = "unmatched"
 		}
-		key := metricKey{method: r.Method, route: route, statusClass: strconv.Itoa(response.status/100) + "xx"}
+		key := metricKey{method: boundedMetricMethod(r.Method), route: route, statusClass: strconv.Itoa(response.status/100) + "xx"}
 		m.mu.Lock()
 		metric := m.requests[key]
 		metric.count++
@@ -51,6 +51,15 @@ func (m *operationalMetrics) middleware(next http.Handler) http.Handler {
 		m.requests[key] = metric
 		m.mu.Unlock()
 	})
+}
+
+func boundedMetricMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodHead, http.MethodOptions:
+		return method
+	default:
+		return "OTHER"
+	}
 }
 
 type statusResponseWriter struct {

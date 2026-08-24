@@ -630,6 +630,12 @@ func TestOperationalEndpointsSeparateLivenessReadinessProductHealthAndMetrics(t 
 	if response.StatusCode != http.StatusServiceUnavailable || strings.Contains(string(body), "secret details") || !strings.Contains(string(body), "NOT_READY") {
 		t.Fatalf("not-ready response = %d %s", response.StatusCode, body)
 	}
+	request, _ := http.NewRequest("ATTACKER_METHOD_IGNORED", httpServer.URL+"/not-a-route", nil)
+	response, err = httpServer.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
 
 	response, err = httpServer.Client().Get(httpServer.URL + "/metrics")
 	if err != nil {
@@ -639,7 +645,7 @@ func TestOperationalEndpointsSeparateLivenessReadinessProductHealthAndMetrics(t 
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated metrics status = %d", response.StatusCode)
 	}
-	request, _ := http.NewRequest(http.MethodGet, httpServer.URL+"/metrics", nil)
+	request, _ = http.NewRequest(http.MethodGet, httpServer.URL+"/metrics", nil)
 	request.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString(metricsKey))
 	response, err = httpServer.Client().Do(request)
 	if err != nil {
@@ -651,6 +657,7 @@ func TestOperationalEndpointsSeparateLivenessReadinessProductHealthAndMetrics(t 
 	for _, expected := range []string{
 		`flowops_http_requests_total{method="GET",route="GET /health",status_class="2xx"} 1`,
 		`flowops_http_requests_total{method="GET",route="GET /readyz",status_class="5xx"} 1`,
+		`flowops_http_requests_total{method="OTHER",route="unmatched",status_class="4xx"} 1`,
 		`flowops_chain_state{chain_id="84532",state="HEALTHY"} 1`,
 		"flowops_authorizations_paused 0",
 	} {
