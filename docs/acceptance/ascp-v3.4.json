@@ -830,7 +830,7 @@
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "Related implementation exists, but no mapped executable adapter proves every clause of this criterion."
+      "gap": "Local asset-health coverage exists, but no pinned Base fork forces canonical USDC pause and blacklist failures through lock, release, and refund while proving reservation and ledger reconciliation."
     },
     {
       "id": "AC-27",
@@ -2073,7 +2073,7 @@
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "Related implementation exists, but no mapped executable adapter proves every clause of this criterion."
+      "gap": "Typed governance workflows cover only the implemented action subset; no complete inventory maps every chain-mutating Owner endpoint to an exact action schema, independent approval, Safe calldata, receipt ownership, and immutable audit evidence."
     },
     {
       "id": "AC-67",
