@@ -338,12 +338,12 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   const agents = raw.agents.map((agent) => mapAgent(agent, budgetByAgent.get(agent.id), raw.chain.chainId));
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
 	const approvals = [
-		...raw.pendingApprovals.map((approval) => mapApproval(approval, names, generatedAt)),
+		...raw.pendingApprovals.map((approval) => mapApproval(approval, names, generatedAt, raw.chain.chainId)),
 		...raw.ascp.pendingApprovals.map((approval) => mapASCPApproval(approval, names, generatedAt)),
 	];
 	const activity = [
 		...raw.ascp.activity.map((item) => ({ occurredAt: parseDate(item.occurredAt), item: mapASCPActivity(item, names, generatedAt, raw.chain.chainId) })),
-		...raw.pendingApprovals.map((item) => ({ occurredAt: new Date(item.submittedAt * 1_000), item: mapLegacyApprovalActivity(item, names, generatedAt) })),
+		...raw.pendingApprovals.map((item) => ({ occurredAt: new Date(item.submittedAt * 1_000), item: mapLegacyApprovalActivity(item, names, generatedAt, raw.chain.chainId) })),
 	].sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime()).map((entry) => entry.item);
 	const risks = liveRisks(raw, agents, generatedAt);
   const checkpoint = raw.chain.lastTrusted;
@@ -507,8 +507,8 @@ function activityTitle(kind: string, state: string): string {
 	return `Payment ${humanize(state).toLowerCase()}`;
 }
 
-function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, string>, observedAt: Date): Activity {
-	const approval = mapApproval(raw, names, observedAt);
+function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, string>, observedAt: Date, chainId: 8453 | 84532): Activity {
+	const approval = mapApproval(raw, names, observedAt, chainId);
 	return {
 		id: `LEGACY_APPROVAL-${approval.id}`,
 		time: approval.requested,
@@ -519,7 +519,7 @@ function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, stri
 	};
 }
 
-function mapApproval(raw: ControlApproval, names: Map<string, string>, observedAt: Date): Approval {
+function mapApproval(raw: ControlApproval, names: Map<string, string>, observedAt: Date, expectedChainId: 8453 | 84532): Approval {
   if (
     !isIdentifier(raw?.requestId) ||
     !/^0x[0-9a-f]{64}$/.test(raw.requestDigest) ||
@@ -529,7 +529,7 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
     raw.approvalExpiresAt <= raw.submittedAt ||
     !isIdentifier(raw.intent?.agentId) ||
     !isIdentifier(raw.intent?.taskId) ||
-	!isSupportedBaseChain(raw.intent?.chainId) ||
+	(!isSupportedBaseChain(raw.intent?.chainId) || raw.intent.chainId !== expectedChainId) ||
     typeof raw.intent.purpose !== "string" ||
     raw.intent.purpose.length > 1_024 ||
     !/^0x[0-9a-f]{40}$/.test(raw.intent.recipient) ||

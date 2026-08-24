@@ -129,17 +129,26 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
   const submitted = await render({
     path: "/api/flowops/commands", method: "POST",
     headers: { ...identityHeaders, "content-type": "application/json" },
-    body: JSON.stringify({ type: "approval", requestId: "req_live_1", action: "APPROVE", note: "verified", operationId: "op_live_1", stepUpToken }), env,
+    body: JSON.stringify({ type: "approval", requestId: "req_live_1", requestDigest: exactDigest, action: "APPROVE", note: "verified", operationId: "op_live_1", stepUpToken }), env,
   });
   assert.equal(submitted.status, 200);
   assert.deepEqual(await submitted.json(), { commandId: "cmd_live_1", state: "SUCCEEDED", kind: "approval.decide", errorCode: "", auditId: "" });
   assert.equal(decisionRequests, 1);
 
+	const changedASCP = await render({
+	  path: "/api/flowops/commands", method: "POST",
+	  headers: { ...identityHeaders, "content-type": "application/json" },
+	  body: JSON.stringify({ type: "ascp-approval", approvalId: ascpApprovalId, reviewDigest: exactASCPReview, action: "APPROVE", operationId: "op_ascp_changed", stepUpToken }), env,
+	});
+	assert.equal(changedASCP.status, 409);
+	assert.equal((await changedASCP.json()).error.code, "APPROVAL_CHANGED");
+	assert.equal(ascpDecisionRequests, 0);
+
 	currentASCPReview = exactASCPReview;
 	const ascpSubmitted = await render({
 	  path: "/api/flowops/commands", method: "POST",
 	  headers: { ...identityHeaders, "content-type": "application/json" },
-	  body: JSON.stringify({ type: "ascp-approval", approvalId: ascpApprovalId, action: "APPROVE", operationId: "op_ascp_live_1", stepUpToken }), env,
+	  body: JSON.stringify({ type: "ascp-approval", approvalId: ascpApprovalId, reviewDigest: exactASCPReview, action: "APPROVE", operationId: "op_ascp_live_1", stepUpToken }), env,
 	});
 	assert.equal(ascpSubmitted.status, 200);
 	assert.deepEqual(await ascpSubmitted.json(), { commandId: "cmd_ascp_1", state: "SUCCEEDED", kind: "ascp.approval.decide", errorCode: "", auditId: "" });
@@ -148,7 +157,7 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
 	const invalidASCP = await render({
 	  path: "/api/flowops/commands", method: "POST",
 	  headers: { ...identityHeaders, "content-type": "application/json" },
-	  body: JSON.stringify({ type: "ascp-approval", approvalId: "not-a-hash", action: "APPROVE", operationId: "op_ascp_invalid", stepUpToken }), env,
+	  body: JSON.stringify({ type: "ascp-approval", approvalId: "not-a-hash", reviewDigest: exactASCPReview, action: "APPROVE", operationId: "op_ascp_invalid", stepUpToken }), env,
 	});
 	assert.equal(invalidASCP.status, 400);
 	assert.equal((await invalidASCP.json()).error.code, "INVALID_COMMAND");
@@ -158,7 +167,7 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
   const substituted = await render({
     path: "/api/flowops/commands", method: "POST",
     headers: { ...identityHeaders, "content-type": "application/json" },
-    body: JSON.stringify({ type: "approval", requestId: "req_live_1", action: "APPROVE", note: "verified", operationId: "op_live_substituted", stepUpToken }), env,
+    body: JSON.stringify({ type: "approval", requestId: "req_live_1", requestDigest: exactDigest, action: "APPROVE", note: "verified", operationId: "op_live_substituted", stepUpToken }), env,
   });
   assert.equal(substituted.status, 403);
   assert.equal((await substituted.json()).error.code, "STEP_UP_BINDING_FAILED");
@@ -347,6 +356,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   let organizationName = "Acme Operators";
   let agentName = "Research Agent";
   let approvalPurpose = "Buy verified dataset";
+	let approvalChainId = 84532;
   const upstream = createServer(async (request, response) => {
     if (request.url === "/v1/sites/session") {
       assert.equal(request.method, "POST");
@@ -391,7 +401,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
           approvalExpiresAt: Math.floor(now.getTime() / 1000) + 300,
           decision: { reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_live_1" },
           intent: {
-			chainId: 84532,
+			chainId: approvalChainId,
             agentId: "agent_live", taskId: "task_live", rail: "X402",
 			recipient: `0x${"1".repeat(40)}`, asset: baseSepoliaUSDC,
             amountAtomic: "1250000", purpose: approvalPurpose,
@@ -516,6 +526,19 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.match(pausedHtml, /Organization authorizations paused/);
   assert.match(pausedHtml, /The persistent organization gate blocks new authorization issuance/);
   organizationPaused = false;
+
+	approvalChainId = 8453;
+	const wrongNetworkApproval = await render({
+	  headers: {
+		"oai-authenticated-user-id": "sites-user-opaque",
+		"oai-authenticated-user-email": "owner@example.com",
+	  },
+	  env: configuredEnvironment(`http://127.0.0.1:${address.port}`, exchangeCredential),
+	});
+	const wrongNetworkHtml = await wrongNetworkApproval.text();
+	assert.match(wrongNetworkHtml, /Status unavailable/);
+	assert.doesNotMatch(wrongNetworkHtml, /Buy verified dataset|Live control plane/);
+	approvalChainId = 84532;
 
   snapshotOrganizationId = "org_substituted";
   const substituted = await render({

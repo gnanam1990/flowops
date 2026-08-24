@@ -70,7 +70,7 @@ export type Approval = {
 	chainId: number;
 	network: string;
   policyVersion?: string;
-  requestDigest?: string;
+  requestDigest: string;
   evidenceRefs?: string;
 };
 

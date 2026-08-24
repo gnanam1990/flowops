@@ -621,8 +621,8 @@ function ApprovalDrawer({ approval, mode, onClose, onAction, onCommand }: { appr
     setError("");
     try {
 	  await onCommand(approval.source === "ascp"
-		? { type: "ascp-approval", approvalId: approval.id, action, operationId: crypto.randomUUID(), stepUpToken }
-		: { type: "approval", requestId: approval.id, action, note, operationId: crypto.randomUUID(), stepUpToken });
+		? { type: "ascp-approval", approvalId: approval.id, reviewDigest: approval.requestDigest, action, operationId: crypto.randomUUID(), stepUpToken }
+		: { type: "approval", requestId: approval.id, requestDigest: approval.requestDigest, action, note, operationId: crypto.randomUUID(), stepUpToken });
       setStepUpToken("");
       onClose();
     } catch (cause) {
