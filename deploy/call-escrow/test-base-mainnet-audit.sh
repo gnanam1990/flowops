@@ -7,6 +7,7 @@ canonical_readiness="${repo_root}/deployments/base-mainnet-readiness.json"
 canonical_promotion="${repo_root}/deployments/base-mainnet-promotion.json"
 canonical_source="${repo_root}/deployments/base-mainnet-source-rehearsal.json"
 canonical_review="${repo_root}/security/call-escrow/review-manifest.json"
+canonical_ascp_release="${repo_root}/deployments/base-mainnet-ascp-release.template.json"
 hardware_wrapper="${repo_root}/deploy/call-escrow/deploy-base-mainnet-hardware.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
@@ -20,13 +21,16 @@ jq -e '
   and .decision == "BLOCKED"
   and .deploymentAuthorized == false
   and .fundingAuthorized == false
-  and (.implementationEvidence | length == 8)
+  and (.implementationEvidence | length == 12)
   and (.implementationEvidence | index("funded-sepolia-reference-signer-reconciled") != null)
-  and (.blockers | length == 11)
+  and (.implementationEvidence | index("signed-ascp-v4-release-admission-implemented") != null)
+  and (.blockers | length == 17)
   and ([.blockers[].id] | length == (unique | length))
   and ([.blockers[].id] | index("external-security-review") != null)
   and ([.blockers[].id] | index("funded-sepolia-signer-proof") == null)
   and ([.blockers[].id] | index("explicit-zero-fund-broadcast-approval") != null)
+  and ([.blockers[].id] | index("ascp-v4-signed-release-manifest") != null)
+  and ([.blockers[].id] | index("production-step-up-identity") != null)
 ' <<<"${report}" >/dev/null
 
 if "${audit}" --require-ready >/dev/null 2>&1; then
@@ -67,12 +71,17 @@ expect_rejected premature-source-approval "${canonical_source}" FLOWOPS_MAINNET_
   '.sourceVerificationApproved = true'
 expect_rejected enabled-funding "${canonical_readiness}" FLOWOPS_MAINNET_AUDIT_READINESS_RECORD \
   '.pilot.fundingEnabled = true'
+expect_rejected enabled-ascp-runtime "${canonical_ascp_release}" FLOWOPS_MAINNET_AUDIT_ASCP_RELEASE_RECORD \
+  '.runtimeEnabled = true'
+expect_rejected invented-ascp-deployer "${canonical_ascp_release}" FLOWOPS_MAINNET_AUDIT_ASCP_RELEASE_RECORD \
+  '.deployer = "0x1111111111111111111111111111111111111111"'
 
 for variable in \
   FLOWOPS_MAINNET_AUDIT_READINESS_RECORD \
   FLOWOPS_MAINNET_AUDIT_PROMOTION_RECORD \
   FLOWOPS_MAINNET_AUDIT_SOURCE_RECORD \
   FLOWOPS_MAINNET_AUDIT_REVIEW_MANIFEST \
+  FLOWOPS_MAINNET_AUDIT_ASCP_RELEASE_RECORD \
   FLOWOPS_MAINNET_READINESS_RECORD \
   FLOWOPS_MAINNET_PROMOTION_RECORD \
   FLOWOPS_MAINNET_SOURCE_REHEARSAL_RECORD \
