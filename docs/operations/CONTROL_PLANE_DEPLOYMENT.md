@@ -27,7 +27,7 @@ The checked-in `Dockerfile` builds `/flowops/control-plane-api`,
 `/flowops/ascp-governance-relayer`, `/flowops/ascp-bearer-worker`,
 `/flowops/ascp-signer-runtime`, `/flowops/ascp-asset-health`,
 `/flowops/ascp-capacity-audit`, and `/flowops/postgres-readiness`.
-`railway.json` selects that image, checks `/health`,
+`railway.json` selects that image, checks `/readyz`,
 allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
 before the API starts.
@@ -67,6 +67,7 @@ The API service requires:
 | `FLOWOPS_BASE_MAX_FUTURE_CLOCK_SKEW` | Maximum tolerated future timestamp skew |
 | `FLOWOPS_OPERATOR_CONTROL_KEY_B64` | Exactly 32 random bytes, base64; global halt/resume authority |
 | `FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64` | Exactly 32 random bytes, base64; distinct from operator/session secrets; may register ASCP transaction identity only |
+| `FLOWOPS_METRICS_KEY_B64` | Exactly 32 random bytes, base64 and distinct from every other capability; required on Base mainnet and accepted only for `/metrics` |
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
 | `FLOWOPS_ASCP_DIRECTORY_CONTRACT` | Optional canonical lowercase ServiceDirectory address. When unset, durable agent intake remains mounted but returns a fail-closed 503 |
 | `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |
@@ -82,6 +83,16 @@ The API service requires:
 | `FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT` | Optional HSM stage timeout, default `3s`, range `1s` through `10s` |
 | `FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `1000000` |
 | `FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `10000000` |
+
+The API exposes three deliberately different operational surfaces. `GET
+/livez` proves only that the HTTP process can answer. `GET /readyz` performs a
+bounded live PostgreSQL ping and returns `503 NOT_READY` without leaking the
+dependency error. `GET /health` remains the public product-health projection
+and must be inspected for chain state, observer quorum, and authorization
+pause; its `200` response is not deployment readiness. `GET /metrics` requires
+the dedicated metrics bearer key and exports only bounded route/status-class
+HTTP metrics plus chain-state and authorization-pause gauges. Route the metrics
+path only to the private monitoring plane, never through the public edge.
 
 The outstanding ceiling is scoped to one organization/customer pair in the
 control plane and one customer-owned signer journal. It is not a global

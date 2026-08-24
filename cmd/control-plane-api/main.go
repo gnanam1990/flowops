@@ -60,6 +60,7 @@ type startupConfig struct {
 	applyMigrations           bool
 	operatorKey               []byte
 	keeperCallbackKey         []byte
+	metricsKey                []byte
 	mcpAllowedOrigins         []string
 	observerRPCs              []reconciliation.RPCProvider
 	observerConfig            reconciliation.Config
@@ -374,6 +375,7 @@ func run(ctx context.Context) (returnErr error) {
 	api, err := controlapi.NewServer(controlapi.ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
 		OperatorControlKey: cfg.operatorKey, KeeperCallbackKey: cfg.keeperCallbackKey,
+		MetricsKey: cfg.metricsKey, Readiness: store,
 		SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
 		Reconciliation:     reconciliationEngine,
 		ASCPAgent:          ascpAgentService,
@@ -539,6 +541,17 @@ func loadConfig() (startupConfig, error) {
 		return startupConfig{}, errors.New("ASCP keeper callback key must be distinct from operator and site-session keys")
 	}
 	cfg.keeperCallbackKey = keeperCallbackKey
+	metricsRaw := strings.TrimSpace(os.Getenv("FLOWOPS_METRICS_KEY_B64"))
+	if metricsRaw != "" {
+		metricsKey, err := decodeSymmetricKey("FLOWOPS_METRICS_KEY_B64", metricsRaw)
+		if err != nil {
+			return startupConfig{}, err
+		}
+		if subtle.ConstantTimeCompare(metricsKey, operatorKey) == 1 || subtle.ConstantTimeCompare(metricsKey, keeperCallbackKey) == 1 || subtle.ConstantTimeCompare(metricsKey, siteSessionKey) == 1 {
+			return startupConfig{}, errors.New("metrics key must be distinct from operator, keeper, and site-session keys")
+		}
+		cfg.metricsKey = metricsKey
+	}
 	signerReceiptKeys, err := parseSignerKeys(os.Getenv("FLOWOPS_SIGNER_RECEIPT_KEYS_JSON"))
 	if err != nil {
 		return startupConfig{}, err
@@ -618,6 +631,9 @@ func loadConfig() (startupConfig, error) {
 		cfg.ascpAdaptationKeyEpoch = epoch
 	}
 	if cfg.observerConfig.ChainID == 8453 {
+		if len(cfg.metricsKey) != 32 {
+			return startupConfig{}, errors.New("Base mainnet requires FLOWOPS_METRICS_KEY_B64")
+		}
 		if err := cfg.pilotLimits.RequireInitialBaseMainnetProfile(); err != nil {
 			return startupConfig{}, err
 		}

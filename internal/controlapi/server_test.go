@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -591,6 +592,72 @@ func setupHandler(t *testing.T) (*Server, *memoryStore, *mutableChain, *controlp
 		t.Fatal(err)
 	}
 	return server, store, chain, lifecycle, journal, now
+}
+
+type readinessStub struct{ err error }
+
+func (r *readinessStub) Ready(context.Context) error { return r.err }
+
+func TestOperationalEndpointsSeparateLivenessReadinessProductHealthAndMetrics(t *testing.T) {
+	_, store, chain, lifecycle, journal, _ := setupHandler(t)
+	defer journal.Close()
+	readiness := &readinessStub{}
+	metricsKey := []byte(strings.Repeat("m", 32))
+	server, err := NewServer(ServerConfig{Store: store, Lifecycle: lifecycle, Chain: chain, Readiness: readiness, MetricsKey: metricsKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	for path, want := range map[string]int{"/livez": http.StatusOK, "/readyz": http.StatusOK, "/health": http.StatusOK} {
+		response, err := httpServer.Client().Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != want {
+			t.Fatalf("%s status = %d", path, response.StatusCode)
+		}
+	}
+	readiness.err = errors.New("database unavailable with secret details")
+	response, err := httpServer.Client().Get(httpServer.URL + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable || strings.Contains(string(body), "secret details") || !strings.Contains(string(body), "NOT_READY") {
+		t.Fatalf("not-ready response = %d %s", response.StatusCode, body)
+	}
+
+	response, err = httpServer.Client().Get(httpServer.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated metrics status = %d", response.StatusCode)
+	}
+	request, _ := http.NewRequest(http.MethodGet, httpServer.URL+"/metrics", nil)
+	request.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString(metricsKey))
+	response, err = httpServer.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	metrics := string(body)
+	for _, expected := range []string{
+		`flowops_http_requests_total{method="GET",route="GET /health",status_class="2xx"} 1`,
+		`flowops_http_requests_total{method="GET",route="GET /readyz",status_class="5xx"} 1`,
+		`flowops_chain_state{chain_id="84532",state="HEALTHY"} 1`,
+		"flowops_authorizations_paused 0",
+	} {
+		if !strings.Contains(metrics, expected) {
+			t.Fatalf("metrics missing %q:\n%s", expected, metrics)
+		}
+	}
 }
 
 type settlementRegistrarStub struct {

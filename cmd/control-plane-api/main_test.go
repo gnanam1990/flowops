@@ -42,6 +42,11 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	if cfg.address != defaultAddress || cfg.trustProxy || !cfg.applyMigrations || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 || cfg.ascpDirectoryMaxAge != time.Minute || cfg.ascpMaxActiveOperations != 1000 {
 		t.Fatalf("configuration was not normalized: %+v", cfg)
 	}
+	t.Setenv("FLOWOPS_METRICS_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32))))
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "metrics key must be distinct") {
+		t.Fatalf("shared metrics capability error=%v", err)
+	}
+	t.Setenv("FLOWOPS_METRICS_KEY_B64", "")
 	t.Setenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT", "0x0000000000000000000000000000000000000000")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("zero ASCP directory contract was accepted")
@@ -115,6 +120,10 @@ func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
 	t.Setenv("FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", observerAddress(12))
 	t.Setenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", observerAddress(13))
 	t.Setenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK", "100")
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "FLOWOPS_METRICS_KEY_B64") {
+		t.Fatalf("mainnet without private metrics credential error=%v", err)
+	}
+	t.Setenv("FLOWOPS_METRICS_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("m", 32))))
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -122,6 +131,9 @@ func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
 	}
 	if cfg.observerConfig.ChainID != 8453 || cfg.ascpAgentRegistryContract != observerAddress(11) {
 		t.Fatalf("mainnet config=%+v", cfg)
+	}
+	if len(cfg.metricsKey) != 32 {
+		t.Fatal("mainnet metrics key was not loaded")
 	}
 
 	t.Setenv("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", observerAddress(99))
