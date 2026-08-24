@@ -11,7 +11,8 @@ manifest. The manifest binds the exact reviewed source commit, external-review
 digest, typed-data registry, paid-RPC admission, canonical USDC code hash,
 complete ASCP contract graph, deployment transactions and blocks, Safe owners
 and threshold, independently assigned authority roles, initial pilot limits,
-and the governance observation start block.
+the governance observation start block, and the complete observer timing,
+quorum, finality, reorg, and recovery profile.
 
 `FLOWOPS_BASE_CHAIN_ID=8453` is rejected unless:
 

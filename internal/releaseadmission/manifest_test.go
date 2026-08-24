@@ -48,9 +48,11 @@ func TestReleaseManifestRejectsResignedUnsafeMutations(t *testing.T) {
 		"duplicate contract":    func(m *Manifest) { m.Contracts[1].Address = m.Contracts[0].Address },
 		"missing contract":      func(m *Manifest) { m.Contracts = m.Contracts[:3] },
 		"weak Safe":             func(m *Manifest) { m.Safe.Threshold = 1 },
+		"diluted Safe":          func(m *Manifest) { m.Safe.Owners = append(m.Safe.Owners, address(9)) },
 		"duplicate owner":       func(m *Manifest) { m.Safe.Owners[1] = m.Safe.Owners[0] },
 		"shared authority":      func(m *Manifest) { m.Authorities.RegistryAdmin = m.Authorities.DirectoryPublisher },
 		"wrong pilot":           func(m *Manifest) { m.Pilot.MaxPerActionAtomic = "1000001" },
+		"unsafe observer":       func(m *Manifest) { m.Observer.Quorum = 1 },
 		"funding without proof": func(m *Manifest) { m.Pilot.FundingEnabled = true },
 	}
 	for name, mutate := range mutations {
@@ -134,6 +136,7 @@ func validManifest(now time.Time) Manifest {
 		Safe:        SafeBinding{Address: address(1), Owners: []string{address(2), address(3), address(4)}, Threshold: 2},
 		Authorities: AuthorityBinding{Governor: address(1), DirectoryPublisher: address(5), DirectoryPauser: address(6), RegistryAdmin: address(7), SpendAuthorizer: address(8)},
 		Pilot:       PilotBinding{MaxPerActionAtomic: InitialMaxPerActionAtomic, MaxOutstandingAtomic: InitialMaxOutstandingAtomic},
+		Observer:    InitialObserverProfile(),
 		SignerKeyID: "release_operator_2026_08",
 	}
 }

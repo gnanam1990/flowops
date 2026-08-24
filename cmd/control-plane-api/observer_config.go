@@ -76,11 +76,6 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	if err != nil {
 		return observerRuntimeConfig{}, err
 	}
-	if releaseManifest != nil {
-		if err := releaseadmission.BindObserver(*releaseManifest, escrowAsset, escrowContract, escrowReleaseWindow); err != nil {
-			return observerRuntimeConfig{}, err
-		}
-	}
 	if _, err := reconciliation.NewObserverSet(chainID, providers, nil, nil); err != nil {
 		return observerRuntimeConfig{}, fmt.Errorf("Base observer configuration: %w", err)
 	}
@@ -150,6 +145,18 @@ func loadObserverRuntimeConfig() (observerRuntimeConfig, error) {
 	}
 	if interval >= observationMaxAge || interval >= stallThreshold {
 		return observerRuntimeConfig{}, errors.New("observer interval must be shorter than observation max age and stall threshold")
+	}
+	if releaseManifest != nil {
+		if err := releaseadmission.BindObserver(*releaseManifest, releaseadmission.ObserverRuntimeBindings{
+			EscrowAsset: escrowAsset, CallEscrow: escrowContract, SettlementWindowSeconds: escrowReleaseWindow,
+			Quorum: observerQuorum, HaltConfirmations: haltConfirmations, RecoveryObservations: recoveryObservations,
+			MinConfirmations: minConfirmations, ReorgLookback: reorgLookback, MaxHeadSkew: maxHeadSkew,
+			ObserverInterval: interval, ObserverTimeout: timeout, ReconciliationInterval: reconciliationInterval,
+			ReconciliationTimeout: reconciliationTimeout, StallThreshold: stallThreshold,
+			ObservationMaxAge: observationMaxAge, MaxFutureClockSkew: maxFutureClockSkew,
+		}); err != nil {
+			return observerRuntimeConfig{}, err
+		}
 	}
 	return observerRuntimeConfig{
 		providers: providers, interval: interval, timeout: timeout,

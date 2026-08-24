@@ -77,6 +77,14 @@ func TestLoadObserverRuntimeConfigValidatesTimingThresholdsAndChain(t *testing.T
 			t.Fatalf("mainnet observer config=%+v error=%v", cfg, err)
 		}
 	})
+	t.Run("Base mainnet rejects observer profile substitution", func(t *testing.T) {
+		setObserverRuntime(t)
+		setMainnetReleaseRuntime(t)
+		t.Setenv("FLOWOPS_BASE_HALT_CONFIRMATIONS", "4")
+		if _, err := loadObserverRuntimeConfig(); err == nil || !strings.Contains(err.Error(), "signed Base mainnet release") {
+			t.Fatalf("observer substitution error=%v", err)
+		}
+	})
 	t.Run("Base mainnet requires production RPC admission before the promotion gate", func(t *testing.T) {
 		setObserverRuntime(t)
 		t.Setenv("FLOWOPS_BASE_CHAIN_ID", "8453")
@@ -140,6 +148,7 @@ func setMainnetReleaseRuntime(t *testing.T) releaseadmission.Manifest {
 		Safe:        releaseadmission.SafeBinding{Address: observerAddress(1), Owners: []string{observerAddress(2), observerAddress(3), observerAddress(4)}, Threshold: 2},
 		Authorities: releaseadmission.AuthorityBinding{Governor: observerAddress(1), DirectoryPublisher: observerAddress(5), DirectoryPauser: observerAddress(6), RegistryAdmin: observerAddress(7), SpendAuthorizer: observerAddress(8)},
 		Pilot:       releaseadmission.PilotBinding{MaxPerActionAtomic: releaseadmission.InitialMaxPerActionAtomic, MaxOutstandingAtomic: releaseadmission.InitialMaxOutstandingAtomic},
+		Observer:    releaseadmission.InitialObserverProfile(),
 		SignerKeyID: "release_test_key",
 	}
 	manifest, err = releaseadmission.Sign(manifest, privateKey)

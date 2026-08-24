@@ -78,6 +78,32 @@ type PilotBinding struct {
 	FundedEvidenceSHA256 string `json:"fundedEvidenceSha256,omitempty"`
 }
 
+type ObserverBinding struct {
+	Quorum                        int    `json:"quorum"`
+	HaltConfirmations             int    `json:"haltConfirmations"`
+	RecoveryObservations          int    `json:"recoveryObservations"`
+	MinConfirmations              uint64 `json:"minConfirmations"`
+	ReorgLookback                 uint64 `json:"reorgLookback"`
+	MaxHeadSkew                   uint64 `json:"maxHeadSkew"`
+	ObserverIntervalSeconds       uint64 `json:"observerIntervalSeconds"`
+	ObserverTimeoutSeconds        uint64 `json:"observerTimeoutSeconds"`
+	ReconciliationIntervalSeconds uint64 `json:"reconciliationIntervalSeconds"`
+	ReconciliationTimeoutSeconds  uint64 `json:"reconciliationTimeoutSeconds"`
+	StallThresholdSeconds         uint64 `json:"stallThresholdSeconds"`
+	ObservationMaxAgeSeconds      uint64 `json:"observationMaxAgeSeconds"`
+	MaxFutureClockSkewSeconds     uint64 `json:"maxFutureClockSkewSeconds"`
+}
+
+func InitialObserverProfile() ObserverBinding {
+	return ObserverBinding{
+		Quorum: 2, HaltConfirmations: 2, RecoveryObservations: 3,
+		MinConfirmations: 2, ReorgLookback: 12, MaxHeadSkew: 2,
+		ObserverIntervalSeconds: 15, ObserverTimeoutSeconds: 10,
+		ReconciliationIntervalSeconds: 20, ReconciliationTimeoutSeconds: 10,
+		StallThresholdSeconds: 120, ObservationMaxAgeSeconds: 45, MaxFutureClockSkewSeconds: 15,
+	}
+}
+
 type Manifest struct {
 	SchemaVersion           int               `json:"schemaVersion"`
 	ReleaseID               string            `json:"releaseId"`
@@ -97,6 +123,7 @@ type Manifest struct {
 	Safe                    SafeBinding       `json:"safe"`
 	Authorities             AuthorityBinding  `json:"authorities"`
 	Pilot                   PilotBinding      `json:"pilot"`
+	Observer                ObserverBinding   `json:"observer"`
 	SignerKeyID             string            `json:"signerKeyId"`
 	Signature               string            `json:"signature"`
 }
@@ -111,6 +138,19 @@ type RuntimeBindings struct {
 	PilotOutstanding        string
 	GovernanceFromBlock     uint64
 	SettlementWindowSeconds uint64
+}
+
+type ObserverRuntimeBindings struct {
+	EscrowAsset, CallEscrow                       string
+	SettlementWindowSeconds                       uint64
+	Quorum, HaltConfirmations                     int
+	RecoveryObservations                          int
+	MinConfirmations, ReorgLookback               uint64
+	MaxHeadSkew                                   uint64
+	ObserverInterval, ObserverTimeout             time.Duration
+	ReconciliationInterval, ReconciliationTimeout time.Duration
+	StallThreshold, ObservationMaxAge             time.Duration
+	MaxFutureClockSkew                            time.Duration
 }
 
 func Decode(raw string) (Manifest, error) {
@@ -205,6 +245,9 @@ func ValidateUnsigned(manifest Manifest, now time.Time) error {
 	} else if manifest.Pilot.FundedEvidenceSHA256 != "" {
 		return errors.New("disabled funding must not claim funded-pilot evidence")
 	}
+	if err := validateObserver(manifest.Observer); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -247,13 +290,23 @@ func BindRuntime(manifest Manifest, bindings RuntimeBindings) error {
 	return nil
 }
 
-func BindObserver(manifest Manifest, escrowAsset, callEscrow string, settlementWindowSeconds uint64) error {
+func BindObserver(manifest Manifest, bindings ObserverRuntimeBindings) error {
 	contracts := make(map[string]string, len(manifest.Contracts))
 	for _, contract := range manifest.Contracts {
 		contracts[contract.Name] = contract.Address
 	}
-	if escrowAsset != manifest.Asset.Address || callEscrow != contracts["ascp_call_escrow"] ||
-		settlementWindowSeconds != manifest.SettlementWindowSeconds {
+	observer := manifest.Observer
+	if bindings.EscrowAsset != manifest.Asset.Address || bindings.CallEscrow != contracts["ascp_call_escrow"] ||
+		bindings.SettlementWindowSeconds != manifest.SettlementWindowSeconds || bindings.Quorum != observer.Quorum ||
+		bindings.HaltConfirmations != observer.HaltConfirmations || bindings.RecoveryObservations != observer.RecoveryObservations ||
+		bindings.MinConfirmations != observer.MinConfirmations || bindings.ReorgLookback != observer.ReorgLookback ||
+		bindings.MaxHeadSkew != observer.MaxHeadSkew || durationSeconds(bindings.ObserverInterval) != observer.ObserverIntervalSeconds ||
+		durationSeconds(bindings.ObserverTimeout) != observer.ObserverTimeoutSeconds ||
+		durationSeconds(bindings.ReconciliationInterval) != observer.ReconciliationIntervalSeconds ||
+		durationSeconds(bindings.ReconciliationTimeout) != observer.ReconciliationTimeoutSeconds ||
+		durationSeconds(bindings.StallThreshold) != observer.StallThresholdSeconds ||
+		durationSeconds(bindings.ObservationMaxAge) != observer.ObservationMaxAgeSeconds ||
+		durationSeconds(bindings.MaxFutureClockSkew) != observer.MaxFutureClockSkewSeconds {
 		return errors.New("observer configuration does not match the signed Base mainnet release manifest")
 	}
 	return nil
@@ -267,7 +320,31 @@ func BindRPCAdmission(manifest Manifest, admission rpcadmission.ProductionAdmiss
 	if digest != manifest.RPCAdmissionSHA256 {
 		return errors.New("production RPC admission does not match the signed Base mainnet release manifest")
 	}
+	if manifest.Observer.Quorum > len(admission.Providers) {
+		return errors.New("signed observer quorum exceeds the admitted production provider set")
+	}
 	return nil
+}
+
+func validateObserver(observer ObserverBinding) error {
+	if observer.Quorum < 2 || observer.Quorum > 5 || observer.HaltConfirmations < 1 || observer.HaltConfirmations > 100 ||
+		observer.RecoveryObservations < 1 || observer.RecoveryObservations > 100 || observer.MinConfirmations < 1 || observer.MinConfirmations > 1_000 ||
+		observer.ReorgLookback < 1 || observer.ReorgLookback > 10_000 || observer.MaxHeadSkew < 1 || observer.MaxHeadSkew > 100 ||
+		observer.ObserverTimeoutSeconds == 0 || observer.ObserverTimeoutSeconds >= observer.ObserverIntervalSeconds ||
+		observer.ReconciliationTimeoutSeconds == 0 || observer.ReconciliationTimeoutSeconds >= observer.ReconciliationIntervalSeconds ||
+		observer.ObserverIntervalSeconds >= observer.ObservationMaxAgeSeconds || observer.ObserverIntervalSeconds >= observer.StallThresholdSeconds ||
+		observer.ObserverIntervalSeconds > 600 || observer.ReconciliationIntervalSeconds > 600 ||
+		observer.StallThresholdSeconds > 3_600 || observer.ObservationMaxAgeSeconds > 600 || observer.MaxFutureClockSkewSeconds < 1 || observer.MaxFutureClockSkewSeconds > 60 {
+		return errors.New("release manifest observer profile is outside the initial production safety bounds")
+	}
+	return nil
+}
+
+func durationSeconds(value time.Duration) uint64 {
+	if value < 0 || value%time.Second != 0 {
+		return ^uint64(0)
+	}
+	return uint64(value / time.Second)
 }
 
 func RPCAdmissionSHA256(admission rpcadmission.ProductionAdmission) (string, error) {
@@ -323,7 +400,8 @@ func validateContracts(contracts []ContractBinding) error {
 }
 
 func validateSafeAndAuthorities(safe SafeBinding, authorities AuthorityBinding, contracts []ContractBinding) error {
-	if !canonicalAddress(safe.Address) || len(safe.Owners) < 3 || safe.Threshold < 2 || int(safe.Threshold) > len(safe.Owners) {
+	if !canonicalAddress(safe.Address) || len(safe.Owners) < 3 || safe.Threshold < 2 || int(safe.Threshold) > len(safe.Owners) ||
+		int(safe.Threshold)*3 < len(safe.Owners)*2 {
 		return errors.New("release Safe must have a canonical address and a two-of-three-or-stronger threshold")
 	}
 	seen := map[string]struct{}{safe.Address: {}}

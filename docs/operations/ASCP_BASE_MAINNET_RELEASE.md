@@ -26,7 +26,7 @@ Status: structurally implemented and deliberately blocked; no deployment or fund
      go run ./cmd/release-manifest verify /secure/signed-release.json
    ```
 
-10. Configure the runtime with the exact manifest and matching ASCP tuple. Startup checks every contract and canonical USDC through the complete paid-RPC set before opening PostgreSQL or serving traffic.
+10. Configure the runtime with the exact manifest and matching ASCP and observer tuples. Startup rejects any quorum, confirmation, reorg, freshness, timeout, interval, or recovery setting that differs from the signed profile, then checks every contract and canonical USDC through the complete paid-RPC set before opening PostgreSQL or serving traffic.
 11. Run a zero-fund soak. Funding requires a second signed manifest carrying the separately reviewed funded-pilot evidence digest and another explicit human approval.
 
 ## Required runtime variables

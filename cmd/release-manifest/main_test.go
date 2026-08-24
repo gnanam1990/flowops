@@ -78,6 +78,7 @@ func commandManifest(now time.Time) releaseadmission.Manifest {
 		Safe:        releaseadmission.SafeBinding{Address: a(1), Owners: []string{a(2), a(3), a(4)}, Threshold: 2},
 		Authorities: releaseadmission.AuthorityBinding{Governor: a(1), DirectoryPublisher: a(5), DirectoryPauser: a(6), RegistryAdmin: a(7), SpendAuthorizer: a(8)},
 		Pilot:       releaseadmission.PilotBinding{MaxPerActionAtomic: "1000000", MaxOutstandingAtomic: "10000000"},
+		Observer:    releaseadmission.InitialObserverProfile(),
 		SignerKeyID: "release_command_key",
 	}
 }

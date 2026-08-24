@@ -41,6 +41,21 @@
     "maxOutstandingAtomic": "10000000",
     "fundingEnabled": false
   },
+  "observer": {
+    "quorum": 2,
+    "haltConfirmations": 2,
+    "recoveryObservations": 3,
+    "minConfirmations": 2,
+    "reorgLookback": 12,
+    "maxHeadSkew": 2,
+    "observerIntervalSeconds": 15,
+    "observerTimeoutSeconds": 10,
+    "reconciliationIntervalSeconds": 20,
+    "reconciliationTimeoutSeconds": 10,
+    "stallThresholdSeconds": 120,
+    "observationMaxAgeSeconds": 45,
+    "maxFutureClockSkewSeconds": 15
+  },
   "signerKeyId": "replace_before_signing",
   "signature": ""
 }
