@@ -128,7 +128,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #79a2ff; outline-
 }
 @media (max-width: 900px) {
   .sidebar { display: none; }.workspace { margin-left: 0; }
-  .topbar { min-height: 60px; align-items: center; padding: 0 18px; }.topbar-title { display: block; flex: 1; }.mobile-brand { display: block; margin-bottom: 3px; font-size: 13px; font-weight: 750; }.context-strip { display: none; }.topbar-actions { padding: 0; border: 0; }.fresh-label,.viewer strong { display: none; }
+  .topbar { min-height: 60px; align-items: center; padding: 0 18px; }.topbar-title { display: block; min-width: 0; flex: 1; }.mobile-brand { display: block; margin-bottom: 3px; font-size: 13px; font-weight: 750; }.breadcrumb { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.context-strip { display: none; }.topbar-actions { padding: 0; border: 0; }.fresh-label,.viewer strong { display: none; }
   .main-content { padding: 26px 20px 90px; }.proposal-anchor-notice { grid-template-columns: 1fr; }.overview-grid { grid-template-columns: 1fr; }.activity-panel { grid-column: auto; }
   .mobile-nav { position: fixed; inset: auto 12px 10px; z-index: 40; display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: rgba(10,16,29,.94); box-shadow: var(--shadow); backdrop-filter: blur(18px); }.mobile-nav button { display: grid; place-items: center; gap: 3px; min-height: 46px; border: 0; border-radius: 5px; color: #77869a; background: transparent; font-size: 7px; cursor: pointer; }.mobile-nav button span { font-family: var(--font-geist-mono); font-size: 8px; }.mobile-nav button.active { color: #fff; background: var(--blue); }
 }

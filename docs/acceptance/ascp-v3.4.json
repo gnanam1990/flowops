@@ -2666,8 +2666,8 @@
         },
         {
           "kind": "script",
-          "path": "apps/dashboard/tests/rendered-html.test.mjs",
-          "command": "npm test --prefix apps/dashboard"
+          "path": "apps/dashboard/tests/browser/control-room.spec.ts",
+          "command": "npm run test:browser --prefix apps/dashboard"
         }
       ],
       "requiredArtifacts": [
@@ -2675,7 +2675,7 @@
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "Hostile MCP data framing, secret redaction, and dashboard escaping have local executable evidence; production seller and browser release evidence remain outstanding."
+      "gap": "Hostile MCP data framing, secret redaction, dashboard escaping, and Chromium desktop/mobile approval confirmation have local executable evidence; production seller and release-stage evidence remain outstanding."
     },
     {
       "id": "AC-87",

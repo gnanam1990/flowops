@@ -82,3 +82,8 @@ jobs:
         run: npm run lint --prefix apps/dashboard
       - name: Build and test dashboard
         run: npm test --prefix apps/dashboard
+      - name: Install dashboard browser
+        working-directory: apps/dashboard
+        run: npx playwright install --with-deps chromium
+      - name: Run dashboard browser acceptance
+        run: npm run test:browser --prefix apps/dashboard

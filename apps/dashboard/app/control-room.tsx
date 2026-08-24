@@ -179,7 +179,9 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
         <header className="topbar">
           <div className="topbar-title">
             <span className="mobile-brand">FlowOps</span>
-            <span className="breadcrumb">Control room / {title}</span>
+            <span className="breadcrumb">
+              Control room / {snapshot.mode === "live" ? `${snapshot.organization.name} / ` : ""}{title}
+            </span>
           </div>
           <dl className="context-strip">
 			<div><dt>{snapshot.mode === "public" ? "Organization data" : "Recognized expense"}</dt><dd>{snapshot.money.total} <span>{snapshot.money.asset}</span></dd></div>

@@ -117,8 +117,17 @@ npm ci --prefix apps/dashboard
 npm audit --omit=dev --audit-level=high --prefix apps/dashboard
 npm run lint --prefix apps/dashboard
 npm test --prefix apps/dashboard
+npm run test:browser --prefix apps/dashboard
 make smoke-dashboard
 ```
+
+The browser acceptance command builds the production dashboard, starts an
+isolated loopback control API fixture, and runs the approval flow in Chromium at
+desktop and mobile viewports. It verifies the public fail-closed view, local
+session exchange, exact chain/asset/recipient/amount/digest review, disabled
+approval without step-up, keyboard dismissal, and horizontal layout bounds.
+The fixture is test evidence only: it does not prove a hosted Sites identity
+exchange, a production step-up provider, or live control-plane/chain data.
 
 The rendered tests verify core FlowOps content, dynamic metadata, the full
 server-side identity exchange, derived enrollment-code isolation, live field
