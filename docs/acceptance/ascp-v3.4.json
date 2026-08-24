@@ -2420,7 +2420,7 @@
       "title": "Generate all amended EIP-712/JSON types from the normative appendix in Solidity, Go, and TypeScript",
       "expectation": "Identical type strings, domain separators, struct hashes, digests, and canonical JSON bytes",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "schemas_vectors",
       "participants": [
         "schemas_vectors",
@@ -2429,13 +2429,37 @@
       "invariants": [
         "INV-CANONICAL"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/typedregistry/registry_test.go",
+          "ref": "TestNormativeRegistryPinsEveryGoTypeAndArtifact",
+          "command": "go test -race ./pkg/typedregistry -run '^TestNormativeRegistryPinsEveryGoTypeAndArtifact$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPTypeHashes.t.sol",
+          "ref": "testRegistryPinsEveryNormativeTypeString",
+          "command": "forge test --match-path contracts/test/ASCPTypeHashes.t.sol --match-test '^testRegistryPinsEveryNormativeTypeString$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPTypeHashes.t.sol",
+          "ref": "testSellerQuoteMatchesPublishedCrossLanguageVector",
+          "command": "forge test --match-path contracts/test/ASCPTypeHashes.t.sol --match-test '^testSellerQuoteMatchesPublishedCrossLanguageVector$'"
+        },
+        {
+          "kind": "script",
+          "path": "sdk/typescript/test/typedData.test.ts",
+          "command": "npm test --prefix sdk/typescript"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "All six normative types, exact Solidity type strings, shared vector hashes/digests, TypeScript encodings, and canonical JSON bytes have direct local executable evidence; signed release-manifest and release-stage artifacts remain outstanding."
     },
     {
       "id": "AC-78",

@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {ASCPTypeHashes} from "./libraries/ASCPTypeHashes.sol";
 
 /// @title ServiceDirectory
 /// @notice Governed, append-only directory roots for FlowOps seller and
@@ -16,11 +17,8 @@ contract ServiceDirectory {
     bytes32 public constant SELLER_LEAF_DOMAIN = keccak256("ASCP_SELLER_LEAF_V1");
     bytes32 public constant RESOURCE_LEAF_DOMAIN = keccak256("ASCP_RESOURCE_LEAF_V1");
     bytes32 public constant PROPOSAL_DOMAIN = keccak256("ASCP_DIRECTORY_PROPOSAL_V1");
-    bytes32 public constant EIP712_DOMAIN_TYPEHASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-    bytes32 public constant ADMIN_ACTION_TYPEHASH = keccak256(
-        "AdminActionAuthorization(bytes32 orgDomain,address contractAddress,uint256 chainId,bytes32 authorityRole,bytes4 functionSelector,bytes32 payloadHash,bytes32 adminOperationId,uint256 adminNonce,uint64 adminEpoch,uint64 validAfter,uint64 validBefore,bytes32 workflowId)"
-    );
+    bytes32 public constant EIP712_DOMAIN_TYPEHASH = ASCPTypeHashes.EIP712_DOMAIN;
+    bytes32 public constant ADMIN_ACTION_TYPEHASH = ASCPTypeHashes.ADMIN_ACTION_AUTHORIZATION;
     bytes32 public constant DIRECTORY_PUBLISHER_ROLE = keccak256("ASCP_DIRECTORY_PUBLISHER");
     bytes32 public constant PAUSER_ROLE = keccak256("ASCP_DIRECTORY_PAUSER");
     bytes32 private constant NAME_HASH = keccak256("ASCP");

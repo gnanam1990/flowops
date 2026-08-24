@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ServiceDirectory} from "./ServiceDirectory.sol";
+import {ASCPTypeHashes} from "./libraries/ASCPTypeHashes.sol";
 
 interface IServiceDirectory {
     function currentVersion() external view returns (uint64);
@@ -28,11 +29,8 @@ interface IServiceDirectory {
 contract ASCPCallEscrow is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    bytes32 public constant EXECUTION_COMMITMENT_TYPEHASH = keccak256(
-        "ExecutionCommitment(bytes32 orgDomain,bytes32 operationId,uint8 rail,uint16 schemeVersion,uint8 protection,address escrowContract,bytes32 purchaseSpecHash,bytes32 quoteHash,bytes32 verificationSpecHash,uint64 declaredWorkTime,uint64 verificationBudgetSeconds,uint64 directoryVersion,bytes32 sellerId,bytes32 resourceId,address payTo,address ackAuthority,uint256 amount,uint256 chainId,address asset,uint64 quoteExpiresAt,uint64 acceptBy,uint64 deliverBy,uint64 settleBy)"
-    );
-    bytes32 public constant EIP712_DOMAIN_TYPEHASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 public constant EXECUTION_COMMITMENT_TYPEHASH = ASCPTypeHashes.EXECUTION_COMMITMENT;
+    bytes32 public constant EIP712_DOMAIN_TYPEHASH = ASCPTypeHashes.EIP712_DOMAIN;
     bytes32 private constant NAME_HASH = keccak256("ASCP");
     bytes32 private constant VERSION_HASH = keccak256("4");
     bytes32 public constant GOVERNANCE_PAYLOAD_DOMAIN = keccak256("ASCP_CALL_ESCROW_GOVERNANCE_V1");
@@ -48,9 +46,7 @@ contract ASCPCallEscrow is ReentrancyGuard {
     uint64 public constant MAX_ATTESTATION_WINDOW = 15 minutes;
     uint8 public constant VERDICT_RELEASE = 1;
     uint8 public constant VERDICT_EARLY_REFUND = 2;
-    bytes32 public constant VERDICT_ATTESTATION_TYPEHASH = keccak256(
-        "VerdictAttestation(bytes32 callId,bytes32 commitmentHash,address escrowContract,uint64 verifierEpoch,bytes32 verificationSpecHash,bytes32 verifierSoftwareHash,bytes32 deliveryHash,uint64 deliveredAt,bytes32 evidenceHash,uint8 verdict,uint256 verdictNonce,uint64 issuedAt,uint64 validUntil)"
-    );
+    bytes32 public constant VERDICT_ATTESTATION_TYPEHASH = ASCPTypeHashes.VERDICT_ATTESTATION;
 
     enum State {
         None,
