@@ -2612,7 +2612,7 @@
       "title": "Agent invokes every MCP tool and attempts owner/admin parameters",
       "expectation": "Credential-derived identity and tool scopes hold; no approval, signer, keeper, evidence, or admin boundary is bypassed",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "mcp_base_adapter",
       "participants": [
         "mcp_base_adapter",
@@ -2624,13 +2624,20 @@
         "INV-ISOLATION",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/mcp/server_test.go",
+          "ref": "TestEveryAdvertisedToolIsBoundToTheAuthenticatedPrincipalClass",
+          "command": "go test -race ./internal/mcp -run '^(TestEveryAdvertisedToolIsBoundToTheAuthenticatedPrincipalClass|TestEveryAdvertisedToolHasAReachableHandlerForItsAllowedPrincipal|TestOwnerAdminAndDuplicateParametersFailBeforeToolDelegation)$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "The complete local MCP tool and parameter matrix is executable, but production identity-provider and release-stage evidence remain outstanding."
     },
     {
       "id": "AC-86",
@@ -2638,7 +2645,7 @@
       "title": "Seller quote/content/tool result contains prompt injection, fake tool calls, secrets, or destination changes",
       "expectation": "Content remains data; policy, payee, calldata, system instructions, logs, and approval UI are unchanged or safely escaped",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "mcp_base_adapter",
       "participants": [
         "mcp_base_adapter",
@@ -2650,13 +2657,25 @@
         "INV-ISOLATION",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/mcp/server_test.go",
+          "ref": "TestHostileBackendContentRemainsMarkedDataAndSecretsAreRedacted",
+          "command": "go test -race ./internal/mcp -run '^TestHostileBackendContentRemainsMarkedDataAndSecretsAreRedacted$'"
+        },
+        {
+          "kind": "script",
+          "path": "apps/dashboard/tests/rendered-html.test.mjs",
+          "command": "npm test --prefix apps/dashboard"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "Hostile MCP data framing, secret redaction, and dashboard escaping have local executable evidence; production seller and browser release evidence remain outstanding."
     },
     {
       "id": "AC-87",
@@ -2664,7 +2683,7 @@
       "title": "ASCP MCP/Base adapter/official Base MCP requests signing, arbitrary send, swap, contract call, private key, allowance, x402 write, unknown tool, or single-provider override",
       "expectation": "Production capability firewall denies all; only pinned read tools work; dependency-graph tests fail if a write path is planted",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "mcp_base_adapter",
       "participants": [
         "mcp_base_adapter",
@@ -2676,13 +2695,20 @@
         "INV-ISOLATION",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/basemcp/firewall_test.go",
+          "ref": "TestProductionFirewallDeniesEveryWalletAndOverrideCapability",
+          "command": "go test -race ./internal/basemcp -run '^(TestProductionFirewallAllowsOnlyPinnedAdvisoryReads|TestProductionFirewallDeniesEveryWalletAndOverrideCapability|TestProductionFirewallRejectsEndpointArgumentAndResultSubstitution)$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "The pinned official Base MCP read-only firewall and complete denied-capability matrix are locally executable; production adapter deployment evidence remains outstanding."
     },
     {
       "id": "AC-88",
@@ -2690,7 +2716,7 @@
       "title": "Submit the same intent concurrently through REST and MCP; lose responses and restart",
       "expectation": "One operation, quote nonce, reservation, authorization, and economic effect; both surfaces replay the same outcome",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "controlplane",
       "participants": [
         "controlplane",
@@ -2702,13 +2728,24 @@
         "INV-X402",
         "INV-CANONICAL"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/controlapi/ascp_cross_surface_test.go",
+          "ref": "TestASCPRealPostgresCrossSurfaceDurableUniqueness",
+          "command": "FLOWOPS_TEST_DATABASE_URL=postgres://... go test -race ./internal/controlapi -run '^TestASCPRealPostgresCrossSurfaceDurableUniqueness$' -count=3"
+        },
+        {
+          "kind": "docs",
+          "path": "docs/modules/ASCP_CROSS_SURFACE_IDEMPOTENCY.md"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "Real-PostgreSQL REST/MCP races, response loss, service reconstruction, and exact durable row counts run in CI; finalized on-chain economic uniqueness and the full release artifact bundle remain outstanding."
     }
   ]
 }

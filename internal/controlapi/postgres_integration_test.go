@@ -292,3 +292,63 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 		t.Fatal("modified applied migration checksum was accepted")
 	}
 }
+
+func TestPostgresMigrationRepairsPublishedGovernanceRelayChecksum(t *testing.T) {
+	databaseURL := os.Getenv("FLOWOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("FLOWOPS_TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	adminDB, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adminDB.PingContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("flowops_repair_it_%d", time.Now().UnixNano())
+	if _, err := adminDB.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		defer adminDB.Close()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if _, err := adminDB.ExecContext(cleanupCtx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`); err != nil {
+			t.Errorf("drop repair schema: %v", err)
+		}
+	})
+	pgxConfig, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgxConfig.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*pgxConfig)
+	defer db.Close()
+	if err := ApplyMigrations(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	const migration = "0030_ascp_governance_safe_relayer.sql"
+	const oldChecksum = "a4b19cec81136dd6b4a0d58f956bb73984cc87337746ded98e763ccfdd5b0368"
+	if _, err := db.ExecContext(ctx, `UPDATE flowops_schema_migrations SET checksum=$2 WHERE name=$1`, migration, oldChecksum); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyMigrations(ctx, db); err != nil {
+		t.Fatalf("repair published migration: %v", err)
+	}
+	manifest, err := MigrationManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ""
+	for _, entry := range manifest {
+		if entry.Name == migration {
+			want = entry.Checksum
+		}
+	}
+	var stored string
+	if err := db.QueryRowContext(ctx, `SELECT checksum FROM flowops_schema_migrations WHERE name=$1`, migration).Scan(&stored); err != nil || stored != want {
+		t.Fatalf("repaired checksum = %q want %q err=%v", stored, want, err)
+	}
+}

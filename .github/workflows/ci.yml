@@ -12,6 +12,20 @@ jobs:
   go:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04-arm
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: flowops_ci
+          POSTGRES_DB: flowops_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowops_ci -d flowops_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,12 +39,16 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22.23.1"
+      - name: Configure isolated PostgreSQL integration URL
+        run: printf '%s=%s%s\n' FLOWOPS_TEST_DATABASE_URL postgres '://flowops_ci@127.0.0.1:5432/flowops_ci?sslmode=disable' >> "$GITHUB_ENV"
       - name: Verify formatting
         run: test -z "$(gofmt -l $(git ls-files '*.go'))" || (gofmt -l $(git ls-files '*.go') && exit 1)
       - name: Vet
         run: go vet ./cmd/... ./internal/... ./pkg/...
       - name: Test with race detector
         run: go test -race ./cmd/... ./internal/... ./pkg/...
+      - name: Prove real PostgreSQL cross-surface uniqueness
+        run: go test -race ./internal/controlapi -run '^TestASCPRealPostgresCrossSurfaceDurableUniqueness$' -count=3
       - name: Validate ASCP v3.4 acceptance inventory
         run: make acceptance-manifest-check
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
