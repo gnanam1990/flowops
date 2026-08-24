@@ -224,6 +224,10 @@ func TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically(t *t
 		VALUES ($1,$2,'10','RESERVED','[]'::jsonb,$3,$4)`, reservationID, operationID, base, base.Add(15*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	var capacityOutcome string
+	if err := db.QueryRowContext(ctx, `SELECT ascp_acquire_capacity($1,$2,1000,$3)`, operationID, reservationID, base).Scan(&capacityOutcome); err != nil || capacityOutcome != "ACQUIRED" {
+		t.Fatalf("capacity admission outcome=%q err=%v", capacityOutcome, err)
+	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO ascp_execution_authorizations
 		(authorization_id,approval_id,intent_id,state,execution_snapshot_hash,reservation_id,created_at,evaluated_at)
 		VALUES ($1,$2,$3,'VALIDATED_AND_RESERVED',$4,$5,$6,$6)`, authorizationID, approvalID, operationID,
@@ -351,6 +355,9 @@ func TestASCPBearerRuntimeClaimsOnceAndReleasesExpiredReservationAtomically(t *t
 		(reservation_id,operation_id,amount_base_units,state,dimensions,created_at,expires_at)
 		VALUES ($1,$2,'10','RESERVED','[]'::jsonb,$3,$4)`, refusedReservation, refusedOperation, base, base.Add(15*time.Minute)); err != nil {
 		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT ascp_acquire_capacity($1,$2,1000,$3)`, refusedOperation, refusedReservation, base).Scan(&capacityOutcome); err != nil || capacityOutcome != "ACQUIRED" {
+		t.Fatalf("refused capacity admission outcome=%q err=%v", capacityOutcome, err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO ascp_execution_authorizations
 		(authorization_id,approval_id,intent_id,state,execution_snapshot_hash,reservation_id,created_at,evaluated_at)

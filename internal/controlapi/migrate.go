@@ -21,6 +21,7 @@ const migrationLock = int64(703247667732)
 // checksum mismatch remains a hard failure.
 var repairableMigrationChecksums = map[string]string{
 	"0011_ascp_policy_decisions.sql":        "8f6b589d79331504cdcafa6e54476783d4d6919998020062dc47644b3a333fb9",
+	"0030_ascp_capacity_admission.sql":      "7dac4fe5c4a38e0d6c68bb06ede059960a5c343ea6e13fb302e101019b18129b",
 	"0030_ascp_governance_safe_relayer.sql": "a4b19cec81136dd6b4a0d58f956bb73984cc87337746ded98e763ccfdd5b0368",
 }
 

@@ -293,7 +293,7 @@ func TestPostgresIntegrationMigrationAuthCommandPauseAndJournal(t *testing.T) {
 	}
 }
 
-func TestPostgresMigrationRepairsPublishedGovernanceRelayChecksum(t *testing.T) {
+func TestPostgresMigrationRepairsPublishedChecksums(t *testing.T) {
 	databaseURL := os.Getenv("FLOWOPS_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("FLOWOPS_TEST_DATABASE_URL is not configured")
@@ -329,26 +329,32 @@ func TestPostgresMigrationRepairsPublishedGovernanceRelayChecksum(t *testing.T) 
 	if err := ApplyMigrations(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	const migration = "0030_ascp_governance_safe_relayer.sql"
-	const oldChecksum = "a4b19cec81136dd6b4a0d58f956bb73984cc87337746ded98e763ccfdd5b0368"
-	if _, err := db.ExecContext(ctx, `UPDATE flowops_schema_migrations SET checksum=$2 WHERE name=$1`, migration, oldChecksum); err != nil {
-		t.Fatal(err)
+	repairs := map[string]string{
+		"0030_ascp_capacity_admission.sql":      "7dac4fe5c4a38e0d6c68bb06ede059960a5c343ea6e13fb302e101019b18129b",
+		"0030_ascp_governance_safe_relayer.sql": "a4b19cec81136dd6b4a0d58f956bb73984cc87337746ded98e763ccfdd5b0368",
+	}
+	for migration, oldChecksum := range repairs {
+		if _, err := db.ExecContext(ctx, `UPDATE flowops_schema_migrations SET checksum=$2 WHERE name=$1`, migration, oldChecksum); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := ApplyMigrations(ctx, db); err != nil {
-		t.Fatalf("repair published migration: %v", err)
+		t.Fatalf("repair published migrations: %v", err)
 	}
 	manifest, err := MigrationManifest()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ""
+	wants := make(map[string]string, len(repairs))
 	for _, entry := range manifest {
-		if entry.Name == migration {
-			want = entry.Checksum
+		if _, repaired := repairs[entry.Name]; repaired {
+			wants[entry.Name] = entry.Checksum
 		}
 	}
-	var stored string
-	if err := db.QueryRowContext(ctx, `SELECT checksum FROM flowops_schema_migrations WHERE name=$1`, migration).Scan(&stored); err != nil || stored != want {
-		t.Fatalf("repaired checksum = %q want %q err=%v", stored, want, err)
+	for migration := range repairs {
+		var stored string
+		if err := db.QueryRowContext(ctx, `SELECT checksum FROM flowops_schema_migrations WHERE name=$1`, migration).Scan(&stored); err != nil || stored != wants[migration] {
+			t.Fatalf("%s repaired checksum = %q want %q err=%v", migration, stored, wants[migration], err)
+		}
 	}
 }
