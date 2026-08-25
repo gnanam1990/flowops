@@ -1587,7 +1587,11 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 	}
 	now := s.clock().UTC()
 	chainStatus := s.chain.Status()
-	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: chainStatus, GeneratedAt: now}
+	reconciliationView := reconciliation.OrganizationView{
+		Available: false, Chain: chainStatus, GeneratedAt: now,
+		Exceptions: make([]reconciliation.Exception, 0),
+		Assets:     make([]reconciliation.AssetLedgerSummary, 0),
+	}
 	if s.reconciliation != nil {
 		reconciliationView = s.reconciliation.OrganizationView(principal.OrganizationID)
 	}

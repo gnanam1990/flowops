@@ -72,7 +72,10 @@ func (e *Engine) OrganizationView(organizationID string) OrganizationView {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.config.Clock().UTC()
-	view := OrganizationView{Available: true, Chain: e.statusAt(now), GeneratedAt: now}
+	view := OrganizationView{
+		Available: true, Chain: e.statusAt(now), GeneratedAt: now,
+		Exceptions: make([]Exception, 0), Assets: make([]AssetLedgerSummary, 0),
+	}
 	assets := make(map[string]*mutableAssetSummary)
 	assetSummary := func(asset string) *mutableAssetSummary {
 		if assets[asset] == nil {
