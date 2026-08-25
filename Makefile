@@ -61,7 +61,7 @@ dashboard-check: dashboard-deps
 	npm run lint --prefix apps/dashboard
 	npm test --prefix apps/dashboard
 
-check: fmt-check solidity-fmt-check acceptance-manifest-check test-deployment-evidence test-mainnet-readiness test-proposal-anchor test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit verify-ascp-sepolia-asset smoke-rpc-admission smoke-postgres-readiness dashboard-check
+check: fmt-check solidity-fmt-check acceptance-manifest-check test-deployment-evidence test-mainnet-readiness test-proposal-anchor test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit smoke-rpc-admission smoke-postgres-readiness dashboard-check
 	go vet $(GO_PACKAGES)
 	go test -race $(GO_PACKAGES)
 	forge build --sizes
@@ -118,7 +118,7 @@ smoke-escrow:
 smoke-escrow-deployment:
 	forge test --match-path contracts/test/DeployCallEscrowBaseSepolia.t.sol -vv
 
-smoke-ascp-sepolia-deployment: verify-ascp-sepolia-asset
+smoke-ascp-sepolia-deployment:
 	forge test --match-path contracts/test/DeployASCPBaseSepolia.t.sol -vv
 
 smoke-escrow-mainnet-readiness:

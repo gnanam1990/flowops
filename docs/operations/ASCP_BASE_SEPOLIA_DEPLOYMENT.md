@@ -80,29 +80,39 @@ approval at action time.
    make smoke-ascp-sepolia-deployment
    ```
 
-   This first confirms that the pinned test-USDC runtime code hash still agrees
-   with both the Base public RPC and an independent PublicNode RPC, then runs
-   the deterministic deployment suite. An unavailable or disagreeing provider
-   fails the gate closed.
+   This deterministic gate requires no RPC access.
 
-2. Simulate against two Base Sepolia RPC providers without `--broadcast`.
+2. From a networked operator environment with Foundry `cast` installed, run the
+   live asset observation separately:
+
+   ```sh
+   make verify-ascp-sepolia-asset
+   ```
+
+   This confirms that the pinned test-USDC runtime code hash still agrees with
+   both the Base public RPC and an independent PublicNode RPC. An unavailable,
+   wrong-chain, same-host, or disagreeing provider fails the operation closed.
+   CI runs the same observation in a dedicated non-blocking job so public RPC
+   availability cannot make the deterministic repository gate flaky. The
+   deployment script independently enforces the pinned hash at execution time.
+3. Simulate against two Base Sepolia RPC providers without `--broadcast`.
    Compare predicted addresses, constructor bindings, runtime code hashes, and
    gas requirements. A successful simulation moves no funds and deploys
    nothing.
-3. Obtain explicit approval for the exact deployer and next nonce, Safe,
+4. Obtain explicit approval for the exact deployer and next nonce, Safe,
    authorities, organization domain, plan digest, source commit, RPC set,
    predicted addresses, four-transaction sequence, and total gas ceiling.
-4. Broadcast the four creations through the approved wallet ceremony. The
+5. Broadcast the four creations through the approved wallet ceremony. The
    nonce gate prevents a stale plan or blind rerun, but the four transactions
    are not atomic: if a later creation fails, preserve all receipts, do not
    rerun, and produce a replacement plan that accounts for the orphaned
    no-funds contracts. Do not use a customer
    signer key or put a private key in the command line, environment, repository,
    or logs.
-5. Confirm the receipt and exact runtime bytecode through both RPC providers,
+6. Confirm the receipt and exact runtime bytecode through both RPC providers,
    submit source verification, and commit a machine-readable evidence record in
    a separate evidence-only change.
-6. Only after the evidence record passes its checker, configure the control
+7. Only after the evidence record passes its checker, configure the control
    plane with the exact directory, registry, escrow, spend-module, deployment
    block, test USDC, and observer bindings. Keep funding disabled.
 

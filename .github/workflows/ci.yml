@@ -62,8 +62,6 @@ jobs:
         run: forge build --sizes
       - name: Test Solidity contracts
         run: forge test
-      - name: Verify canonical Base Sepolia asset through two RPC providers
-        run: make verify-ascp-sepolia-asset
       - name: Install typed-data SDK development dependencies
         run: npm ci --prefix sdk/typescript
       - name: Typecheck and test ASCP typed-data SDK
@@ -91,3 +89,18 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run dashboard browser acceptance
         run: npm run test:browser --prefix apps/dashboard
+
+  sepolia-asset-observation:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    continue-on-error: true
+    timeout-minutes: 5
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+        with:
+          version: v1.7.1
+      - name: Observe canonical Base Sepolia asset through two RPC providers
+        run: make verify-ascp-sepolia-asset

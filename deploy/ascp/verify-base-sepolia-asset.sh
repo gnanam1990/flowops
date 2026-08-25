@@ -21,13 +21,22 @@ esac
 
 rpc_host() {
   local rpc_url="$1"
+  local authority host
 
-  RPC_URL="${rpc_url}" jq -er -n '
-    env.RPC_URL
-    | capture("^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]+@)?(?<host>\\[[^]]+\\]|[^:/?#]+)")
-    | .host
-    | ascii_downcase
-  '
+  if [[ "${rpc_url}" != *://* ]]; then
+    return 1
+  fi
+  authority="${rpc_url#*://}"
+  authority="${authority%%[/?#]*}"
+  authority="${authority##*@}"
+  if [[ "${authority}" == \[* ]]; then
+    host="${authority#\[}"
+    host="${host%%\]*}"
+  else
+    host="${authority%%:*}"
+  fi
+  [[ -n "${host}" ]] || return 1
+  printf '%s\n' "${host}" | tr '[:upper:]' '[:lower:]'
 }
 
 if [[ "$(rpc_host "${primary}")" == "$(rpc_host "${secondary}")" ]]; then
