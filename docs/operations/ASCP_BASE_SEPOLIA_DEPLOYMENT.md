@@ -31,10 +31,11 @@ Before simulation, designate:
 
 The deployer, Safe, and four operational authorities must all be distinct. The
 script rejects the wrong chain, missing canonical test USDC bytecode, a Safe
-without a valid nonempty unique owner set and threshold, any zero or overlapping
-authority, a zero organization or plan digest, and a missing or substituted
-broadcast guard. After creation it also proves that the new spend module is not
-already enabled on the Safe.
+without a valid nonempty unique owner set and threshold, or a Safe that does not
+route `execTransactionFromModule` to the standard `GS104` disabled-module guard.
+It also rejects any zero or overlapping authority, a zero organization or plan
+digest, and a missing or substituted broadcast guard. After creation it proves
+that the new spend module is not already enabled on the Safe.
 
 ## Environment contract
 

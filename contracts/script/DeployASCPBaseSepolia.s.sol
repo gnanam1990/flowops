@@ -12,6 +12,9 @@ interface ISafeDeploymentTarget {
     function getOwners() external view returns (address[] memory);
     function getThreshold() external view returns (uint256);
     function isModuleEnabled(address module) external view returns (bool);
+    function execTransactionFromModule(address to, uint256 value, bytes memory data, uint8 operation)
+        external
+        returns (bool success);
 }
 
 /// @notice Fail-closed deployment package for the complete ASCP v4 graph on
@@ -130,7 +133,7 @@ contract DeployASCPBaseSepolia is Script {
         if (config.broadcastGuard != REQUIRED_BROADCAST_GUARD) revert BroadcastGuardInvalid();
     }
 
-    function _requireSafe(address safe) private view {
+    function _requireSafe(address safe) private {
         if (safe.code.length == 0) revert SafeNotContract(safe);
         address[] memory owners;
         uint256 threshold;
@@ -159,6 +162,13 @@ contract DeployASCPBaseSepolia is Script {
                 if (owners[index] == owners[prior]) revert SafeInterfaceInvalid(safe);
             }
         }
+        (bool moduleCallSucceeded, bytes memory moduleCallResult) = safe.call(
+            abi.encodeCall(ISafeDeploymentTarget.execTransactionFromModule, (address(0), 0, bytes(""), uint8(0)))
+        );
+        if (
+            moduleCallSucceeded
+                || keccak256(moduleCallResult) != keccak256(abi.encodeWithSignature("Error(string)", "GS104"))
+        ) revert SafeInterfaceInvalid(safe);
     }
 
     function _verifyDeployment(Deployment memory deployed, Config memory config) private view {

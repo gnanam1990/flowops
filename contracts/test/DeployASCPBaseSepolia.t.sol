@@ -18,6 +18,10 @@ contract SepoliaSafeFixture {
     function isModuleEnabled(address) external pure returns (bool) {
         return false;
     }
+
+    function execTransactionFromModule(address, uint256, bytes memory, uint8) external pure returns (bool) {
+        revert("GS104");
+    }
 }
 
 contract InvalidSepoliaSafeFixture {
@@ -28,6 +32,21 @@ contract InvalidSepoliaSafeFixture {
 
     function getThreshold() external pure returns (uint256) {
         return 2;
+    }
+
+    function isModuleEnabled(address) external pure returns (bool) {
+        return false;
+    }
+}
+
+contract ViewOnlySepoliaSafeFixture {
+    function getOwners() external pure returns (address[] memory owners) {
+        owners = new address[](1);
+        owners[0] = address(0xA11CE);
+    }
+
+    function getThreshold() external pure returns (uint256) {
+        return 1;
     }
 
     function isModuleEnabled(address) external pure returns (bool) {
@@ -195,6 +214,18 @@ contract DeployASCPBaseSepoliaTest is Test {
         vm.etch(ready.BASE_SEPOLIA_USDC(), address(usdcFixture).code);
         vm.expectRevert(
             abi.encodeWithSelector(DeployASCPBaseSepolia.SafeInterfaceInvalid.selector, address(invalidSafe))
+        );
+        ready.run();
+    }
+
+    function test_readyHarnessRejectsViewCompatibleContractWithoutSafeModuleExecution() public {
+        ViewOnlySepoliaSafeFixture viewOnlySafe = new ViewOnlySepoliaSafeFixture();
+        ReadyASCPBaseSepoliaDeploymentHarness ready = new ReadyASCPBaseSepoliaDeploymentHarness(address(viewOnlySafe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(84532);
+        vm.etch(ready.BASE_SEPOLIA_USDC(), address(usdcFixture).code);
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployASCPBaseSepolia.SafeInterfaceInvalid.selector, address(viewOnlySafe))
         );
         ready.run();
     }
