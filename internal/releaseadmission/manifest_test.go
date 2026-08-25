@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +29,7 @@ func TestSignedBaseMainnetReleaseManifestBindsCompleteRuntime(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := BindSourceCommit(manifest, strings.Repeat("a", 40)); err != nil {
+	if err := BindBuildProvenance(manifest, strings.Repeat("a", 40), manifest.ControlPlaneArtifactSHA256); err != nil {
 		t.Fatal(err)
 	}
 	if key, err := DecodePublicKey(base64.StdEncoding.EncodeToString(publicKey)); err != nil || string(key) != string(publicKey) {
@@ -35,12 +37,38 @@ func TestSignedBaseMainnetReleaseManifestBindsCompleteRuntime(t *testing.T) {
 	}
 }
 
-func TestReleaseManifestRejectsMissingOrDifferentBuildSource(t *testing.T) {
+func TestReleaseManifestRejectsSourceAndArtifactSubstitution(t *testing.T) {
 	manifest := validManifest(time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC))
 	for _, source := range []string{"", "unversioned", strings.Repeat("b", 40), strings.Repeat("A", 40)} {
-		if err := BindSourceCommit(manifest, source); err == nil {
+		if err := BindBuildProvenance(manifest, source, manifest.ControlPlaneArtifactSHA256); err == nil {
 			t.Fatalf("build source %q was accepted", source)
 		}
+	}
+	artifact := filepath.Join(t.TempDir(), "control-plane-api")
+	if err := os.WriteFile(artifact, []byte("reviewed control-plane artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reviewedDigest, err := ArtifactSHA256(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.ControlPlaneArtifactSHA256 = reviewedDigest
+	if err := BindBuildProvenance(manifest, manifest.SourceCommit, reviewedDigest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("modified source with the same commit claim"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	modifiedDigest, err := ArtifactSHA256(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := BindBuildProvenance(manifest, manifest.SourceCommit, modifiedDigest); err == nil {
+		t.Fatal("modified artifact with the reviewed source claim was accepted")
+	}
+	currentDigest, err := CurrentExecutableSHA256()
+	if err != nil || !nonZeroDigest(currentDigest) {
+		t.Fatalf("current executable digest=%q err=%v", currentDigest, err)
 	}
 }
 
@@ -51,7 +79,9 @@ func TestReleaseManifestRejectsResignedUnsafeMutations(t *testing.T) {
 	}
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	mutations := map[string]func(*Manifest){
+		"old schema":            func(m *Manifest) { m.SchemaVersion = 1 },
 		"wrong chain":           func(m *Manifest) { m.ChainID = 84532 },
+		"missing artifact":      func(m *Manifest) { m.ControlPlaneArtifactSHA256 = "" },
 		"zero review digest":    func(m *Manifest) { m.ExternalReviewSHA256 = "0x" + strings.Repeat("0", 64) },
 		"runtime disabled":      func(m *Manifest) { m.RuntimeEnabled = false },
 		"expired":               func(m *Manifest) { m.ExpiresAt = now },
@@ -106,8 +136,8 @@ func TestReleaseManifestStrictDecodeAndRuntimeSubstitution(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, invalid := range []string{
-		strings.Replace(string(raw), `"schemaVersion":1`, `"schemaVersion":1,"schemaVersion":1`, 1),
-		strings.Replace(string(raw), `"schemaVersion":1`, `"schemaVersion":1,"unknown":true`, 1),
+		strings.Replace(string(raw), `"schemaVersion":2`, `"schemaVersion":2,"schemaVersion":2`, 1),
+		strings.Replace(string(raw), `"schemaVersion":2`, `"schemaVersion":2,"unknown":true`, 1),
 		string(raw) + `{}`,
 		strings.Repeat("x", MaxJSONBytes+1),
 	} {
@@ -143,8 +173,8 @@ func validManifest(now time.Time) Manifest {
 		{Name: "ascp_spend_module", Address: address(13), RuntimeCodeHash: digest(13), DeploymentTx: digest(23), DeploymentBlock: 103, SourceVerified: true},
 	}
 	return Manifest{
-		SchemaVersion: 1, ReleaseID: "release_2026_08", Network: BaseMainnetNetwork, ChainID: BaseMainnetChainID,
-		SourceCommit: strings.Repeat("a", 40), TypedDataManifestSHA256: TypedDataManifestSHA256, ExternalReviewSHA256: digest(2),
+		SchemaVersion: ReleaseManifestSchemaVersion, ReleaseID: "release_2026_08", Network: BaseMainnetNetwork, ChainID: BaseMainnetChainID,
+		SourceCommit: strings.Repeat("a", 40), ControlPlaneArtifactSHA256: digest(5), TypedDataManifestSHA256: TypedDataManifestSHA256, ExternalReviewSHA256: digest(2),
 		RPCAdmissionSHA256: digest(3), GovernanceFromBlock: 100, SettlementWindowSeconds: 3600,
 		ReviewedAt: now.Add(-time.Hour), ExpiresAt: now.Add(7 * 24 * time.Hour), RuntimeEnabled: true,
 		Asset:       AssetBinding{Address: BaseMainnetUSDC, Symbol: "USDC", Decimals: USDCDecimals, RuntimeCodeHash: digest(4)},

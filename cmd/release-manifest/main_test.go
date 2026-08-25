@@ -67,6 +67,21 @@ func TestReleaseManifestCommandSignsVerifiesAndRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestReleaseManifestCommandHashesExactArtifact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control-plane-api")
+	if err := os.WriteFile(path, []byte("reviewed artifact"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := releaseadmission.ArtifactSHA256(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := captureStdout(t, func() error { return run([]string{"artifact-digest", path}, time.Now().UTC()) })
+	if err != nil || strings.TrimSpace(output) != expected {
+		t.Fatalf("artifact digest output=%q expected=%q err=%v", output, expected, err)
+	}
+}
+
 func captureStdout(t *testing.T, action func() error) (string, error) {
 	t.Helper()
 	read, write, err := os.Pipe()
@@ -151,8 +166,8 @@ func commandManifest(now time.Time) releaseadmission.Manifest {
 		return "0x" + strings.Repeat("0", 62) + string(rune('0'+value/10)) + string(rune('0'+value%10))
 	}
 	return releaseadmission.Manifest{
-		SchemaVersion: 1, ReleaseID: "release_command_test", Network: releaseadmission.BaseMainnetNetwork,
-		ChainID: releaseadmission.BaseMainnetChainID, SourceCommit: strings.Repeat("a", 40),
+		SchemaVersion: releaseadmission.ReleaseManifestSchemaVersion, ReleaseID: "release_command_test", Network: releaseadmission.BaseMainnetNetwork,
+		ChainID: releaseadmission.BaseMainnetChainID, SourceCommit: strings.Repeat("a", 40), ControlPlaneArtifactSHA256: d(4),
 		TypedDataManifestSHA256: releaseadmission.TypedDataManifestSHA256, ExternalReviewSHA256: d(1), RPCAdmissionSHA256: d(2),
 		GovernanceFromBlock: 100, SettlementWindowSeconds: 3600, ReviewedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), RuntimeEnabled: true,
 		Asset: releaseadmission.AssetBinding{Address: releaseadmission.BaseMainnetUSDC, Symbol: "USDC", Decimals: 6, RuntimeCodeHash: d(3)},

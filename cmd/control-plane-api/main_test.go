@@ -111,8 +111,13 @@ func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
 	setObserverRuntime(t)
 	manifest := setMainnetReleaseRuntime(t)
 	previousBuildSource := buildSourceCommit
+	previousArtifactHasher := runningExecutableSHA256
 	buildSourceCommit = manifest.SourceCommit
-	t.Cleanup(func() { buildSourceCommit = previousBuildSource })
+	runningExecutableSHA256 = func() (string, error) { return manifest.ControlPlaneArtifactSHA256, nil }
+	t.Cleanup(func() {
+		buildSourceCommit = previousBuildSource
+		runningExecutableSHA256 = previousArtifactHasher
+	})
 	t.Setenv("FLOWOPS_DATABASE_URL", strings.Join([]string{"postgres", "://flowops@localhost/flowops?sslmode=require"}, ""))
 	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
 	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
@@ -144,6 +149,11 @@ func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
 		t.Fatalf("mismatched control-plane build source error=%v", err)
 	}
 	buildSourceCommit = manifest.SourceCommit
+	runningExecutableSHA256 = func() (string, error) { return observerDigest(99), nil }
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "running control-plane artifact") {
+		t.Fatalf("substituted control-plane artifact error=%v", err)
+	}
+	runningExecutableSHA256 = func() (string, error) { return manifest.ControlPlaneArtifactSHA256, nil }
 
 	t.Setenv("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", observerAddress(99))
 	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "signed Base mainnet release") {

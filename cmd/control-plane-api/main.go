@@ -49,10 +49,11 @@ const (
 	defaultAddress = "127.0.0.1:8080"
 )
 
-// buildSourceCommit is populated with -X by the trusted image build. A local
-// or unversioned binary remains usable on Base Sepolia, but Base mainnet startup
-// requires this value to match the signed release manifest exactly.
+// buildSourceCommit is populated with -X by the reviewed image build. It is a
+// secondary source claim only: Base mainnet also hashes the running executable
+// and requires that digest to match the signed release manifest exactly.
 var buildSourceCommit = "unversioned"
+var runningExecutableSHA256 = releaseadmission.CurrentExecutableSHA256
 
 type startupConfig struct {
 	address                   string
@@ -645,7 +646,11 @@ func loadConfig() (startupConfig, error) {
 		if observerRuntime.releaseManifest == nil {
 			return startupConfig{}, errors.New("Base mainnet release admission is unavailable")
 		}
-		if err := releaseadmission.BindSourceCommit(*observerRuntime.releaseManifest, buildSourceCommit); err != nil {
+		artifactSHA256, err := runningExecutableSHA256()
+		if err != nil {
+			return startupConfig{}, err
+		}
+		if err := releaseadmission.BindBuildProvenance(*observerRuntime.releaseManifest, buildSourceCommit, artifactSHA256); err != nil {
 			return startupConfig{}, err
 		}
 		if !canonicalContract(cfg.ascpAgentRegistryContract) || cfg.ascpCallEscrowContract != cfg.observerConfig.EscrowContract {

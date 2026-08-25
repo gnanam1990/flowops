@@ -133,8 +133,8 @@ func setMainnetReleaseRuntime(t *testing.T) releaseadmission.Manifest {
 	}
 	now := time.Now().UTC()
 	manifest := releaseadmission.Manifest{
-		SchemaVersion: 1, ReleaseID: "release_test_mainnet", Network: releaseadmission.BaseMainnetNetwork,
-		ChainID: releaseadmission.BaseMainnetChainID, SourceCommit: strings.Repeat("a", 40),
+		SchemaVersion: releaseadmission.ReleaseManifestSchemaVersion, ReleaseID: "release_test_mainnet", Network: releaseadmission.BaseMainnetNetwork,
+		ChainID: releaseadmission.BaseMainnetChainID, SourceCommit: strings.Repeat("a", 40), ControlPlaneArtifactSHA256: observerDigest(4),
 		TypedDataManifestSHA256: releaseadmission.TypedDataManifestSHA256, ExternalReviewSHA256: observerDigest(1),
 		RPCAdmissionSHA256: admissionDigest, GovernanceFromBlock: 100, SettlementWindowSeconds: 3600,
 		ReviewedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), RuntimeEnabled: true,

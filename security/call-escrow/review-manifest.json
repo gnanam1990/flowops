@@ -40,7 +40,7 @@
     "methodIdentifiersSha256": "e0827409e0f845ca79e4b0e814c8f41599aab6b3f94ce885546f369b88e37098"
   },
   "ceremonyBindings": {
-    "finalReadinessAuditSha256": "f5ba026f6d557a05eab41b5710afd0041c063f9f991bc57e1ffc53e4edd33fa0",
+    "finalReadinessAuditSha256": "08f0a28c301d9d3d4fdbec96e9a75accfef2f7d2cd1a9e6df7fbc5707ef19ca9",
     "hardwareBroadcastWrapperSha256": "cf0c83059d6dc11cd4a2a8ad1bfebc5aee553cd3bbe1a4bba41d57ffadef55d8",
     "readOnlyDeploymentVerifierSha256": "ae692254f325841da9c841dce7e880fec13a0684c25943679a0140df825cc16d",
     "sourceSubmissionWrapperSha256": "c3a05d2f0cce92ddcc7328ef8a6a977ab157bb579d35b58777b830512db3a016"

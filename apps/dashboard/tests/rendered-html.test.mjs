@@ -282,11 +282,12 @@ test("shows a configured proposal address only as experimental and never as prod
   assert.match(html, /Experimental \/ unaudited proposal anchor/);
   assert.match(html, new RegExp(address));
   assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${address}\\?tab=contract`));
-  assert.match(html, /View verified source on Base Blockscout/);
+  assert.match(html, /View address on Base Blockscout/);
   assert.match(html, /not a factory, vault, escrow, audited release, or production payment contract/i);
   assert.match(html, /Production ready/);
   assert.match(html, /Source verified/);
-	assert.match(html, /Source verified<\/dt><dd>Yes/);
+  assert.match(html, /Source verified<\/dt><dd>Unavailable/);
+  assert.doesNotMatch(html, /View verified source/);
   assert.match(html, /Vault creation/);
   assert.match(html, /USDC deposits/);
   assert.match(html, /Do not send ETH or tokens/);

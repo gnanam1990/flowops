@@ -75,6 +75,8 @@ expect_rejected enabled-ascp-runtime "${canonical_ascp_release}" FLOWOPS_MAINNET
   '.runtimeEnabled = true'
 expect_rejected invented-ascp-deployer "${canonical_ascp_release}" FLOWOPS_MAINNET_AUDIT_ASCP_RELEASE_RECORD \
   '.deployer = "0x1111111111111111111111111111111111111111"'
+expect_rejected invented-control-plane-artifact "${canonical_ascp_release}" FLOWOPS_MAINNET_AUDIT_ASCP_RELEASE_RECORD \
+  '.controlPlaneArtifactSha256 = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 expect_rejected missing-ascp-authority "${canonical_ascp_release}" FLOWOPS_MAINNET_AUDIT_ASCP_RELEASE_RECORD \
   'del(.authorities.registryAdmin)'
 expect_rejected malformed-ascp-authorities "${canonical_ascp_release}" FLOWOPS_MAINNET_AUDIT_ASCP_RELEASE_RECORD \

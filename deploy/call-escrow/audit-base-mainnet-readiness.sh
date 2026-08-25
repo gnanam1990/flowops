@@ -66,9 +66,10 @@ jq -e \
   and $p.status == "blocked-unassigned"
   and $s.status == "rehearsed-not-approved"
   and $v.packageStatus == "prepared-external-review-not-complete"
-  and $a.schemaVersion == 1
+  and $a.schemaVersion == 2
   and $a.releaseId == "replace_before_signing"
   and $a.sourceCommit == "0000000000000000000000000000000000000000"
+  and $a.controlPlaneArtifactSha256 == "0x0000000000000000000000000000000000000000000000000000000000000000"
   and $a.typedDataManifestSha256 == "0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5"
   and $a.externalReviewSha256 == "0x0000000000000000000000000000000000000000000000000000000000000000"
   and $a.rpcAdmissionSha256 == "0x0000000000000000000000000000000000000000000000000000000000000000"

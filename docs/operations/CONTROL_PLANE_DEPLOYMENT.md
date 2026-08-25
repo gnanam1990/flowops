@@ -32,13 +32,15 @@ allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
 before the API starts.
 
-For a Base mainnet image, the trusted build must pass
-`--build-arg FLOWOPS_SOURCE_COMMIT=<reviewed 40-character Git commit>`. The
-Dockerfile bakes that value into `control-plane-api`; mainnet startup rejects an
-unversioned build or any commit that differs from the signed release manifest.
-This is build provenance and must not be replaced with a mutable runtime
-environment variable. Sepolia builds may retain the fail-closed `unversioned`
-default.
+For a Base mainnet image, the trusted pipeline builds from an immutable reviewed
+commit, pushes the image, and pins its registry digest. Extract
+`/flowops/control-plane-api` from that exact image and run `go run
+./cmd/release-manifest artifact-digest <path>`; the offline release approver
+records the result as signed `controlPlaneArtifactSha256`. At startup the process
+hashes its own executable inode and fails closed unless it equals that signed
+digest. `--build-arg FLOWOPS_SOURCE_COMMIT=<reviewed 40-character Git commit>`
+remains a secondary source claim only and is not treated as provenance. Sepolia
+builds may retain the fail-closed `unversioned` default.
 
 ## Runtime variables
 

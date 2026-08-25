@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	MaxJSONBytes  = 64 * 1024
-	signingDomain = "flowops:base-mainnet-release:v1\n"
+	ReleaseManifestSchemaVersion = 2
+	MaxJSONBytes                 = 64 * 1024
+	signingDomain                = "flowops:base-mainnet-release:v2\n"
 
 	BaseMainnetChainID = uint64(8453)
 	BaseMainnetNetwork = "base-mainnet"
@@ -105,28 +106,29 @@ func InitialObserverProfile() ObserverBinding {
 }
 
 type Manifest struct {
-	SchemaVersion           int               `json:"schemaVersion"`
-	ReleaseID               string            `json:"releaseId"`
-	Network                 string            `json:"network"`
-	ChainID                 uint64            `json:"chainId"`
-	SourceCommit            string            `json:"sourceCommit"`
-	TypedDataManifestSHA256 string            `json:"typedDataManifestSha256"`
-	ExternalReviewSHA256    string            `json:"externalReviewSha256"`
-	RPCAdmissionSHA256      string            `json:"rpcAdmissionSha256"`
-	GovernanceFromBlock     uint64            `json:"governanceFromBlock"`
-	SettlementWindowSeconds uint64            `json:"settlementWindowSeconds"`
-	ReviewedAt              time.Time         `json:"reviewedAt"`
-	ExpiresAt               time.Time         `json:"expiresAt"`
-	RuntimeEnabled          bool              `json:"runtimeEnabled"`
-	Asset                   AssetBinding      `json:"asset"`
-	Contracts               []ContractBinding `json:"contracts"`
-	Deployer                string            `json:"deployer"`
-	Safe                    SafeBinding       `json:"safe"`
-	Authorities             AuthorityBinding  `json:"authorities"`
-	Pilot                   PilotBinding      `json:"pilot"`
-	Observer                ObserverBinding   `json:"observer"`
-	SignerKeyID             string            `json:"signerKeyId"`
-	Signature               string            `json:"signature"`
+	SchemaVersion              int               `json:"schemaVersion"`
+	ReleaseID                  string            `json:"releaseId"`
+	Network                    string            `json:"network"`
+	ChainID                    uint64            `json:"chainId"`
+	SourceCommit               string            `json:"sourceCommit"`
+	ControlPlaneArtifactSHA256 string            `json:"controlPlaneArtifactSha256"`
+	TypedDataManifestSHA256    string            `json:"typedDataManifestSha256"`
+	ExternalReviewSHA256       string            `json:"externalReviewSha256"`
+	RPCAdmissionSHA256         string            `json:"rpcAdmissionSha256"`
+	GovernanceFromBlock        uint64            `json:"governanceFromBlock"`
+	SettlementWindowSeconds    uint64            `json:"settlementWindowSeconds"`
+	ReviewedAt                 time.Time         `json:"reviewedAt"`
+	ExpiresAt                  time.Time         `json:"expiresAt"`
+	RuntimeEnabled             bool              `json:"runtimeEnabled"`
+	Asset                      AssetBinding      `json:"asset"`
+	Contracts                  []ContractBinding `json:"contracts"`
+	Deployer                   string            `json:"deployer"`
+	Safe                       SafeBinding       `json:"safe"`
+	Authorities                AuthorityBinding  `json:"authorities"`
+	Pilot                      PilotBinding      `json:"pilot"`
+	Observer                   ObserverBinding   `json:"observer"`
+	SignerKeyID                string            `json:"signerKeyId"`
+	Signature                  string            `json:"signature"`
 }
 
 type RuntimeBindings struct {
@@ -198,13 +200,14 @@ func Sign(manifest Manifest, privateKey ed25519.PrivateKey) (Manifest, error) {
 }
 
 func ValidateUnsigned(manifest Manifest, now time.Time) error {
-	if manifest.SchemaVersion != 1 || manifest.Network != BaseMainnetNetwork || manifest.ChainID != BaseMainnetChainID {
-		return errors.New("release manifest must identify Base mainnet schema 1")
+	if manifest.SchemaVersion != ReleaseManifestSchemaVersion || manifest.Network != BaseMainnetNetwork || manifest.ChainID != BaseMainnetChainID {
+		return errors.New("release manifest must identify Base mainnet schema 2")
 	}
 	if !identifierPattern.MatchString(manifest.ReleaseID) || !identifierPattern.MatchString(manifest.SignerKeyID) {
 		return errors.New("release and signer key identifiers must be canonical")
 	}
 	if !commitPattern.MatchString(manifest.SourceCommit) || manifest.SourceCommit == strings.Repeat("0", 40) ||
+		!nonZeroDigest(manifest.ControlPlaneArtifactSHA256) ||
 		manifest.TypedDataManifestSHA256 != TypedDataManifestSHA256 || !nonZeroDigest(manifest.ExternalReviewSHA256) ||
 		!nonZeroDigest(manifest.RPCAdmissionSHA256) {
 		return errors.New("source and reviewed evidence digests must be canonical and non-empty")
@@ -291,13 +294,16 @@ func BindRuntime(manifest Manifest, bindings RuntimeBindings) error {
 	return nil
 }
 
-// BindSourceCommit prevents a reviewed release manifest from being reused by
-// a control-plane binary built from different source. The value must be baked
-// into the binary by the trusted build pipeline rather than supplied through
-// mutable runtime configuration.
-func BindSourceCommit(manifest Manifest, buildSourceCommit string) error {
+// BindBuildProvenance binds the running binary to both the reviewed source
+// claim and the signed SHA-256 of the exact control-plane executable. The
+// artifact digest is measured from the running executable, not accepted from
+// mutable runtime configuration or caller-controlled build metadata.
+func BindBuildProvenance(manifest Manifest, buildSourceCommit, runningArtifactSHA256 string) error {
 	if !commitPattern.MatchString(buildSourceCommit) || buildSourceCommit != manifest.SourceCommit {
 		return errors.New("control-plane build source does not match the signed Base mainnet release manifest")
+	}
+	if !nonZeroDigest(runningArtifactSHA256) || runningArtifactSHA256 != manifest.ControlPlaneArtifactSHA256 {
+		return errors.New("running control-plane artifact does not match the signed Base mainnet release manifest")
 	}
 	return nil
 }

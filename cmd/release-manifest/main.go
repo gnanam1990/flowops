@@ -22,7 +22,15 @@ func main() {
 
 func run(args []string, now time.Time) error {
 	if len(args) != 2 {
-		return errors.New("usage: release-manifest sign|verify|digest <manifest.json>")
+		return errors.New("usage: release-manifest sign|verify|digest <manifest.json> | artifact-digest <control-plane-api>")
+	}
+	if args[0] == "artifact-digest" {
+		digest, err := releaseadmission.ArtifactSHA256(args[1])
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(os.Stdout, digest)
+		return err
 	}
 	raw, err := os.ReadFile(args[1])
 	if err != nil {
@@ -76,7 +84,7 @@ func run(args []string, now time.Time) error {
 		_, err = fmt.Fprintln(os.Stdout, digest)
 		return err
 	default:
-		return errors.New("usage: release-manifest sign|verify|digest <manifest.json>")
+		return errors.New("usage: release-manifest sign|verify|digest <manifest.json> | artifact-digest <control-plane-api>")
 	}
 }
 
