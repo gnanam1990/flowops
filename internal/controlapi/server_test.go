@@ -816,6 +816,16 @@ func TestDashboardSnapshotDegradesOnlyMissingASCPDeploymentSchema(t *testing.T) 
 	if !ok || ascp["available"] != false {
 		t.Fatalf("dashboard ASCP rollout state = %+v", snapshot["ascp"])
 	}
+	reconciliationView, ok := snapshot["reconciliation"].(map[string]any)
+	if !ok {
+		t.Fatalf("dashboard reconciliation state = %+v", snapshot["reconciliation"])
+	}
+	if assets, ok := reconciliationView["assets"].([]any); !ok || len(assets) != 0 {
+		t.Fatalf("dashboard reconciliation assets = %+v", reconciliationView["assets"])
+	}
+	if exceptions, ok := reconciliationView["exceptions"].([]any); !ok || len(exceptions) != 0 {
+		t.Fatalf("dashboard reconciliation exceptions = %+v", reconciliationView["exceptions"])
+	}
 	if dashboardSchemaUnavailable(errors.New("database unavailable")) {
 		t.Fatal("non-schema database errors must not be suppressed")
 	}

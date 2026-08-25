@@ -81,5 +81,7 @@ func TestOrganizationViewSeparatesProvedAssetAggregatesAndExceptions(t *testing.
 	}
 	if other := engine.OrganizationView("org_other"); len(other.Assets) != 0 || len(other.Exceptions) != 0 || other.Unclassified != 0 {
 		t.Fatalf("tenant boundary leaked = %+v", other)
+	} else if other.Assets == nil || other.Exceptions == nil {
+		t.Fatalf("empty tenant projection must encode arrays, got %+v", other)
 	}
 }
