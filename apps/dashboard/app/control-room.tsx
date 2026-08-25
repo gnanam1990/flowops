@@ -132,7 +132,7 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
           </span>
           <span>
             <strong className="brand-name">FlowOps</strong>
-            <small className="brand-subtitle">Control plane</small>
+            <small className="brand-subtitle">Agent spend OS</small>
           </span>
         </div>
 
@@ -219,7 +219,7 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
             </div>
           ) : null}
 
-          <ProposalAnchorNotice deployment={proposalAnchor} />
+          {section === "overview" ? <ProposalAnchorNotice deployment={proposalAnchor} /> : null}
 
           {section === "overview" ? (
             <Overview
@@ -297,8 +297,8 @@ function ProposalAnchorNotice({ deployment }: { deployment: ProposalAnchorDeploy
   return (
     <section className="proposal-anchor-notice" aria-label="Base mainnet proposal deployment status">
       <div className="proposal-anchor-copy">
-        <span>BASE MAINNET · PROPOSAL EVIDENCE</span>
-        <h2>{deployed ? "Experimental / unaudited proposal anchor" : "No Base mainnet proposal anchor is deployed"}</h2>
+        <span>BASE MAINNET · SAFETY BOUNDARY</span>
+        <h2>{deployed ? "Experimental evidence anchor only" : "Mainnet payment deployment is not active"}</h2>
         <p>
           {deployed
             ? "Evidence-only deployment. It is not a factory, vault, escrow, audited release, or production payment contract."
@@ -349,11 +349,11 @@ function Overview({
   return (
     <>
       <section className="command-header">
-        <div className="command-index" aria-hidden="true">01 / OPERATIONS</div>
+        <div className="command-index" aria-hidden="true">CONTROL / 01</div>
         <div className="command-copy">
           <div className="eyebrow"><span className={snapshot.organization.authorizationsPaused ? "halted-dot" : "healthy-dot"} /> {snapshot.organization.authorizationsPaused ? "Organization authorizations paused" : "Authorization boundary online"}</div>
-          <h1>{snapshot.mode === "public" ? "Live Base operations" : "Treasury command"}</h1>
-          <p>{snapshot.mode === "public" ? "Public, non-sensitive control-plane health from the same system that governs agent payments." : "Govern agent spend from frozen intent to canonical Base evidence."}</p>
+          <h1>{snapshot.mode === "public" ? "Agent spend, under control." : "Treasury control, without custody."}</h1>
+          <p>{snapshot.mode === "public" ? "Policy, human approval, bounded signing, and Base evidence—one operating layer for autonomous payments." : "Govern every agent payment from frozen intent to canonical Base evidence while customer keys stay outside FlowOps."}</p>
           <div className="observation-meta">
             <span>Observed {snapshot.generatedAt}</span>
             <span>{snapshot.mode === "live" ? "Organization-scoped read" : "Public operational read"}</span>
@@ -364,7 +364,7 @@ function Overview({
           {snapshot.mode === "public" ? (
             <>
               {accountHref && !authenticated ? (
-                <a className="primary-button account-cta" href={accountHref}>Sign in to control room <span>→</span></a>
+                <a className="primary-button account-cta" href={accountHref}>Enter control room <span>→</span></a>
               ) : (
                 <button className="primary-button account-cta" type="button" disabled>
                   {authenticated ? "Identity active · authorized membership required" : "Enable local sign-in to continue"}

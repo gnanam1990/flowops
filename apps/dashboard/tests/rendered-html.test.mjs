@@ -201,7 +201,7 @@ test("renders a fail-closed public control room without illustrative organizatio
     html,
     /<meta name="twitter:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i,
   );
-  assert.match(html, /Live Base operations/);
+  assert.match(html, /Agent spend, under control\./);
   assert.match(html, /Status unavailable/);
 	assert.match(html, /Base network unavailable/);
   assert.match(html, /Local sign-in disabled/);
@@ -213,7 +213,7 @@ test("renders a fail-closed public control room without illustrative organizatio
 	assert.match(html, /Public health evidence is unavailable/);
   assert.match(html, /Organization controls locked/);
   assert.match(html, /Economic activity/);
-	assert.match(html, /No Base mainnet proposal anchor is deployed/);
+	assert.match(html, /Mainnet payment deployment is not active/);
 	assert.match(html, /Source verified<\/dt><dd>Unavailable/);
   assert.match(html, /Production contracts remain structurally blocked/);
   assert.match(html, /USDC deposits/);
@@ -251,7 +251,7 @@ test("uses Sites auth only on hosted origins and never exposes its reserved rout
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /href="\/signin-with-chatgpt\?return_to=%2F"/);
-  assert.match(html, /Sign in to control room/);
+  assert.match(html, /Enter control room/);
   assert.doesNotMatch(html, /Local sign-in disabled/);
 });
 
@@ -304,7 +304,7 @@ test("shows a configured proposal address only as experimental and never as prod
   });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Experimental \/ unaudited proposal anchor/);
+  assert.match(html, /Experimental evidence anchor only/);
   assert.match(html, new RegExp(address));
   assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${address}\\?tab=contract`));
   assert.match(html, /View address on Base Blockscout/);
@@ -322,7 +322,7 @@ test("shows a configured proposal address only as experimental and never as prod
     env: { FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: "0xnot-a-mainnet-address" },
   });
   const invalidHtml = await invalid.text();
-  assert.match(invalidHtml, /No Base mainnet proposal anchor is deployed/);
+  assert.match(invalidHtml, /Mainnet payment deployment is not active/);
   assert.doesNotMatch(invalidHtml, /0xnot-a-mainnet-address/);
 });
 
