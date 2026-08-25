@@ -75,6 +75,10 @@ contract ReadyASCPBaseSepoliaDeploymentHarness is DeployASCPBaseSepolia {
             broadcastGuard: REQUIRED_BROADCAST_GUARD
         });
     }
+
+    function _expectedCanonicalUSDCCodeHash() internal view override returns (bytes32) {
+        return BASE_SEPOLIA_USDC.codehash;
+    }
 }
 
 contract DeployASCPBaseSepoliaTest is Test {
@@ -87,10 +91,29 @@ contract DeployASCPBaseSepoliaTest is Test {
     function test_packagePinsCanonicalSepoliaConfiguration() public view {
         assertEq(deployment.BASE_SEPOLIA_CHAIN_ID(), 84532);
         assertEq(deployment.BASE_SEPOLIA_USDC(), 0x036CbD53842c5426634e7929541eC2318f3dCF7e);
+        assertEq(
+            deployment.BASE_SEPOLIA_USDC_RUNTIME_CODE_HASH(),
+            0xedc5281a85c0efecd49999a1ef668390c59b88702f2d4a07029d7f5d63059d6c
+        );
         assertEq(deployment.INITIAL_PER_TRANSACTION_CAP(), 1_000_000);
         assertEq(deployment.INITIAL_DAILY_CAP(), 10_000_000);
         assertEq(deployment.INITIAL_ALLOWANCE_CEILING(), 10_000_000);
         assertEq(deployment.REQUIRED_BROADCAST_GUARD(), keccak256("FLOWOPS_ASCP_BASE_SEPOLIA_BROADCAST_V1"));
+    }
+
+    function test_runRejectsSubstitutedNonemptyCanonicalUSDCCodeBeforeReadingEnvironment() public {
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(84532);
+        vm.etch(deployment.BASE_SEPOLIA_USDC(), address(usdcFixture).code);
+        bytes32 actualCodeHash = deployment.BASE_SEPOLIA_USDC().codehash;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployASCPBaseSepolia.UnexpectedCanonicalUSDCCodeHash.selector,
+                deployment.BASE_SEPOLIA_USDC_RUNTIME_CODE_HASH(),
+                actualCodeHash
+            )
+        );
+        deployment.run();
     }
 
     function test_runRejectsWrongChainAndMissingCanonicalUSDCBeforeReadingEnvironment() public {
@@ -241,6 +264,33 @@ contract DeployASCPBaseSepoliaTest is Test {
         ready.run();
     }
 
+    function testFuzz_readyHarnessRejectsEveryDirtyPredictedDeploymentAddressBeforeAnyCreation(
+        uint8 selectedOffset,
+        uint8 dirtyState
+    ) public {
+        SepoliaSafeFixture safe = new SepoliaSafeFixture();
+        ReadyASCPBaseSepoliaDeploymentHarness ready = new ReadyASCPBaseSepoliaDeploymentHarness(address(safe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(84532);
+        vm.etch(ready.BASE_SEPOLIA_USDC(), address(usdcFixture).code);
+        selectedOffset = uint8(bound(selectedOffset, 0, 3));
+        dirtyState = uint8(bound(dirtyState, 0, 2));
+        address predicted = vm.computeCreateAddress(address(0xBEEF), selectedOffset);
+        if (dirtyState == 0) {
+            vm.deal(predicted, 1);
+        } else if (dirtyState == 1) {
+            MockUSDC(ready.BASE_SEPOLIA_USDC()).mint(predicted, 1);
+        } else {
+            vm.etch(predicted, hex"00");
+        }
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployASCPBaseSepolia.PredictedDeploymentAddressDirty.selector, predicted)
+        );
+        ready.run();
+        assertEq(vm.getNonce(address(0xBEEF)), 0);
+    }
+
     function test_readyHarnessDeploysCompleteButWriteInertASCPGraph() public {
         SepoliaSafeFixture safe = new SepoliaSafeFixture();
         ReadyASCPBaseSepoliaDeploymentHarness ready = new ReadyASCPBaseSepoliaDeploymentHarness(address(safe));
@@ -251,15 +301,28 @@ contract DeployASCPBaseSepoliaTest is Test {
 
         DeployASCPBaseSepolia.Deployment memory deployed = ready.run();
 
+        assertEq(address(deployed.serviceDirectory), vm.computeCreateAddress(address(0xBEEF), 0));
+        assertEq(address(deployed.agentRegistry), vm.computeCreateAddress(address(0xBEEF), 1));
+        assertEq(address(deployed.callEscrow), vm.computeCreateAddress(address(0xBEEF), 2));
+        assertEq(address(deployed.spendModule), vm.computeCreateAddress(address(0xBEEF), 3));
         assertEq(deployed.serviceDirectory.governor(), address(safe));
         assertEq(deployed.agentRegistry.governor(), address(safe));
         assertEq(deployed.callEscrow.safe(), address(safe));
         assertEq(deployed.spendModule.safe(), address(safe));
         assertEq(deployed.spendModule.escrowAllowlist(address(deployed.callEscrow)), bytes32(0));
         assertEq(deployed.serviceDirectory.currentVersion(), 0);
+        assertEq(deployed.serviceDirectory.currentRoot(), bytes32(0));
         assertEq(deployed.agentRegistry.agentCount(), 0);
         assertEq(deployed.callEscrow.totalLocked(), 0);
         assertEq(deployed.spendModule.executedPrincipal(), 0);
+        assertEq(MockUSDC(ready.BASE_SEPOLIA_USDC()).balanceOf(address(deployed.serviceDirectory)), 0);
+        assertEq(MockUSDC(ready.BASE_SEPOLIA_USDC()).balanceOf(address(deployed.agentRegistry)), 0);
+        assertEq(MockUSDC(ready.BASE_SEPOLIA_USDC()).balanceOf(address(deployed.callEscrow)), 0);
+        assertEq(MockUSDC(ready.BASE_SEPOLIA_USDC()).balanceOf(address(deployed.spendModule)), 0);
+        assertEq(address(deployed.serviceDirectory).balance, 0);
+        assertEq(address(deployed.agentRegistry).balance, 0);
+        assertEq(address(deployed.callEscrow).balance, 0);
+        assertEq(address(deployed.spendModule).balance, 0);
     }
 
     function validConfig() private view returns (DeployASCPBaseSepolia.Config memory) {

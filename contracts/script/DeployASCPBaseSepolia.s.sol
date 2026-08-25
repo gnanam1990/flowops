@@ -24,6 +24,8 @@ interface ISafeDeploymentTarget {
 contract DeployASCPBaseSepolia is Script {
     uint256 public constant BASE_SEPOLIA_CHAIN_ID = 84_532;
     address public constant BASE_SEPOLIA_USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+    bytes32 public constant BASE_SEPOLIA_USDC_RUNTIME_CODE_HASH =
+        0xedc5281a85c0efecd49999a1ef668390c59b88702f2d4a07029d7f5d63059d6c;
     uint256 public constant INITIAL_PER_TRANSACTION_CAP = 1_000_000;
     uint256 public constant INITIAL_DAILY_CAP = 10_000_000;
     uint256 public constant INITIAL_ALLOWANCE_CEILING = 10_000_000;
@@ -51,6 +53,7 @@ contract DeployASCPBaseSepolia is Script {
 
     error WrongChain(uint256 expected, uint256 actual);
     error MissingCanonicalUSDC(address asset);
+    error UnexpectedCanonicalUSDCCodeHash(bytes32 expected, bytes32 actual);
     error DeployerNotDesignated();
     error UnexpectedDeployerNonce(uint256 expected, uint256 actual);
     error SafeNotDesignated();
@@ -61,11 +64,12 @@ contract DeployASCPBaseSepolia is Script {
     error OrganizationDomainNotDesignated();
     error DeploymentPlanNotRecorded();
     error BroadcastGuardInvalid();
+    error PredictedDeploymentAddressDirty(address predicted);
     error DeploymentInvariantFailed();
 
     function run() external returns (Deployment memory deployed) {
         if (block.chainid != BASE_SEPOLIA_CHAIN_ID) revert WrongChain(BASE_SEPOLIA_CHAIN_ID, block.chainid);
-        if (BASE_SEPOLIA_USDC.code.length == 0) revert MissingCanonicalUSDC(BASE_SEPOLIA_USDC);
+        _requireCanonicalUSDC();
 
         Config memory config = _config();
         _requireDeploymentConfig(config);
@@ -74,6 +78,7 @@ contract DeployASCPBaseSepolia is Script {
         if (actualNonce != config.expectedDeployerNonce) {
             revert UnexpectedDeployerNonce(config.expectedDeployerNonce, actualNonce);
         }
+        _requireCleanPredictedAddresses(config.deployer, config.expectedDeployerNonce);
 
         vm.startBroadcast(config.deployer);
         deployed.serviceDirectory = new ServiceDirectory(
@@ -133,6 +138,29 @@ contract DeployASCPBaseSepolia is Script {
         if (config.broadcastGuard != REQUIRED_BROADCAST_GUARD) revert BroadcastGuardInvalid();
     }
 
+    function _requireCanonicalUSDC() internal view virtual {
+        if (BASE_SEPOLIA_USDC.code.length == 0) revert MissingCanonicalUSDC(BASE_SEPOLIA_USDC);
+        bytes32 actualCodeHash = BASE_SEPOLIA_USDC.codehash;
+        bytes32 expectedCodeHash = _expectedCanonicalUSDCCodeHash();
+        if (actualCodeHash != expectedCodeHash) {
+            revert UnexpectedCanonicalUSDCCodeHash(expectedCodeHash, actualCodeHash);
+        }
+    }
+
+    function _expectedCanonicalUSDCCodeHash() internal view virtual returns (bytes32) {
+        return BASE_SEPOLIA_USDC_RUNTIME_CODE_HASH;
+    }
+
+    function _requireCleanPredictedAddresses(address deployer, uint256 startingNonce) private view {
+        for (uint256 offset = 0; offset < 4; ++offset) {
+            address predicted = vm.computeCreateAddress(deployer, startingNonce + offset);
+            if (
+                predicted.code.length != 0 || predicted.balance != 0
+                    || IERC20(BASE_SEPOLIA_USDC).balanceOf(predicted) != 0
+            ) revert PredictedDeploymentAddressDirty(predicted);
+        }
+    }
+
     function _requireSafe(address safe) private {
         if (safe.code.length == 0) revert SafeNotContract(safe);
         address[] memory owners;
@@ -189,7 +217,16 @@ contract DeployASCPBaseSepolia is Script {
                 || deployed.spendModule.spendAuthorizer() != config.spendAuthorizer
                 || perTransaction != INITIAL_PER_TRANSACTION_CAP || perDay != INITIAL_DAILY_CAP
                 || allowanceCeiling != INITIAL_ALLOWANCE_CEILING || deployed.spendModule.emergencyPaused()
-                || deployed.callEscrow.emergencyPaused()
+                || deployed.callEscrow.emergencyPaused() || deployed.serviceDirectory.currentVersion() != 0
+                || deployed.serviceDirectory.currentRoot() != bytes32(0) || deployed.agentRegistry.agentCount() != 0
+                || deployed.callEscrow.totalLocked() != 0 || deployed.spendModule.executedPrincipal() != 0
+                || deployed.spendModule.escrowAllowlist(address(deployed.callEscrow)) != bytes32(0)
+                || address(deployed.serviceDirectory).balance != 0 || address(deployed.agentRegistry).balance != 0
+                || address(deployed.callEscrow).balance != 0 || address(deployed.spendModule).balance != 0
+                || IERC20(BASE_SEPOLIA_USDC).balanceOf(address(deployed.serviceDirectory)) != 0
+                || IERC20(BASE_SEPOLIA_USDC).balanceOf(address(deployed.agentRegistry)) != 0
+                || IERC20(BASE_SEPOLIA_USDC).balanceOf(address(deployed.callEscrow)) != 0
+                || IERC20(BASE_SEPOLIA_USDC).balanceOf(address(deployed.spendModule)) != 0
                 || ISafeDeploymentTarget(config.safe).isModuleEnabled(address(deployed.spendModule))
         ) revert DeploymentInvariantFailed();
     }

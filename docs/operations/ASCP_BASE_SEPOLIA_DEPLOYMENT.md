@@ -30,12 +30,19 @@ Before simulation, designate:
    repository if it contains operational identities.
 
 The deployer, Safe, and four operational authorities must all be distinct. The
-script rejects the wrong chain, missing canonical test USDC bytecode, a Safe
-without a valid nonempty unique owner set and threshold, or a Safe that does not
-route `execTransactionFromModule` to the standard `GS104` disabled-module guard.
+script rejects the wrong chain, missing or substituted canonical test USDC
+bytecode, a Safe without a valid nonempty unique owner set and threshold, or a
+Safe that does not route `execTransactionFromModule` to the standard `GS104`
+disabled-module guard.
 It also rejects any zero or overlapping authority, a zero organization or plan
 digest, and a missing or substituted broadcast guard. After creation it proves
-that the new spend module is not already enabled on the Safe.
+that the new spend module is not already enabled on the Safe. The reviewed
+Circle test USDC runtime code hash is pinned to
+`0xedc5281a85c0efecd49999a1ef668390c59b88702f2d4a07029d7f5d63059d6c`.
+Before the first transaction, all four nonce-derived deployment addresses must
+have no bytecode, native balance, or test USDC balance. Post-deployment checks
+repeat the zero-balance assertions and prove the directory version/root, agent
+count, locked principal, executed principal, and escrow allowlist are empty.
 
 ## Environment contract
 
