@@ -221,6 +221,24 @@ test("renders a fail-closed public control room without illustrative organizatio
   assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
 });
 
+test("renders a Base Batches reviewer brief with only verifiable product evidence", async () => {
+  const response = await render({ path: "/base" });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+
+  const html = await response.text();
+  assert.match(html, /<title>FlowOps — Base Batches 004 Reviewer Brief<\/title>/i);
+  assert.match(html, /BASE BATCHES 004/);
+  assert.match(html, /Working MVP · pilot-gated/);
+  assert.match(html, /Payments \+ AI agents/);
+  assert.match(html, /Exact-match source verified on Blockscout/);
+  assert.match(html, /Sixty-seven criteria carry executable local evidence/);
+  assert.match(html, /FLOWOPS_BASE_BATCHES_004_APPLICATION_DRAFT\.md/);
+  assert.match(html, /later unrestricted real-money launch—not to the application build/);
+  assert.doesNotMatch(html, /\/demo|interactive walkthrough|Northstar Labs|Preview data/i);
+  assert.doesNotMatch(html, /current active users|paying customers|transaction volume/i);
+});
+
 test("uses Sites auth only on hosted origins and never exposes its reserved route as a broken local link", async () => {
   const response = await render({ origin: "https://flowops.example" });
   assert.equal(response.status, 200);
