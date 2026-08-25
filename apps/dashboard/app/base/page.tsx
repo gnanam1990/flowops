@@ -47,7 +47,7 @@ export default function BaseReviewerBrief() {
       <section className="review-hero">
         <p className="review-eyebrow">AGENTIC PAYMENTS / CONTROL + EVIDENCE</p>
         <h1>Give every agent payment a reason, a rule, and a receipt.</h1>
-        <p className="review-summary">FlowOps is a Base-only control and evidence plane for autonomous agent payments. It evaluates policy, requests human approval when needed, hands a bounded authorization to a customer-managed signer, and reconciles the result against canonical Base evidence.</p>
+        <p className="review-summary">FlowOps is a Base-first control and evidence plane for autonomous agent payments. It evaluates policy, requests human approval when needed, hands a bounded authorization to a customer-managed signer, and reconciles the result against canonical Base evidence.</p>
         <div className="review-actions"><Link href="/">Review the working product <span>↗</span></Link><a href={github} rel="noreferrer" target="_blank">Inspect the public repository <span>↗</span></a></div>
       </section>
       <section className="review-facts" aria-label="Current status">

@@ -236,6 +236,11 @@ test("renders a Base Batches reviewer brief with only verifiable product evidenc
   assert.match(html, /Exact-match source verified on Blockscout/);
   assert.match(html, /Sixty-seven criteria carry executable local evidence/);
   assert.match(html, /FLOWOPS_BASE_BATCHES_004_APPLICATION_DRAFT\.md/);
+  assert.match(html, /href="\/">Review the working product/);
+  assert.match(html, /href="https:\/\/base\.blockscout\.com\/address\/0x149d03ec527ad8667d47e7b6a2d316dd54033250\?tab=contract"/);
+  assert.match(html, /href="https:\/\/github\.com\/gnanam1990\/flowops\/blob\/main\/docs\/evidence\/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15\.md"/);
+  assert.match(html, /href="https:\/\/github\.com\/gnanam1990\/flowops\/blob\/main\/docs\/acceptance\/ascp-v3\.4\.json"/);
+  assert.match(html, /href="https:\/\/github\.com\/gnanam1990\/flowops\/blob\/main\/docs\/proposals\/FLOWOPS_BASE_BATCHES_004_APPLICATION_DRAFT\.md"/);
   assert.match(html, /later unrestricted real-money launch—not to the application build/);
   assert.doesNotMatch(html, /\/demo|interactive walkthrough|Northstar Labs|Preview data/i);
   assert.doesNotMatch(html, /current active users|paying customers|transaction volume/i);
