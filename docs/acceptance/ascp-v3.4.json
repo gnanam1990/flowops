@@ -2814,6 +2814,12 @@
           "path": "internal/basemcp/firewall_test.go",
           "ref": "TestProductionFirewallDeniesEveryWalletAndOverrideCapability",
           "command": "go test -race ./internal/basemcp -run '^(TestProductionFirewallAllowsOnlyPinnedAdvisoryReads|TestProductionFirewallDeniesEveryWalletAndOverrideCapability|TestProductionFirewallRejectsEndpointArgumentAndResultSubstitution)$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/architecturedeps/isolation_test.go",
+          "ref": "TestBaseMCPPolicyCatchesPlantedWalletPath",
+          "command": "go test -race ./internal/architecturedeps -run '^(TestProductionDependencyGraphSatisfiesStructuralIsolation|TestBaseMCPPolicyCatchesPlantedWalletPath)$'"
         }
       ],
       "requiredArtifacts": [
@@ -2821,7 +2827,7 @@
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "The pinned official Base MCP read-only firewall and complete denied-capability matrix are locally executable; production adapter deployment evidence remains outstanding."
+      "gap": "The pinned official Base MCP read-only firewall, complete denied-capability matrix, production dependency graph, and planted wallet-path meta-test are locally executable; production adapter deployment evidence remains outstanding."
     },
     {
       "id": "AC-88",

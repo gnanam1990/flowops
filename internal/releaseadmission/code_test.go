@@ -1,6 +1,7 @@
 package releaseadmission
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -52,6 +53,24 @@ func TestVerifyCodeQuorumRejectsWrongChainRedirectAndPartialSet(t *testing.T) {
 	}
 	if err := VerifyCodeQuorum(t.Context(), providers[:1], manifest, wrongChain.Client()); err == nil {
 		t.Fatal("single-provider code verification accepted")
+	}
+	redirect := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, wrongChain.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirect.Close)
+	providers = []reconciliation.RPCProvider{{Name: "rpc_alpha", URL: redirect.URL}, {Name: "rpc_beta", URL: redirect.URL}}
+	if err := VerifyCodeQuorum(t.Context(), providers, manifest, redirect.Client()); err == nil {
+		t.Fatal("redirecting bytecode provider was accepted")
+	}
+}
+
+func TestHardenedClientUsesBoundedDirectTLSTransport(t *testing.T) {
+	client := hardenedClient(nil)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil || transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS12 ||
+		transport.TLSHandshakeTimeout != 5*time.Second || transport.ResponseHeaderTimeout != 8*time.Second ||
+		transport.MaxResponseHeaderBytes != 64<<10 {
+		t.Fatalf("unhardened release RPC transport: %+v", transport)
 	}
 }
 

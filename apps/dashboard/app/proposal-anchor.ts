@@ -3,10 +3,12 @@ export type ProposalAnchorDeployment = {
   network: "Base mainnet";
   address: string | null;
   explorerHref: string | null;
+  sourceVerified: boolean;
 };
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const ZERO_ADDRESS = /^0x0{40}$/i;
+const VERIFIED_PROPOSAL_ANCHOR = "0x149d03ec527ad8667d47e7b6a2d316dd54033250";
 
 export function loadProposalAnchorDeployment(
   configuredAddress = process.env.FLOWOPS_PROPOSAL_ANCHOR_ADDRESS,
@@ -18,6 +20,7 @@ export function loadProposalAnchorDeployment(
       network: "Base mainnet",
       address: null,
       explorerHref: null,
+      sourceVerified: false,
     };
   }
 
@@ -26,5 +29,6 @@ export function loadProposalAnchorDeployment(
     network: "Base mainnet",
     address,
     explorerHref: `https://base.blockscout.com/address/${address}?tab=contract`,
+    sourceVerified: address.toLowerCase() === VERIFIED_PROPOSAL_ANCHOR,
   };
 }

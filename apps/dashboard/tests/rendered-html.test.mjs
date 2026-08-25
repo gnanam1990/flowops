@@ -292,6 +292,13 @@ test("shows a configured proposal address only as experimental and never as prod
   assert.match(html, /Do not send ETH or tokens/);
   assert.doesNotMatch(html, /Production ready<\/dt><dd>Yes/);
 
+	const unverifiedAddress = "0x1111111111111111111111111111111111111111";
+	const unverified = await render({ env: { FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: unverifiedAddress } });
+	const unverifiedHtml = await unverified.text();
+	assert.match(unverifiedHtml, /View address on Base Blockscout/);
+	assert.match(unverifiedHtml, /Source verified<\/dt><dd>Unavailable/);
+	assert.doesNotMatch(unverifiedHtml, /View verified source/);
+
   const invalid = await render({
     env: { FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: "0xnot-a-mainnet-address" },
   });

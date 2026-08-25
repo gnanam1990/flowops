@@ -7,7 +7,10 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY pkg ./pkg
-RUN test "${FLOWOPS_SOURCE_COMMIT}" = unversioned || printf '%s\n' "${FLOWOPS_SOURCE_COMMIT}" | grep -Eq '^[0-9a-f]{40}$'
+RUN test "${FLOWOPS_SOURCE_COMMIT}" = unversioned || { \
+	test "${#FLOWOPS_SOURCE_COMMIT}" -eq 40 && \
+	case "${FLOWOPS_SOURCE_COMMIT}" in *[!0-9a-f]*) false ;; *) true ;; esac; \
+}
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X=main.buildSourceCommit=${FLOWOPS_SOURCE_COMMIT}" -o /out/control-plane-api ./cmd/control-plane-api && \
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/flowops-admin ./cmd/flowops-admin && \
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/flowops-operator ./cmd/flowops-operator && \

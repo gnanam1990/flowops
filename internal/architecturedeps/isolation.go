@@ -77,6 +77,7 @@ func ProductionPolicy() Policy {
 	return Policy{
 		Isolation: []IsolationRule{
 			{Name: "MCP agent boundary cannot reach owner or execution authority", Roots: []string{ModulePath + "/internal/mcp"}, Forbidden: agentForbidden},
+			{Name: "Base MCP adapter cannot reach owner or execution authority", Roots: []string{ModulePath + "/internal/basemcp"}, Forbidden: agentForbidden},
 			{Name: "agent application cannot reach owner or execution authority", Roots: []string{ModulePath + "/internal/ascpagent"}, Forbidden: agentForbidden},
 			{Name: "verifier cannot reach intent, spend signer, seller egress, or relay", Roots: []string{ModulePath + "/cmd/ascp-verifier"}, Forbidden: verifierForbidden},
 			{Name: "control plane cannot import a chain relay", Roots: []string{ModulePath + "/cmd/control-plane-api"}, Forbidden: relayForbidden},

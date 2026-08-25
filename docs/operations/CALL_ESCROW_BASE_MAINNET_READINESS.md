@@ -35,9 +35,10 @@ disabled.
 The aggregate decision is produced by
 `deploy/call-escrow/audit-base-mainnet-readiness.sh`. It authenticates this
 record together with the promotion, source-rehearsal, and security-review
-records, verifies their cross-bindings, and distinguishes completed code from
-missing production evidence. `make mainnet-final-audit` currently returns a
-secret-free JSON `BLOCKED` report with eleven promotion blockers. The only
+records, verifies their cross-bindings, and distinguishes twelve completed
+implementation capabilities from missing production evidence. `make
+mainnet-final-audit` currently returns a secret-free JSON `BLOCKED` report with
+seventeen promotion blockers. The only
 hardware broadcast wrapper invokes the same audit with `--require-ready` and
 must refuse before simulation or a hardware prompt.
 

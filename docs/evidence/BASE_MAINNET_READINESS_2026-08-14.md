@@ -112,8 +112,8 @@ occurred.
 
 `make test-mainnet-final-audit` passed. The aggregate read-only audit validates
 the readiness, promotion, source-rehearsal, and review-package records and
-their cross-bindings, then reports eight completed implementation capabilities
-separately from eleven unresolved promotion gates. Its current decision is
+their cross-bindings, then reports twelve completed implementation capabilities
+separately from seventeen unresolved promotion gates. Its current decision is
 `BLOCKED`; deployment and funding are both unauthorized. The hardware wrapper
 clears every test record override and requires this joined audit to become
 ready before simulation or a hardware prompt.

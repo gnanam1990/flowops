@@ -3,6 +3,7 @@ package releaseadmission
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,7 +138,14 @@ func callRPC(ctx context.Context, client *http.Client, endpoint string, id int, 
 
 func hardenedClient(base *http.Client) *http.Client {
 	if base == nil {
-		base = &http.Client{Timeout: 10 * time.Second}
+		base = &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+				TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 8 * time.Second,
+				MaxResponseHeaderBytes: 64 << 10,
+			},
+		}
 	}
 	copy := *base
 	copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return errors.New("RPC redirects are disabled") }

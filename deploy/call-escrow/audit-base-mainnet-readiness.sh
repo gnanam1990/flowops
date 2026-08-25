@@ -94,7 +94,13 @@ jq -e \
   )] | length == 0)
   and $a.deployer == "0x0000000000000000000000000000000000000000"
   and ($a.safe == {address: "0x0000000000000000000000000000000000000000", owners: [], threshold: 0})
-  and ([$a.authorities[] | select(. != "0x0000000000000000000000000000000000000000")] | length == 0)
+  and ($a.authorities == {
+    governor: "0x0000000000000000000000000000000000000000",
+    directoryPublisher: "0x0000000000000000000000000000000000000000",
+    directoryPauser: "0x0000000000000000000000000000000000000000",
+    registryAdmin: "0x0000000000000000000000000000000000000000",
+    spendAuthorizer: "0x0000000000000000000000000000000000000000"
+  })
   and ($a.pilot == {maxPerActionAtomic: "1000000", maxOutstandingAtomic: "10000000", fundingEnabled: false})
   and ($a.observer == {
     quorum: 2,

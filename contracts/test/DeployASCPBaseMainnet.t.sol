@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {DeployASCPBaseMainnet} from "../script/DeployASCPBaseMainnet.s.sol";
+import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 contract ProductionSafeFixture {}
 
@@ -214,8 +215,10 @@ contract DeployASCPBaseMainnetTest is Test {
     function test_promotedHarnessDeploysCompleteButWriteInertASCPGraph() public {
         ProductionSafeFixture safe = new ProductionSafeFixture();
         ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(safe));
+        MockUSDC usdcFixture = new MockUSDC();
         vm.chainId(8453);
-        vm.etch(ready.BASE_MAINNET_USDC(), hex"00");
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        assertEq(MockUSDC(ready.BASE_MAINNET_USDC()).decimals(), 6);
 
         DeployASCPBaseMainnet.Deployment memory deployed = ready.run();
 
