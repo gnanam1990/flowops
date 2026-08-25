@@ -109,7 +109,10 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
 	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("r", ed25519.SeedSize)))
 	setObserverRuntime(t)
-	setMainnetReleaseRuntime(t)
+	manifest := setMainnetReleaseRuntime(t)
+	previousBuildSource := buildSourceCommit
+	buildSourceCommit = manifest.SourceCommit
+	t.Cleanup(func() { buildSourceCommit = previousBuildSource })
 	t.Setenv("FLOWOPS_DATABASE_URL", strings.Join([]string{"postgres", "://flowops@localhost/flowops?sslmode=require"}, ""))
 	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
 	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
@@ -135,6 +138,12 @@ func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
 	if len(cfg.metricsKey) != 32 {
 		t.Fatal("mainnet metrics key was not loaded")
 	}
+
+	buildSourceCommit = strings.Repeat("b", 40)
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "build source") {
+		t.Fatalf("mismatched control-plane build source error=%v", err)
+	}
+	buildSourceCommit = manifest.SourceCommit
 
 	t.Setenv("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", observerAddress(99))
 	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "signed Base mainnet release") {

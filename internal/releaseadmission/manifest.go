@@ -291,6 +291,17 @@ func BindRuntime(manifest Manifest, bindings RuntimeBindings) error {
 	return nil
 }
 
+// BindSourceCommit prevents a reviewed release manifest from being reused by
+// a control-plane binary built from different source. The value must be baked
+// into the binary by the trusted build pipeline rather than supplied through
+// mutable runtime configuration.
+func BindSourceCommit(manifest Manifest, buildSourceCommit string) error {
+	if !commitPattern.MatchString(buildSourceCommit) || buildSourceCommit != manifest.SourceCommit {
+		return errors.New("control-plane build source does not match the signed Base mainnet release manifest")
+	}
+	return nil
+}
+
 func BindObserver(manifest Manifest, bindings ObserverRuntimeBindings) error {
 	contracts := make(map[string]string, len(manifest.Contracts))
 	for _, contract := range manifest.Contracts {

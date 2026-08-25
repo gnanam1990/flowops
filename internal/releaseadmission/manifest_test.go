@@ -27,8 +27,20 @@ func TestSignedBaseMainnetReleaseManifestBindsCompleteRuntime(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := BindSourceCommit(manifest, strings.Repeat("a", 40)); err != nil {
+		t.Fatal(err)
+	}
 	if key, err := DecodePublicKey(base64.StdEncoding.EncodeToString(publicKey)); err != nil || string(key) != string(publicKey) {
 		t.Fatalf("decoded key=%x err=%v", key, err)
+	}
+}
+
+func TestReleaseManifestRejectsMissingOrDifferentBuildSource(t *testing.T) {
+	manifest := validManifest(time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC))
+	for _, source := range []string{"", "unversioned", strings.Repeat("b", 40), strings.Repeat("A", 40)} {
+		if err := BindSourceCommit(manifest, source); err == nil {
+			t.Fatalf("build source %q was accepted", source)
+		}
 	}
 }
 

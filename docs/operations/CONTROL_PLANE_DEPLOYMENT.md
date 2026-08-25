@@ -32,6 +32,14 @@ allows graceful draining, and restarts only failed processes. The runtime
 entrypoint prepares the mounted journal directory and drops to UID/GID 10001
 before the API starts.
 
+For a Base mainnet image, the trusted build must pass
+`--build-arg FLOWOPS_SOURCE_COMMIT=<reviewed 40-character Git commit>`. The
+Dockerfile bakes that value into `control-plane-api`; mainnet startup rejects an
+unversioned build or any commit that differs from the signed release manifest.
+This is build provenance and must not be replaced with a mutable runtime
+environment variable. Sepolia builds may retain the fail-closed `unversioned`
+default.
+
 ## Runtime variables
 
 The API service requires:

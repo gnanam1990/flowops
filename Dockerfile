@@ -1,12 +1,14 @@
 FROM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
 
 WORKDIR /src
+ARG FLOWOPS_SOURCE_COMMIT=unversioned
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY pkg ./pkg
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/control-plane-api ./cmd/control-plane-api && \
+RUN test "${FLOWOPS_SOURCE_COMMIT}" = unversioned || printf '%s\n' "${FLOWOPS_SOURCE_COMMIT}" | grep -Eq '^[0-9a-f]{40}$'
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X=main.buildSourceCommit=${FLOWOPS_SOURCE_COMMIT}" -o /out/control-plane-api ./cmd/control-plane-api && \
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/flowops-admin ./cmd/flowops-admin && \
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/flowops-operator ./cmd/flowops-operator && \
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ascp-leadership ./cmd/ascp-leadership && \
