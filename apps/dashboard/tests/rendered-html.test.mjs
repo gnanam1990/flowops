@@ -228,6 +228,8 @@ test("renders a Base Batches reviewer brief with only verifiable product evidenc
 
   const html = await response.text();
   assert.match(html, /<title>FlowOps — Base Batches 004 Reviewer Brief<\/title>/i);
+  assert.match(html, /<meta property="og:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i);
+  assert.match(html, /<meta name="twitter:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i);
   assert.match(html, /BASE BATCHES 004/);
   assert.match(html, /Working MVP · pilot-gated/);
   assert.match(html, /Payments \+ AI agents/);

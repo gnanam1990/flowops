@@ -5,8 +5,17 @@ import "./reviewer.css";
 export const metadata: Metadata = {
   title: "FlowOps — Base Batches 004 Reviewer Brief",
   description: "The application and evidence brief for FlowOps, a Base-native control plane for autonomous-agent payments.",
-  openGraph: { title: "FlowOps — Base Batches 004", description: "A working, Base-first control and evidence plane for autonomous-agent payments.", images: [] },
-  twitter: { title: "FlowOps — Base Batches 004", description: "A working, Base-first control and evidence plane for autonomous-agent payments.", images: [] },
+  openGraph: {
+    title: "FlowOps — Base Batches 004",
+    description: "A working, Base-first control and evidence plane for autonomous-agent payments.",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "FlowOps economic control for autonomous-agent payments on Base" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "FlowOps — Base Batches 004",
+    description: "A working, Base-first control and evidence plane for autonomous-agent payments.",
+    images: ["/og.png"],
+  },
 };
 
 const github = "https://github.com/gnanam1990/flowops";
