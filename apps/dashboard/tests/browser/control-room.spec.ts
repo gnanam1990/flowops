@@ -30,3 +30,28 @@ test("renders truthful public state and an exact approval confirmation", async (
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
 });
+
+test("keeps the operational hierarchy intact at the tablet breakpoint", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 900 });
+  await page.goto("/");
+
+  const geometry = await page.evaluate(() => {
+    const hero = document.querySelector<HTMLElement>(".command-header");
+    const actions = document.querySelector<HTMLElement>(".command-actions");
+    const primaryValue = document.querySelector<HTMLElement>(".primary-balance > strong");
+    const compactValue = document.querySelector<HTMLElement>(".balance-card.compact > strong");
+    if (!hero || !actions || !primaryValue || !compactValue) throw new Error("control-room hierarchy is incomplete");
+    const heroBox = hero.getBoundingClientRect();
+    const actionBox = actions.getBoundingClientRect();
+    return {
+      actionFits: actionBox.left >= heroBox.left && actionBox.right <= heroBox.right + 1,
+      primarySize: Number.parseFloat(getComputedStyle(primaryValue).fontSize),
+      compactSize: Number.parseFloat(getComputedStyle(compactValue).fontSize),
+    };
+  });
+
+  expect(geometry.actionFits).toBe(true);
+  expect(geometry.primarySize).toBeGreaterThan(geometry.compactSize);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+});

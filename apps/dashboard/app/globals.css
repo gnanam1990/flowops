@@ -226,7 +226,7 @@ body { background: var(--canvas); }
 }
 .balance-card { padding: 18px; border-radius: 16px; box-shadow: none; }
 .primary-balance { grid-column: auto; grid-row: auto; min-height: 164px; justify-content: flex-end; }
-.primary-balance > strong { font-size: clamp(34px,4vw,50px); }
+.balance-card.primary-balance > strong { font-size: clamp(34px,4vw,50px); }
 .balance-signal { display: none; }
 .balance-card.compact { display: flex; flex-direction: column; justify-content: flex-end; border-top-width: 1px; }
 .balance-card.compact::before { content: ""; width: 24px; height: 3px; margin-bottom: auto; border-radius: 999px; background: var(--base-blue); }
@@ -248,7 +248,7 @@ body { background: var(--canvas); }
 
 @media (max-width: 920px) {
   .workspace { margin-left: 0; }
-  .command-header { grid-template-columns: minmax(0,1fr) 230px; }
+  .command-header { grid-template-columns: minmax(0,1fr) 240px; }
   .command-index { display: none; }
 }
 
