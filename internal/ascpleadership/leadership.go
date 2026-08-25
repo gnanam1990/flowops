@@ -184,6 +184,12 @@ func (p *Postgres) FenceSink(ctx context.Context, organizationID string, expecte
 	}
 	if record.State != Active || record.Epoch != expected {
 		if sink != SinkLegacy {
+			// The observed leadership transition is authoritative even if the
+			// process wall clock is equal to or behind the persisted cutover time.
+			// Completion evidence counts only post-cutover rejections.
+			if record.UpdatedAt.After(startedAt) {
+				startedAt = record.UpdatedAt
+			}
 			if _, insertErr := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s
 				(rejection_id,organization_id,sink,presented_epoch,observed_epoch,observed_state,rejected_at)
 				VALUES ($1,$2,$3,$4,$5,$6,$7)`, p.rejectionView(sink)), effectID, organizationID, sink,
@@ -454,7 +460,7 @@ func (p *Postgres) CompletePromotion(ctx context.Context, organizationID string,
 		return PromotionRun{}, ErrStateConflict
 	}
 	result, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s
-		SET state='COMPLETE',completion_evidence_digest=$3,completed_at=$4
+		SET state='COMPLETE',completion_evidence_digest=$3,completed_at=GREATEST($4,cutover_at)
 		WHERE organization_id=$1 AND source_epoch=$2 AND state='CUTOVER'`, p.promotionsTable), organizationID, sourceEpoch, evidence, now)
 	if err != nil || rowsAffected(result) != 1 {
 		return PromotionRun{}, errors.Join(ErrStateConflict, err)
