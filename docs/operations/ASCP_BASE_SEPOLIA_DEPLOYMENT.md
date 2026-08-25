@@ -40,9 +40,10 @@ that the new spend module is not already enabled on the Safe. The reviewed
 Circle test USDC runtime code hash is pinned to
 `0xedc5281a85c0efecd49999a1ef668390c59b88702f2d4a07029d7f5d63059d6c`.
 Before the first transaction, all four nonce-derived deployment addresses must
-have no bytecode, native balance, or test USDC balance. Post-deployment checks
-repeat the zero-balance assertions and prove the directory version/root, agent
-count, locked principal, executed principal, and escrow allowlist are empty.
+have no bytecode, account nonce, native balance, or test USDC balance.
+Post-deployment checks repeat the zero-balance assertions and prove the
+directory version/root, agent count, locked principal, executed principal, and
+escrow allowlist are empty.
 
 ## Environment contract
 
@@ -78,6 +79,11 @@ approval at action time.
    ```sh
    make smoke-ascp-sepolia-deployment
    ```
+
+   This first confirms that the pinned test-USDC runtime code hash still agrees
+   with both the Base public RPC and an independent PublicNode RPC, then runs
+   the deterministic deployment suite. An unavailable or disagreeing provider
+   fails the gate closed.
 
 2. Simulate against two Base Sepolia RPC providers without `--broadcast`.
    Compare predicted addresses, constructor bindings, runtime code hashes, and

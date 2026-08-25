@@ -274,14 +274,18 @@ contract DeployASCPBaseSepoliaTest is Test {
         vm.chainId(84532);
         vm.etch(ready.BASE_SEPOLIA_USDC(), address(usdcFixture).code);
         selectedOffset = uint8(bound(selectedOffset, 0, 3));
-        dirtyState = uint8(bound(dirtyState, 0, 2));
+        dirtyState = uint8(bound(dirtyState, 0, 3));
         address predicted = vm.computeCreateAddress(address(0xBEEF), selectedOffset);
         if (dirtyState == 0) {
             vm.deal(predicted, 1);
         } else if (dirtyState == 1) {
             MockUSDC(ready.BASE_SEPOLIA_USDC()).mint(predicted, 1);
         } else {
-            vm.etch(predicted, hex"00");
+            if (dirtyState == 2) {
+                vm.etch(predicted, hex"00");
+            } else {
+                vm.setNonce(predicted, 1);
+            }
         }
 
         vm.expectRevert(

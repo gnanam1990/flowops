@@ -155,7 +155,7 @@ contract DeployASCPBaseSepolia is Script {
         for (uint256 offset = 0; offset < 4; ++offset) {
             address predicted = vm.computeCreateAddress(deployer, startingNonce + offset);
             if (
-                predicted.code.length != 0 || predicted.balance != 0
+                predicted.code.length != 0 || vm.getNonce(predicted) != 0 || predicted.balance != 0
                     || IERC20(BASE_SEPOLIA_USDC).balanceOf(predicted) != 0
             ) revert PredictedDeploymentAddressDirty(predicted);
         }

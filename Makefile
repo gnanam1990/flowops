@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check acceptance-manifest-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-ascp-sepolia-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
+.PHONY: test check fmt-check solidity-fmt-check acceptance-manifest-check deployment-evidence-check test-deployment-evidence funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor verify-ascp-sepolia-asset dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-ascp-sepolia-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -50,6 +50,9 @@ test-mainnet-deployer-verification:
 test-security-review-package:
 	security/call-escrow/test-review-package.sh
 
+verify-ascp-sepolia-asset:
+	deploy/ascp/verify-base-sepolia-asset.sh
+
 dashboard-deps:
 	npm ci --prefix apps/dashboard
 
@@ -58,7 +61,7 @@ dashboard-check: dashboard-deps
 	npm run lint --prefix apps/dashboard
 	npm test --prefix apps/dashboard
 
-check: fmt-check solidity-fmt-check acceptance-manifest-check test-deployment-evidence test-mainnet-readiness test-proposal-anchor test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit smoke-rpc-admission smoke-postgres-readiness dashboard-check
+check: fmt-check solidity-fmt-check acceptance-manifest-check test-deployment-evidence test-mainnet-readiness test-proposal-anchor test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit verify-ascp-sepolia-asset smoke-rpc-admission smoke-postgres-readiness dashboard-check
 	go vet $(GO_PACKAGES)
 	go test -race $(GO_PACKAGES)
 	forge build --sizes
@@ -115,7 +118,7 @@ smoke-escrow:
 smoke-escrow-deployment:
 	forge test --match-path contracts/test/DeployCallEscrowBaseSepolia.t.sol -vv
 
-smoke-ascp-sepolia-deployment:
+smoke-ascp-sepolia-deployment: verify-ascp-sepolia-asset
 	forge test --match-path contracts/test/DeployASCPBaseSepolia.t.sol -vv
 
 smoke-escrow-mainnet-readiness:

@@ -62,6 +62,8 @@ jobs:
         run: forge build --sizes
       - name: Test Solidity contracts
         run: forge test
+      - name: Verify canonical Base Sepolia asset through two RPC providers
+        run: make verify-ascp-sepolia-asset
       - name: Install typed-data SDK development dependencies
         run: npm ci --prefix sdk/typescript
       - name: Typecheck and test ASCP typed-data SDK
