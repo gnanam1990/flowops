@@ -3,7 +3,6 @@ export type ProposalAnchorDeployment = {
   network: "Base mainnet";
   address: string | null;
   explorerHref: string | null;
-  sourceVerified: boolean;
 };
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -19,7 +18,6 @@ export function loadProposalAnchorDeployment(
       network: "Base mainnet",
       address: null,
       explorerHref: null,
-      sourceVerified: false,
     };
   }
 
@@ -28,6 +26,5 @@ export function loadProposalAnchorDeployment(
     network: "Base mainnet",
     address,
     explorerHref: `https://base.blockscout.com/address/${address}?tab=contract`,
-    sourceVerified: false,
   };
 }

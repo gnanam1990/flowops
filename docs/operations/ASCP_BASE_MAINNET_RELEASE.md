@@ -36,10 +36,11 @@ Status: structurally implemented and deliberately blocked; no deployment or fund
      go run ./cmd/release-manifest verify /secure/signed-release.json
    ```
 
-11. Deploy the exact registry image digest used in step 8. The build may include
+11. Deploy the exact registry image digest used in step 8. The mainnet build must include
     `--build-arg FLOWOPS_SOURCE_COMMIT=<the exact 40-character reviewed commit>`
-    as a secondary source claim, but that caller-controlled value is not artifact
-    provenance and cannot replace the signed executable digest.
+    because startup requires the baked claim to equal signed `sourceCommit`. That
+    caller-controlled value is not sufficient artifact provenance and cannot
+    replace the signed executable digest.
 12. Configure the runtime with the exact manifest and matching ASCP and observer tuples. Base mainnet startup hashes the running executable inode and requires it to equal signed `controlPlaneArtifactSha256`; it also requires the baked build commit to equal signed `sourceCommit`, rejects any quorum, confirmation, reorg, freshness, timeout, interval, or recovery setting that differs from the signed profile, then checks every contract and canonical USDC through the complete paid-RPC set before opening PostgreSQL or serving traffic.
 13. Run a zero-fund soak. Funding requires a second signed manifest carrying the separately reviewed funded-pilot evidence digest and another explicit human approval.
 

@@ -13,7 +13,7 @@ const github = "https://github.com/gnanam1990/flowops";
 const blockscout = "https://base.blockscout.com";
 const proofLinks = [
 	{ label: "Live control room", detail: "Authenticated members see only PostgreSQL-backed policy, approval, payment, ledger, and Base evidence records for their organization.", href: "/", local: true },
-  { label: "Base mainnet proposal anchor", detail: "Verified, evidence-only contract. Permanently experimental and unable to accept funds or create payment vaults.", href: blockscout + "/address/0x149d03ec527ad8667d47e7b6a2d316dd54033250?tab=contract" },
+  { label: "Base mainnet proposal anchor", detail: "Recorded evidence-only address. Permanently experimental and unable to accept funds or create payment vaults.", href: blockscout + "/address/0x149d03ec527ad8667d47e7b6a2d316dd54033250?tab=contract" },
   { label: "Base Sepolia escrow proof", detail: "Reference signer, capped test-USDC escrow funding, onchain acknowledgement, and terminal refund evidence.", href: github + "/blob/main/docs/evidence/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15.md" },
 ];
 const docs = [
@@ -41,7 +41,7 @@ export default function BaseReviewerBrief() {
       </section>
       <section className="review-facts" aria-label="Current status">
         <article><span>PRODUCT</span><strong>Pre-alpha · controlled-pilot design</strong><p>No production payment launch or usage claims.</p></article>
-        <article><span>MAINNET</span><strong>Evidence-only proposal anchor</strong><p>Verified on Base; permanently no-funds.</p></article>
+        <article><span>MAINNET</span><strong>Evidence-only proposal anchor</strong><p>Explorer address recorded; permanently no-funds.</p></article>
         <article><span>TESTNET</span><strong>Escrow lifecycle demonstrated</strong><p>Base Sepolia, capped test USDC, terminal refund proof.</p></article>
       </section>
       <section className="review-section">

@@ -1,8 +1,8 @@
 FROM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
 
 WORKDIR /src
-# Secondary source claim only. Base mainnet admission separately hashes the
-# running executable and compares it with the offline-signed artifact digest.
+# Required source claim for Base mainnet. Admission also hashes the running
+# executable and compares it with the offline-signed artifact digest.
 ARG FLOWOPS_SOURCE_COMMIT=unversioned
 COPY go.mod go.sum ./
 RUN go mod download

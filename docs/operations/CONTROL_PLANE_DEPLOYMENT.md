@@ -39,8 +39,10 @@ commit, pushes the image, and pins its registry digest. Extract
 records the result as signed `controlPlaneArtifactSha256`. At startup the process
 hashes its own executable inode and fails closed unless it equals that signed
 digest. `--build-arg FLOWOPS_SOURCE_COMMIT=<reviewed 40-character Git commit>`
-remains a secondary source claim only and is not treated as provenance. Sepolia
-builds may retain the fail-closed `unversioned` default.
+is also required for every Base mainnet build: startup separately fails closed
+unless this baked claim equals the signed manifest `sourceCommit`. The claim is
+not sufficient artifact provenance without the signed executable digest.
+Sepolia builds may retain the fail-closed `unversioned` default.
 
 ## Runtime variables
 
