@@ -43,6 +43,15 @@ func TestVerifyCodeQuorumRequiresEveryProviderToMatchEveryBinding(t *testing.T) 
 
 func TestVerifyCodeQuorumRejectsWrongChainRedirectAndPartialSet(t *testing.T) {
 	manifest := validManifest(time.Now().UTC())
+	codes := make(map[string]string)
+	for index := range manifest.Contracts {
+		code := fmt.Sprintf("0x61%04x", index+1)
+		manifest.Contracts[index].RuntimeCodeHash = crypto.Keccak256Hash(mustCode(t, code)).Hex()
+		codes[manifest.Contracts[index].Address] = code
+	}
+	assetCode := "0x611000"
+	manifest.Asset.RuntimeCodeHash = crypto.Keccak256Hash(mustCode(t, assetCode)).Hex()
+	codes[manifest.Asset.Address] = assetCode
 	wrongChain := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": "0x14a34"})
 	}))
@@ -54,8 +63,13 @@ func TestVerifyCodeQuorumRejectsWrongChainRedirectAndPartialSet(t *testing.T) {
 	if err := VerifyCodeQuorum(t.Context(), providers[:1], manifest, wrongChain.Client()); err == nil {
 		t.Fatal("single-provider code verification accepted")
 	}
+	validTarget := releaseRPCServer(t, codes, "")
+	providers = []reconciliation.RPCProvider{{Name: "rpc_alpha", URL: validTarget.URL}, {Name: "rpc_beta", URL: validTarget.URL}}
+	if err := VerifyCodeQuorum(t.Context(), providers, manifest, validTarget.Client()); err != nil {
+		t.Fatalf("valid redirect target failed admission: %v", err)
+	}
 	redirect := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		http.Redirect(writer, request, wrongChain.URL, http.StatusTemporaryRedirect)
+		http.Redirect(writer, request, validTarget.URL, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(redirect.Close)
 	providers = []reconciliation.RPCProvider{{Name: "rpc_alpha", URL: redirect.URL}, {Name: "rpc_beta", URL: redirect.URL}}
