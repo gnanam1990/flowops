@@ -105,6 +105,9 @@ pause; its `200` response is not deployment readiness. `GET /metrics` requires
 the dedicated metrics bearer key and exports only bounded route/status-class
 HTTP metrics plus chain-state and authorization-pause gauges. Route the metrics
 path only to the private monitoring plane, never through the public edge.
+The exact `/livez`, `/readyz`, and `/health` probe paths are the only routes that
+may arrive from the platform health checker without `X-Forwarded-Proto`; every
+other path remains HTTPS-header gated, including trailing-slash lookalikes.
 
 The outstanding ceiling is scoped to one organization/customer pair in the
 control plane and one customer-owned signer journal. It is not a global
