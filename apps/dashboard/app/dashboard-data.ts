@@ -11,6 +11,7 @@ export type DashboardSnapshot = {
     authorizationsPaused: boolean;
   };
   chain: {
+	chainId: number;
     network: string;
     state: "HEALTHY" | "SUSPECTED_STALL" | "HALTED" | "RECOVERING";
     observers: string;
@@ -54,15 +55,22 @@ export type Approval = {
   agentMark: string;
   title: string;
   vendor: string;
+	recipientAddress: string;
   amount: string;
+	amountAtomic: string;
   requested: string;
   expires: string;
   reason: string;
   risk: "low" | "medium" | "high";
   rail: "Direct x402" | "Direct payment" | "Escrowed call";
   asset?: string;
+	assetAddress: string;
+	assetSymbol?: string;
+	assetDecimals?: number;
+	chainId: number;
+	network: string;
   policyVersion?: string;
-  requestDigest?: string;
+  requestDigest: string;
   evidenceRefs?: string;
 };
 

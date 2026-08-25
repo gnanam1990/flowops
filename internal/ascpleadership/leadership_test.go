@@ -202,7 +202,7 @@ func TestPostgresLeadershipDatabaseRejectsSkippedEpochDeleteAndEventMutation(t *
 		WHERE organization_id='org-test' RETURNING updated_at`, schema), leadershipHash("6")).Scan(&shadowedAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := shadowTx.ExecContext(t.Context(), `INSERT INTO ascp_leadership_events
+	if _, err := shadowTx.ExecContext(t.Context(), `INSERT INTO pg_temp.ascp_leadership_events
 		(organization_id,previous_epoch,new_epoch,previous_state,new_state,evidence_digest,actor,created_at)
 		VALUES ('org-test',1,1,'ACTIVE','DRAINING',$1,'owner-safe',$2)`, leadershipHash("6"), shadowedAt); err != nil {
 		t.Fatal(err)
@@ -304,8 +304,8 @@ func TestPostgresLeadershipDatabaseRejectsDirectAdvanceWhileEffectIsInFlight(t *
 	if err := <-fenceDone; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Advance(t.Context(), "org-test", 1, "owner-safe", leadershipHash("4")); err != nil {
-		t.Fatal(err)
+	if _, err := store.Advance(t.Context(), "org-test", 1, "owner-safe", leadershipHash("4")); err == nil {
+		t.Fatal("database advanced leadership without a ready promotion")
 	}
 }
 
@@ -376,8 +376,8 @@ func TestPostgresLeadershipConnectionLossLeavesDurableFenceUntilExplicitAbandonm
 	if effectIDs, err := controller.InFlightEffectIDs(t.Context(), "org-test", 1); err != nil || len(effectIDs) != 0 {
 		t.Fatalf("resolved recovery queue=%v err=%v", effectIDs, err)
 	}
-	if _, err := controller.Advance(t.Context(), "org-test", 1, "owner-safe", leadershipHash("4")); err != nil {
-		t.Fatal(err)
+	if _, err := controller.Advance(t.Context(), "org-test", 1, "owner-safe", leadershipHash("4")); err == nil {
+		t.Fatal("database advanced leadership without a ready promotion")
 	}
 }
 

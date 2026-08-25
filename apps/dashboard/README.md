@@ -59,8 +59,9 @@ starter copy or fabricated preview success states.
   receipt, runtime, immutable evidence, and explorer source are verified. When
   absent or malformed, the public UI says no proposal anchor is deployed. When
   valid, it remains permanently labelled experimental, unaudited, no funds,
-  no vault creation, and not production. The current verified evidence-only
-  address is `0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250`.
+  no vault creation, and not production. A configured address never implies
+  source verification; that status remains unavailable until the dashboard
+  loads separately authenticated deployment evidence.
 - Runtime dependencies must pass the high-severity audit gate. The vinext build
   tool currently brings a development-only `image-size` advisory; FlowOps does
   not accept untrusted image input and production dependencies audit clean.

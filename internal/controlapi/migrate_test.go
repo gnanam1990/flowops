@@ -46,8 +46,11 @@ func TestPublishedMigrationsRemainForwardOnly(t *testing.T) {
 	if checksums["0029_ascp_governance_action_lifecycle.sql"] != published0029 {
 		t.Fatalf("0029 checksum changed after publication: %s", checksums["0029_ascp_governance_action_lifecycle.sql"])
 	}
-	const published0030 = "a4b19cec81136dd6b4a0d58f956bb73984cc87337746ded98e763ccfdd5b0368"
+	const published0030 = "be01f2c16762392b2cc27d85c75efd1bf8cbb8ec5a34db3d692782943c72e117"
 	if checksums["0030_ascp_governance_safe_relayer.sql"] != published0030 {
 		t.Fatalf("0030 checksum changed after publication: %s", checksums["0030_ascp_governance_safe_relayer.sql"])
+	}
+	if repairableMigrationChecksums["0030_ascp_governance_safe_relayer.sql"] != "a4b19cec81136dd6b4a0d58f956bb73984cc87337746ded98e763ccfdd5b0368" {
+		t.Fatal("0030 published repair checksum is not pinned")
 	}
 }

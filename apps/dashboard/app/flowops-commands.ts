@@ -6,8 +6,8 @@ const REQUEST_TIMEOUT_MS = 6_000;
 const IDENTIFIER = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 
 export type DashboardCommandInput =
-  | { type: "approval"; requestId: string; action: "APPROVE" | "REJECT"; note: string; operationId: string; stepUpToken: string }
-	| { type: "ascp-approval"; approvalId: string; action: "APPROVE" | "REJECT"; operationId: string; stepUpToken: string }
+  | { type: "approval"; requestId: string; requestDigest: string; action: "APPROVE" | "REJECT"; note: string; operationId: string; stepUpToken: string }
+	| { type: "ascp-approval"; approvalId: string; reviewDigest: string; action: "APPROVE" | "REJECT"; operationId: string; stepUpToken: string }
   | { type: "organization-pause"; reason: string; operationId: string; stepUpToken: string };
 
 type PrincipalClaims = {
@@ -65,8 +65,11 @@ export async function submitDashboardCommand(
     if (!approval || !/^0x[0-9a-f]{64}$/.test(approval.requestDigest)) {
       throw new DashboardCommandError(409, "APPROVAL_NOT_PENDING", "This exact approval is no longer pending. Refresh before deciding.");
     }
+	if (approval.requestDigest !== input.requestDigest) {
+	  throw new DashboardCommandError(409, "APPROVAL_CHANGED", "The approval changed after it was displayed. Refresh and review the exact intent again.");
+	}
     path = `/v1/approvals/${encodeURIComponent(input.requestId)}/decision`;
-    body = { requestDigest: approval.requestDigest, action: input.action, note: input.note };
+	body = { requestDigest: input.requestDigest, action: input.action, note: input.note };
 	} else if (input.type === "ascp-approval") {
 		const snapshot = await upstreamJSON<{ organizationId: string; ascp: { pendingApprovals: unknown[] } }>(
 			request,
@@ -84,8 +87,11 @@ export async function submitDashboardCommand(
 		if (!approval || !/^0x[0-9a-f]{64}$/.test(approval.reviewDigest)) {
 			throw new DashboardCommandError(409, "APPROVAL_NOT_PENDING", "This exact ASCP approval is no longer pending. Refresh before deciding.");
 		}
+		if (approval.reviewDigest !== input.reviewDigest) {
+			throw new DashboardCommandError(409, "APPROVAL_CHANGED", "The ASCP approval changed after it was displayed. Refresh and review the exact intent again.");
+		}
 		path = `/v1/ascp/approvals/${encodeURIComponent(input.approvalId)}/decision`;
-		body = { reviewSnapshotHash: approval.reviewDigest, action: input.action };
+		body = { reviewSnapshotHash: input.reviewDigest, action: input.action };
   } else {
     path = "/v1/organization/pause";
     body = { reason: input.reason };
@@ -123,14 +129,14 @@ function validateCommandInput(input: DashboardCommandInput): void {
     throw new DashboardCommandError(400, "INVALID_COMMAND", "The command request is invalid.");
   }
   if (input.type === "approval") {
-    if (!exactKeys(input, ["action", "note", "operationId", "requestId", "stepUpToken", "type"])) throw new DashboardCommandError(400, "INVALID_COMMAND", "The approval request contains unsupported fields.");
-    if (!IDENTIFIER.test(input.requestId) || (input.action !== "APPROVE" && input.action !== "REJECT") || typeof input.note !== "string" || input.note.length > 2_048) {
+    if (!exactKeys(input, ["action", "note", "operationId", "requestDigest", "requestId", "stepUpToken", "type"])) throw new DashboardCommandError(400, "INVALID_COMMAND", "The approval request contains unsupported fields.");
+    if (!IDENTIFIER.test(input.requestId) || !/^0x[0-9a-f]{64}$/.test(input.requestDigest) || (input.action !== "APPROVE" && input.action !== "REJECT") || typeof input.note !== "string" || input.note.length > 2_048) {
       throw new DashboardCommandError(400, "INVALID_COMMAND", "The approval decision is invalid.");
     }
     return;
   }
 	if (input.type === "ascp-approval") {
-		if (!exactKeys(input, ["action", "approvalId", "operationId", "stepUpToken", "type"]) || !/^0x[0-9a-f]{64}$/.test(input.approvalId) ||
+		if (!exactKeys(input, ["action", "approvalId", "operationId", "reviewDigest", "stepUpToken", "type"]) || !/^0x[0-9a-f]{64}$/.test(input.approvalId) || !/^0x[0-9a-f]{64}$/.test(input.reviewDigest) ||
 			(input.action !== "APPROVE" && input.action !== "REJECT")) {
 			throw new DashboardCommandError(400, "INVALID_COMMAND", "The ASCP approval decision is invalid.");
 		}

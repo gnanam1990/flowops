@@ -7,6 +7,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ASCPCallEscrow} from "./ASCPCallEscrow.sol";
 import {ServiceDirectory} from "./ServiceDirectory.sol";
+import {ASCPTypeHashes} from "./libraries/ASCPTypeHashes.sol";
 
 interface IModuleSafe {
     function execTransactionFromModule(address to, uint256 value, bytes memory data, uint8 operation)
@@ -29,12 +30,8 @@ contract ASCPSpendModule is EIP712, ReentrancyGuard {
     bytes32 public constant TYPED_DATA_MANIFEST_SHA256 =
         0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5;
 
-    bytes32 public constant LOCK_AUTHORIZATION_TYPEHASH = keccak256(
-        "LockAuthorization(bytes32 orgDomain,address safe,address module,bytes32 operationId,bytes32 commitmentHash,bytes32 calldataHash,address escrow,uint256 amount,uint256 nonce,uint64 validAfter,uint64 validBefore,uint64 leadershipEpoch,uint64 authorizerEpoch)"
-    );
-    bytes32 public constant ALLOWANCE_AUTHORIZATION_TYPEHASH = keccak256(
-        "AllowanceAuthorization(bytes32 orgDomain,address safe,address module,bytes32 adminOperationId,address token,address spender,uint256 expectedAllowance,uint256 newAllowance,uint256 nonce,uint64 validAfter,uint64 validBefore,uint64 leadershipEpoch,uint64 authorizerEpoch)"
-    );
+    bytes32 public constant LOCK_AUTHORIZATION_TYPEHASH = ASCPTypeHashes.LOCK_AUTHORIZATION;
+    bytes32 public constant ALLOWANCE_AUTHORIZATION_TYPEHASH = ASCPTypeHashes.ALLOWANCE_AUTHORIZATION;
 
     struct LockAuthorization {
         bytes32 orgDomain;

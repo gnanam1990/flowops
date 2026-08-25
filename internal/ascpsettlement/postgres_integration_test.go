@@ -210,7 +210,7 @@ func seedSettlementOperation(t *testing.T, db *sql.DB, operationID string, now t
 		{`INSERT INTO ascp_approvals (approval_id,organization_id,intent_id,state,review_snapshot_hash,requested_at,expires_at,decided_at,decided_by)
 			VALUES ($1,$2,$3,'APPROVED',$4,$5,$6,$5,'owner')`, []any{approvalID, organizationID, operationID, hashOffset(operationID, 8), now, now.Add(time.Hour)}},
 		{`INSERT INTO ascp_budget_reservations (reservation_id,operation_id,amount_base_units,state,dimensions,created_at,expires_at)
-			VALUES ($1,$2,'10','AUTHORIZATION_LIVE','[]',$3,$4)`, []any{reservationID, operationID, now, now.Add(time.Hour)}},
+			VALUES ($1,$2,'10','RESERVED','[]',$3,$4)`, []any{reservationID, operationID, now, now.Add(time.Hour)}},
 		{`INSERT INTO ascp_execution_authorizations (authorization_id,approval_id,intent_id,state,execution_snapshot_hash,reservation_id,created_at,evaluated_at)
 			VALUES ($1,$2,$3,'VALIDATED_AND_RESERVED',$4,$5,$6,$6)`, []any{authorizationID, approvalID, operationID, hashOffset(operationID, 9), reservationID, now}},
 		{`INSERT INTO ascp_bearer_registry (digest,instrument_type,signature_ref,nonce,issued_at,valid_until,signer_key_id,key_epoch,
@@ -229,6 +229,13 @@ func seedSettlementOperation(t *testing.T, db *sql.DB, operationID string, now t
 		if _, err := db.Exec(statement.query, statement.args...); err != nil {
 			t.Fatalf("seed settlement operation: %v\n%s", err, statement.query)
 		}
+	}
+	var capacityResult string
+	if err := db.QueryRow(`SELECT ascp_acquire_capacity($1,$2,1000,$3)`, operationID, reservationID, now).Scan(&capacityResult); err != nil || capacityResult != "ACQUIRED" {
+		t.Fatalf("seed settlement capacity result=%s err=%v", capacityResult, err)
+	}
+	if _, err := db.Exec(`UPDATE ascp_budget_reservations SET state='AUTHORIZATION_LIVE' WHERE reservation_id=$1`, reservationID); err != nil {
+		t.Fatalf("activate seeded settlement reservation: %v", err)
 	}
 }
 

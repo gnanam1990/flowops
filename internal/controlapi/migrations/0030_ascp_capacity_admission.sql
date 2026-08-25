@@ -60,18 +60,18 @@ BEGIN
         RETURN 'INVALID';
     END IF;
     SELECT max_active_operations INTO configured_max
-    FROM public.ascp_capacity_counters WHERE scope='GLOBAL';
+    FROM ascp_capacity_counters WHERE scope='GLOBAL';
     IF configured_max IS NULL OR configured_max <> expected_max_active THEN
         RETURN 'LIMIT_MISMATCH';
     END IF;
     IF NOT EXISTS (
-        SELECT 1 FROM public.ascp_budget_reservations r
+        SELECT 1 FROM ascp_budget_reservations r
         WHERE r.operation_id=requested_operation_id AND r.reservation_id=requested_reservation_id
           AND r.state='RESERVED'
     ) THEN
         RETURN 'RESERVATION_MISMATCH';
     END IF;
-    UPDATE public.ascp_capacity_counters
+    UPDATE ascp_capacity_counters
     SET active_operations=active_operations+1,updated_at=acquired_at_value
     WHERE scope='GLOBAL' AND max_active_operations=expected_max_active
       AND active_operations<max_active_operations
@@ -79,7 +79,7 @@ BEGIN
     IF updated_count IS NULL THEN
         RETURN 'EXHAUSTED';
     END IF;
-    INSERT INTO public.ascp_capacity_admissions(operation_id,reservation_id,state,acquired_at)
+    INSERT INTO ascp_capacity_admissions(operation_id,reservation_id,state,acquired_at)
     VALUES (requested_operation_id,requested_reservation_id,'ACTIVE',acquired_at_value);
     RETURN 'ACQUIRED';
 EXCEPTION
@@ -97,14 +97,14 @@ DECLARE released_rows integer;
 BEGIN
     IF OLD.state IN ('RESERVED','AUTHORIZATION_LIVE','COMMITTED_SAFE','COMMITTED_FINALIZED','REORGED_BACK')
        AND NEW.state IN ('CONSUMED_ON_RELEASE','RESTORED_ON_REFUND','RELEASED','RELEASED_AFTER_EXPIRY_PROOF') THEN
-        UPDATE public.ascp_capacity_admissions
+        UPDATE ascp_capacity_admissions
         SET state='RELEASED',released_at=now(),release_reservation_state=NEW.state
         WHERE reservation_id=NEW.reservation_id AND state='ACTIVE';
         GET DIAGNOSTICS released_rows = ROW_COUNT;
         IF released_rows <> 1 THEN
             RAISE EXCEPTION 'terminal reservation lacks exactly one active capacity admission' USING ERRCODE='23514';
         END IF;
-        UPDATE public.ascp_capacity_counters
+        UPDATE ascp_capacity_counters
         SET active_operations=active_operations-1,updated_at=now()
         WHERE scope='GLOBAL' AND active_operations>0;
         IF NOT FOUND THEN
@@ -112,6 +112,28 @@ BEGIN
         END IF;
     END IF;
     RETURN NEW;
+END;
+$$;
+
+-- Bind each SECURITY DEFINER function to the exact schema in which this
+-- migration is installed. pg_catalog remains first and pg_temp is explicit
+-- and last, so neither a caller's search_path nor a temporary object can redirect these
+-- privileged reads and writes. This also keeps isolated-schema acceptance
+-- tests faithful to the production function bodies.
+DO $$
+DECLARE application_schema text := current_schema();
+BEGIN
+    IF application_schema IS NULL OR application_schema IN ('pg_catalog','pg_temp') THEN
+        RAISE EXCEPTION 'capacity functions require a dedicated application schema';
+    END IF;
+    EXECUTE format(
+        'ALTER FUNCTION %I.ascp_acquire_capacity(text,text,integer,timestamptz) SET search_path = pg_catalog, %I, pg_temp',
+        application_schema, application_schema
+    );
+    EXECUTE format(
+        'ALTER FUNCTION %I.flowops_release_capacity_on_reservation_terminal() SET search_path = pg_catalog, %I, pg_temp',
+        application_schema, application_schema
+    );
 END;
 $$;
 

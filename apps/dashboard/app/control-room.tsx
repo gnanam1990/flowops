@@ -179,7 +179,9 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
         <header className="topbar">
           <div className="topbar-title">
             <span className="mobile-brand">FlowOps</span>
-            <span className="breadcrumb">Control room / {title}</span>
+            <span className="breadcrumb">
+              Control room / {snapshot.mode === "live" ? `${snapshot.organization.name} / ` : ""}{title}
+            </span>
           </div>
           <dl className="context-strip">
 			<div><dt>{snapshot.mode === "public" ? "Organization data" : "Recognized expense"}</dt><dd>{snapshot.money.total} <span>{snapshot.money.asset}</span></dd></div>
@@ -305,13 +307,13 @@ function ProposalAnchorNotice({ deployment }: { deployment: ProposalAnchorDeploy
         {deployment.address && deployment.explorerHref ? (
           <a href={deployment.explorerHref} target="_blank" rel="noreferrer">
             <code>{deployment.address}</code>
-            <span>View verified source on Base Blockscout ↗</span>
+            <span>View address on Base Blockscout ↗</span>
           </a>
         ) : null}
       </div>
       <dl className="proposal-anchor-controls">
         <div><dt>Production ready</dt><dd>No</dd></div>
-        <div><dt>Source verified</dt><dd>Yes</dd></div>
+		<div><dt>Source verified</dt><dd>Unavailable</dd></div>
         <div><dt>Vault creation</dt><dd>Disabled</dd></div>
         <div><dt>USDC deposits</dt><dd>Disabled</dd></div>
         <div><dt>Asset warning</dt><dd>Do not send ETH or tokens</dd></div>
@@ -459,6 +461,7 @@ function Overview({
         <section className="panel chain-panel">
           <PanelHeader kicker="Base truth" title="Chain health" meta={snapshot.chain.state} />
           <dl className="chain-facts">
+			<div><dt>Network</dt><dd>{snapshot.chain.network}</dd></div>
             <div><dt>Observer quorum</dt><dd>{snapshot.chain.observers}</dd></div>
             <div><dt>Last trusted block</dt><dd>#{snapshot.chain.lastTrustedBlock}</dd></div>
             <div><dt>Freshness</dt><dd>{snapshot.chain.lastTrustedAt}</dd></div>
@@ -471,7 +474,7 @@ function Overview({
           {snapshot.activity.length === 0 ? <p className="empty-state">Economic activity and evidence records require an authorized membership.</p> : null}
         </section>
       </div>
-      <p className="freshness"><span>END OF OBSERVED WINDOW</span> Snapshot refreshed {snapshot.generatedAt}. {snapshot.mode === "live" ? "Values marked unavailable are not exposed by the control plane; writes require a separate step-up session." : "This is real public health data; organization records remain private and no control is available without sign-in."}</p>
+	  <p className="freshness"><span>END OF OBSERVED WINDOW</span> Snapshot refreshed {snapshot.generatedAt}. {snapshot.mode === "live" ? "Values marked unavailable are not exposed by the control plane; writes require a separate step-up session." : snapshot.connection.label === "Status unavailable" ? "Public health evidence is unavailable; FlowOps is not representing chain health or authorization capacity." : "This is live public health data; organization records remain private and no control is available without sign-in."}</p>
     </>
   );
 }
@@ -618,8 +621,8 @@ function ApprovalDrawer({ approval, mode, onClose, onAction, onCommand }: { appr
     setError("");
     try {
 	  await onCommand(approval.source === "ascp"
-		? { type: "ascp-approval", approvalId: approval.id, action, operationId: crypto.randomUUID(), stepUpToken }
-		: { type: "approval", requestId: approval.id, action, note, operationId: crypto.randomUUID(), stepUpToken });
+		? { type: "ascp-approval", approvalId: approval.id, reviewDigest: approval.requestDigest, action, operationId: crypto.randomUUID(), stepUpToken }
+		: { type: "approval", requestId: approval.id, requestDigest: approval.requestDigest, action, note, operationId: crypto.randomUUID(), stepUpToken });
       setStepUpToken("");
       onClose();
     } catch (cause) {
@@ -634,8 +637,8 @@ function ApprovalDrawer({ approval, mode, onClose, onAction, onCommand }: { appr
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="approval-title">
         <header><span>Approval {approval.id}</span><button ref={closeRef} onClick={onClose} aria-label="Close approval details" type="button">×</button></header>
         <div className="drawer-title"><AgentMark mark={approval.agentMark} /><div><small>{approval.agent}</small><h2 id="approval-title">{approval.title}</h2></div></div>
-        <div className="drawer-amount"><span>Exact requested amount</span><strong>{approval.amount}</strong><small>{approval.rail} · {approval.asset ?? "Asset not exposed"} on Base</small></div>
-        <dl className="detail-list"><div><dt>Recipient / vendor</dt><dd>{approval.vendor}</dd></div><div><dt>Agent</dt><dd>{approval.agent}</dd></div><div><dt>Task</dt><dd>{approval.title}</dd></div><div><dt>Rail</dt><dd>{approval.rail}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Policy snapshot</dt><dd className="mono">{approval.policyVersion ?? "Not exposed"}</dd></div><div><dt>Evidence refs</dt><dd className="mono">{approval.evidenceRefs ?? "Not exposed"}</dd></div><div><dt>Created</dt><dd>{approval.requested}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Request digest</dt><dd className="mono">{approval.requestDigest ?? "Not exposed"}</dd></div></dl>
+		<div className="drawer-amount"><span>Exact requested amount</span><strong>{approval.amount}</strong><small>{formatAtomicForConfirmation(approval.amountAtomic)} atomic · {approval.rail} · {approval.network}</small></div>
+		<dl className="detail-list"><div><dt>Recipient / vendor</dt><dd className="mono">{approval.recipientAddress}</dd></div><div><dt>Asset</dt><dd className="mono">{approval.assetSymbol ? `${approval.assetSymbol} · ` : ""}{approval.assetAddress}</dd></div><div><dt>Chain</dt><dd>{approval.network}</dd></div><div><dt>Agent</dt><dd>{approval.agent}</dd></div><div><dt>Task</dt><dd>{approval.title}</dd></div><div><dt>Rail</dt><dd>{approval.rail}</dd></div><div><dt>Risk</dt><dd>{capitalize(approval.risk)}</dd></div><div><dt>Policy snapshot</dt><dd className="mono">{approval.policyVersion ?? "Not exposed"}</dd></div><div><dt>Evidence refs</dt><dd className="mono">{approval.evidenceRefs ?? "Not exposed"}</dd></div><div><dt>Created</dt><dd>{approval.requested}</dd></div><div><dt>Expires</dt><dd>{approval.expires}</dd></div><div><dt>Request digest</dt><dd className="mono">{approval.requestDigest ?? "Not exposed"}</dd></div></dl>
         <div className="reason-box"><span>Why approval is required</span><p>{approval.reason}</p></div>
         <div className="truth-box"><strong>What this decision means</strong><p>Approval authorizes only this frozen intent. Any change to amount, recipient, task, rail, or request digest requires a new decision.</p></div>
 		{mode === "live" ? <div className="step-up-box"><label htmlFor="approval-step-up">Fresh step-up token</label><input id="approval-step-up" type="password" autoComplete="off" value={stepUpToken} onChange={(event) => setStepUpToken(event.target.value)} disabled={busy} />{approval.source === "legacy" ? <><label htmlFor="approval-note">Decision note</label><textarea id="approval-note" value={note} maxLength={2048} onChange={(event) => setNote(event.target.value)} disabled={busy} /></> : null}<small>Held in memory for this request only. Never stored by the dashboard.</small>{error ? <p role="alert">{error}</p> : null}</div> : null}
@@ -712,3 +715,4 @@ function activityMark(state: Activity["state"]) { return { settled: "✓", relea
 function initials(name: string) { return name.split(/\s|@/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "OP"; }
 function shortName(name: string) { return name.includes("@") ? name.split("@")[0] : name.split(" ")[0]; }
 function capitalize(value: string) { return value.charAt(0).toUpperCase() + value.slice(1); }
+function formatAtomicForConfirmation(value: string) { return BigInt(value).toLocaleString("en-US"); }

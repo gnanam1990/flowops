@@ -51,6 +51,14 @@ func TestNormativeRegistryPinsEveryGoTypeAndArtifact(t *testing.T) {
 		"AdminActionAuthorization": adminauthorization.TypeString,
 		"VerdictAttestation":       ascpverifier.VerdictAttestationTypeString,
 	}
+	solidityRaw, err := os.ReadFile(filepath.Join(root, "contracts", "src", "libraries", "ASCPTypeHashes.sol"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	solidity := string(solidityRaw)
+	if !strings.Contains(solidity, `"`+registry.Domain.TypeString+`"`) {
+		t.Fatal("Solidity EIP-712 domain type string drifted")
+	}
 	if len(registry.Types) != len(wants) {
 		t.Fatalf("registry has %d types, want %d", len(registry.Types), len(wants))
 	}
@@ -58,6 +66,9 @@ func TestNormativeRegistryPinsEveryGoTypeAndArtifact(t *testing.T) {
 		entry, ok := registry.Types[name]
 		if !ok || entry.TypeString != want {
 			t.Fatalf("%s type string drifted", name)
+		}
+		if !strings.Contains(solidity, `"`+want+`"`) {
+			t.Fatalf("%s Solidity type string drifted", name)
 		}
 		for _, artifact := range []string{entry.Schema, entry.Vector} {
 			if artifact == "" {

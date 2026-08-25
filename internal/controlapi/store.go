@@ -18,3 +18,7 @@ type Store interface {
 	CompleteCommand(ctx context.Context, organizationID, commandID string, state CommandState, result json.RawMessage, errorCode string) (Command, error)
 	Command(ctx context.Context, organizationID, commandID string) (Command, error)
 }
+
+type ReadinessChecker interface {
+	Ready(context.Context) error
+}

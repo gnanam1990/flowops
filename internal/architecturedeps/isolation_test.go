@@ -92,6 +92,25 @@ func TestMetaTestCatchesPlantedDirectAndTransitiveViolations(t *testing.T) {
 	}
 }
 
+func TestBaseMCPPolicyCatchesPlantedWalletPath(t *testing.T) {
+	adapter := ModulePath + "/internal/basemcp"
+	wallet := ModulePath + "/pkg/referencewallet"
+	var baseMCPRule IsolationRule
+	for _, rule := range ProductionPolicy().Isolation {
+		if len(rule.Roots) == 1 && rule.Roots[0] == adapter {
+			baseMCPRule = rule
+			break
+		}
+	}
+	if len(baseMCPRule.Roots) != 1 {
+		t.Fatal("Base MCP production isolation rule is missing")
+	}
+	violations := Validate(Graph{adapter: {wallet}, wallet: nil}, Policy{Isolation: []IsolationRule{baseMCPRule}})
+	if len(violations) != 1 || !strings.Contains(violations[0].Error(), "Base MCP adapter") || !strings.Contains(violations[0].Error(), wallet) {
+		t.Fatalf("planted Base MCP wallet path not caught: %+v", violations)
+	}
+}
+
 func TestLoaderExcludesTestOnlyAuthorityAssembly(t *testing.T) {
 	root := t.TempDir()
 	write := func(name, body string) {

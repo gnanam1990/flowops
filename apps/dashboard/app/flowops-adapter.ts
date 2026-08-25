@@ -26,6 +26,7 @@ export type SessionResponse = {
 
 type PublicHealth = {
   controlPlane: string;
+	chainId: number;
   chainState: DashboardSnapshot["chain"]["state"];
   authorizationsPaused: boolean;
   requiredObservers: number;
@@ -44,6 +45,7 @@ type ControlSnapshot = {
   organizationId: string;
   organization: { id: string; name: string; authorizationsPaused: boolean };
   chain: {
+	chainId: number;
     state: DashboardSnapshot["chain"]["state"];
     reason: string;
     requiredObserverQuorum: number;
@@ -73,6 +75,9 @@ type ControlASCP = {
 		policyVersion: string;
 		recipient: string;
 		asset: string;
+		chainId: number;
+		assetSymbol?: string;
+		assetDecimals?: number;
 		amountAtomic: string;
 		requestedAt: string;
 		expiresAt: string;
@@ -153,6 +158,7 @@ type ControlApproval = {
   approvalExpiresAt: number;
   decision: { reason: string; policyVersion: string };
   intent: {
+	chainId: number;
     agentId: string;
     taskId: string;
     rail: string;
@@ -315,6 +321,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     !Array.isArray(raw.pendingApprovals) ||
     !Array.isArray(raw.agents) ||
     !isChainState(raw.chain?.state) ||
+	!isSupportedBaseChain(raw.chain.chainId) ||
     !Number.isSafeInteger(raw.chain.requiredObserverQuorum) ||
     raw.chain.requiredObserverQuorum < 2 ||
     raw.chain.requiredObserverQuorum > 5 ||
@@ -328,15 +335,15 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   }
   const generatedAt = parseDate(raw.generatedAt);
   const budgetByAgent = new Map(raw.ascp.agentBudgets.map((budget) => [budget.agentId, budget]));
-  const agents = raw.agents.map((agent) => mapAgent(agent, budgetByAgent.get(agent.id)));
+  const agents = raw.agents.map((agent) => mapAgent(agent, budgetByAgent.get(agent.id), raw.chain.chainId));
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
 	const approvals = [
-		...raw.pendingApprovals.map((approval) => mapApproval(approval, names, generatedAt)),
-		...raw.ascp.pendingApprovals.map((approval) => mapASCPApproval(approval, names, generatedAt)),
+		...raw.pendingApprovals.map((approval) => mapApproval(approval, names, generatedAt, raw.chain.chainId)),
+		...raw.ascp.pendingApprovals.map((approval) => mapASCPApproval(approval, names, generatedAt, raw.chain.chainId)),
 	];
 	const activity = [
-		...raw.ascp.activity.map((item) => ({ occurredAt: parseDate(item.occurredAt), item: mapASCPActivity(item, names, generatedAt) })),
-		...raw.pendingApprovals.map((item) => ({ occurredAt: new Date(item.submittedAt * 1_000), item: mapLegacyApprovalActivity(item, names, generatedAt) })),
+		...raw.ascp.activity.map((item) => ({ occurredAt: parseDate(item.occurredAt), item: mapASCPActivity(item, names, generatedAt, raw.chain.chainId) })),
+		...raw.pendingApprovals.map((item) => ({ occurredAt: new Date(item.submittedAt * 1_000), item: mapLegacyApprovalActivity(item, names, generatedAt, raw.chain.chainId) })),
 	].sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime()).map((entry) => entry.item);
 	const risks = liveRisks(raw, agents, generatedAt);
   const checkpoint = raw.chain.lastTrusted;
@@ -347,7 +354,8 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   const observerProgress = `${raw.chain.respondingObservers} / ${raw.chain.requiredObserverQuorum}`;
 	const unavailable = "Not available";
 	const singleAsset = raw.ascp.available && raw.ascp.assets.length === 1 ? raw.ascp.assets[0] : null;
-	const assetLabel = singleAsset ? shortAddress(singleAsset.asset) : raw.ascp.assets.length > 1 ? "Multiple assets" : "No ASCP activity";
+	const singleAssetMetadata = singleAsset ? validatedAssetMetadata(raw.chain.chainId, singleAsset.asset) : null;
+	const assetLabel = singleAsset ? (singleAssetMetadata?.symbol ?? shortAddress(singleAsset.asset)) : raw.ascp.assets.length > 1 ? "Multiple assets" : "No ASCP activity";
 	const singleBudget = raw.ascp.agentBudgets.length === 1 && raw.ascp.agentBudgets[0].policyConfigurationValid ? raw.ascp.agentBudgets[0] : null;
 	const dailySpentPercent = singleBudget ? atomicPercent(singleBudget.spentTodayAtomic, singleBudget.dailyLimitAtomic) : null;
   return {
@@ -359,7 +367,8 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     generatedAt: age(generatedAt, new Date()),
     organization: { name: raw.organization.name, plan: "Authorized membership", authorizationsPaused: raw.organization.authorizationsPaused },
     chain: {
-      network: "Base control plane",
+	  chainId: raw.chain.chainId,
+	  network: networkLabel(raw.chain.chainId),
       state: raw.chain.state,
       observers: raw.chain.state === "HEALTHY" ? `${observerProgress} agree` : `${observerProgress} reporting · authorizations restricted`,
       lastTrustedBlock: checkpoint ? checkpoint.blockNumber.toLocaleString("en-US") : "Unavailable",
@@ -367,13 +376,13 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
     },
     money: {
 	  asset: assetLabel,
-	  total: singleAsset ? `${formatAtomic(singleAsset.recognizedExpenseAtomic)} atomic` : unavailable,
-	  walletDelta: singleAsset ? `${formatAtomic(singleAsset.walletDeltaAtomic)} atomic` : unavailable,
-	  reserved: singleAsset ? `${formatAtomic(singleAsset.reservedAtomic)} atomic` : unavailable,
-	  pending: singleAsset ? `${formatAtomic(singleAsset.pendingChainAtomic)} atomic` : unavailable,
-	  unresolved: singleAsset ? `${formatAtomic(singleAsset.unresolvedAtomic)} atomic` : unavailable,
-	  spentToday: singleAsset ? `${formatAtomic(singleAsset.spentTodayAtomic)} atomic` : unavailable,
-	  dailyLimit: singleBudget ? `${formatAtomic(singleBudget.dailyLimitAtomic)} atomic` : unavailable,
+	  total: singleAsset ? tokenAmount(singleAsset.recognizedExpenseAtomic, singleAssetMetadata) : unavailable,
+	  walletDelta: singleAsset ? tokenAmount(singleAsset.walletDeltaAtomic, singleAssetMetadata) : unavailable,
+	  reserved: singleAsset ? tokenAmount(singleAsset.reservedAtomic, singleAssetMetadata) : unavailable,
+	  pending: singleAsset ? tokenAmount(singleAsset.pendingChainAtomic, singleAssetMetadata) : unavailable,
+	  unresolved: singleAsset ? tokenAmount(singleAsset.unresolvedAtomic, singleAssetMetadata) : unavailable,
+	  spentToday: singleAsset ? tokenAmount(singleAsset.spentTodayAtomic, singleAssetMetadata) : unavailable,
+	  dailyLimit: singleBudget ? tokenAmount(singleBudget.dailyLimitAtomic, singleBudget.asset ? validatedAssetMetadata(raw.chain.chainId, singleBudget.asset) : null) : unavailable,
 	  dailySpentPercent,
     },
     approvals,
@@ -396,7 +405,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   };
 }
 
-function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number] | undefined): Agent {
+function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number] | undefined, chainId: 8453 | 84532): Agent {
   if (
     !isIdentifier(raw?.id) ||
     typeof raw.name !== "string" ||
@@ -406,27 +415,30 @@ function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number]
     raw.purpose.length > 1_024 ||
     !isAgentStatus(raw.status)
   ) throw new Error("invalid agent");
+	const metadata = budget?.asset ? validatedAssetMetadata(chainId, budget.asset) : null;
   return {
     id: raw.id,
     name: raw.name,
     mark: initials(raw.name),
     purpose: raw.purpose || "Purpose not supplied",
     status: raw.status,
-	available: budget?.policyConfigurationValid ? `${formatAtomic(budget.availableAtomic)} atomic` : "No active policy",
-	spent: budget?.policyConfigurationValid ? `${formatAtomic(budget.spentTodayAtomic)} atomic` : "Unavailable",
-	limit: budget?.policyConfigurationValid ? `${formatAtomic(budget.dailyLimitAtomic)} atomic` : "Unavailable",
+	available: budget?.policyConfigurationValid ? tokenAmount(budget.availableAtomic, metadata) : "No active policy",
+	spent: budget?.policyConfigurationValid ? tokenAmount(budget.spentTodayAtomic, metadata) : "Unavailable",
+	limit: budget?.policyConfigurationValid ? tokenAmount(budget.dailyLimitAtomic, metadata) : "Unavailable",
 	percent: budget?.policyConfigurationValid ? atomicPercent(budget.spentTodayAtomic, budget.dailyLimitAtomic) : 0,
 	task: budget?.currentTaskId || "No recorded ASCP task",
   };
 }
 
-function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Map<string, string>, observedAt: Date): Approval {
+function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Map<string, string>, observedAt: Date, expectedChainId: 8453 | 84532): Approval {
 	if (!isIdentifier(raw.approvalId) || !/^0x[0-9a-f]{64}$/.test(raw.reviewDigest) || !/^0x[0-9a-f]{64}$/.test(raw.operationId) ||
 		!isIdentifier(raw.agentId) || (raw.taskId !== "" && !isBoundedText(raw.taskId, 1024)) ||
 		(raw.category !== "" && !isBoundedText(raw.category, 1024)) ||
-		!/^0x[0-9a-f]{40}$/.test(raw.recipient) || !/^0x[0-9a-f]{40}$/.test(raw.asset) || !validUnsignedAtomic(raw.amountAtomic)) {
+		!/^0x[0-9a-f]{40}$/.test(raw.recipient) || !/^0x[0-9a-f]{40}$/.test(raw.asset) || !validUnsignedAtomic(raw.amountAtomic) ||
+		!isSupportedBaseChain(raw.chainId) || raw.chainId !== expectedChainId) {
 		throw new Error("invalid ASCP approval");
 	}
+	const metadata = validatedAssetMetadata(raw.chainId, raw.asset, raw.assetSymbol, raw.assetDecimals);
 	const requestedAt = parseDate(raw.requestedAt);
 	const expiresAt = parseDate(raw.expiresAt);
 	if (expiresAt <= requestedAt) throw new Error("invalid ASCP approval lifetime");
@@ -438,20 +450,27 @@ function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Ma
 		agentMark: initials(agent),
 		title: raw.category || (raw.taskId ? `Task ${raw.taskId}` : `Approval ${shortDigest(raw.approvalId)}`),
 		vendor: shortAddress(raw.recipient),
-		amount: `${formatAtomic(raw.amountAtomic)} atomic`,
+		recipientAddress: raw.recipient,
+		amount: tokenAmount(raw.amountAtomic, metadata),
+		amountAtomic: raw.amountAtomic,
 		requested: age(requestedAt, observedAt),
 		expires: durationUntil(Math.floor(expiresAt.getTime() / 1000), observedAt),
 		reason: humanize(raw.reason),
 		risk: riskForReason(raw.reason),
 		rail: "Escrowed call",
-		asset: shortAddress(raw.asset),
+		asset: metadata ? metadata.symbol : shortAddress(raw.asset),
+		assetAddress: raw.asset,
+		assetSymbol: metadata?.symbol,
+		assetDecimals: metadata?.decimals,
+		chainId: raw.chainId,
+		network: networkLabel(raw.chainId),
 		policyVersion: raw.policyVersion,
-		requestDigest: shortDigest(raw.reviewDigest),
-		evidenceRefs: `Operation ${shortDigest(raw.operationId)}`,
+		requestDigest: raw.reviewDigest,
+		evidenceRefs: `Operation ${raw.operationId}`,
 	};
 }
 
-function mapASCPActivity(raw: ControlASCP["activity"][number], names: Map<string, string>, observedAt: Date): Activity {
+function mapASCPActivity(raw: ControlASCP["activity"][number], names: Map<string, string>, observedAt: Date, chainId: 8453 | 84532): Activity {
 	if (!isIdentifier(raw.id) || typeof raw.kind !== "string" || !raw.kind || typeof raw.state !== "string" || !raw.state ||
 		(raw.agentId && !isIdentifier(raw.agentId)) || (raw.taskId && !isBoundedText(raw.taskId, 1024)) ||
 		(raw.asset && !/^0x[0-9a-f]{40}$/.test(raw.asset)) || (raw.amountAtomic && !validUnsignedAtomic(raw.amountAtomic))) {
@@ -460,12 +479,13 @@ function mapASCPActivity(raw: ControlASCP["activity"][number], names: Map<string
 	const occurredAt = parseDate(raw.occurredAt);
 	const agent = raw.agentId ? (names.get(raw.agentId) ?? raw.agentId) : "Control plane";
 	const state = activityState(raw.kind, raw.state);
+	const metadata = raw.asset ? validatedAssetMetadata(chainId, raw.asset) : null;
 	return {
 		id: `${raw.kind}-${raw.id}-${raw.state}`,
 		time: age(occurredAt, observedAt),
 		title: activityTitle(raw.kind, raw.state),
 		detail: [agent, raw.taskId ? `Task ${raw.taskId}` : "", raw.detail ? humanize(raw.detail) : ""].filter(Boolean).join(" · "),
-		amount: raw.amountAtomic ? `${formatAtomic(raw.amountAtomic)} atomic${raw.asset ? ` · ${shortAddress(raw.asset)}` : ""}` : undefined,
+		amount: raw.amountAtomic ? `${tokenAmount(raw.amountAtomic, metadata)}${raw.asset && !metadata ? ` · ${shortAddress(raw.asset)}` : ""}` : undefined,
 		state,
 	};
 }
@@ -487,8 +507,8 @@ function activityTitle(kind: string, state: string): string {
 	return `Payment ${humanize(state).toLowerCase()}`;
 }
 
-function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, string>, observedAt: Date): Activity {
-	const approval = mapApproval(raw, names, observedAt);
+function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, string>, observedAt: Date, chainId: 8453 | 84532): Activity {
+	const approval = mapApproval(raw, names, observedAt, chainId);
 	return {
 		id: `LEGACY_APPROVAL-${approval.id}`,
 		time: approval.requested,
@@ -499,7 +519,7 @@ function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, stri
 	};
 }
 
-function mapApproval(raw: ControlApproval, names: Map<string, string>, observedAt: Date): Approval {
+function mapApproval(raw: ControlApproval, names: Map<string, string>, observedAt: Date, expectedChainId: 8453 | 84532): Approval {
   if (
     !isIdentifier(raw?.requestId) ||
     !/^0x[0-9a-f]{64}$/.test(raw.requestDigest) ||
@@ -509,6 +529,7 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
     raw.approvalExpiresAt <= raw.submittedAt ||
     !isIdentifier(raw.intent?.agentId) ||
     !isIdentifier(raw.intent?.taskId) ||
+	(!isSupportedBaseChain(raw.intent?.chainId) || raw.intent.chainId !== expectedChainId) ||
     typeof raw.intent.purpose !== "string" ||
     raw.intent.purpose.length > 1_024 ||
     !/^0x[0-9a-f]{40}$/.test(raw.intent.recipient) ||
@@ -519,6 +540,7 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
   }
   const agent = names.get(raw.intent.agentId) ?? raw.intent.agentId;
   const recipient = shortAddress(raw.intent.recipient);
+	const metadata = validatedAssetMetadata(raw.intent.chainId, raw.intent.asset);
   return {
 	source: "legacy",
     id: raw.requestId,
@@ -526,15 +548,22 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
     agentMark: initials(agent),
     title: raw.intent.purpose || `Task ${raw.intent.taskId}`,
     vendor: recipient,
-    amount: `${formatAtomic(raw.intent.amountAtomic)} atomic`,
+	recipientAddress: raw.intent.recipient,
+	amount: tokenAmount(raw.intent.amountAtomic, metadata),
+	amountAtomic: raw.intent.amountAtomic,
     requested: age(new Date(raw.submittedAt * 1_000), observedAt),
     expires: durationUntil(raw.approvalExpiresAt, observedAt),
     reason: humanize(raw.decision?.reason || "POLICY_REQUIRES_APPROVAL"),
     risk: riskForReason(raw.decision?.reason),
     rail: mapRail(raw.intent.rail),
-    asset: shortAddress(raw.intent.asset),
+	asset: metadata ? metadata.symbol : shortAddress(raw.intent.asset),
+	assetAddress: raw.intent.asset,
+	assetSymbol: metadata?.symbol,
+	assetDecimals: metadata?.decimals,
+	chainId: raw.intent.chainId,
+	network: networkLabel(raw.intent.chainId),
     policyVersion: raw.decision?.policyVersion || "Not exposed",
-    requestDigest: shortDigest(raw.requestDigest),
+	requestDigest: raw.requestDigest,
     evidenceRefs: "Not issued before decision",
   };
 }
@@ -602,7 +631,7 @@ function validASCP(value: ControlASCP | undefined): value is ControlASCP {
 	if (!value.assets.every((asset) => /^0x[0-9a-f]{40}$/.test(asset.asset) && validSignedAtomic(asset.walletDeltaAtomic) &&
 		[asset.escrowRestrictedAtomic, asset.recognizedExpenseAtomic, asset.spentTodayAtomic].every(validSignedAtomic) &&
 		[asset.reservedAtomic, asset.pendingChainAtomic, asset.unresolvedAtomic].every(validUnsignedAtomic))) return false;
-	if (!value.agentBudgets.every((budget) => isIdentifier(budget.agentId) && typeof budget.activePolicy === "boolean" && typeof budget.policyConfigurationValid === "boolean" &&
+	if (!value.agentBudgets.every((budget) => isIdentifier(budget.agentId) && (!budget.asset || /^0x[0-9a-f]{40}$/.test(budget.asset)) && typeof budget.activePolicy === "boolean" && typeof budget.policyConfigurationValid === "boolean" &&
 		[budget.dailyLimitAtomic, budget.spentTodayAtomic, budget.reservedAtomic, budget.availableAtomic].every((amount) => amount === "" || validUnsignedAtomic(amount)))) return false;
 	return true;
 }
@@ -625,6 +654,7 @@ async function publicDashboard(
     const health = await requestJSON<PublicHealth>(request, `${controlApiUrl}/health`, {});
     if (
       health?.controlPlane !== "AVAILABLE" ||
+	  !isSupportedBaseChain(health.chainId) ||
       !isChainState(health.chainState) ||
       typeof health.authorizationsPaused !== "boolean" ||
       !Number.isSafeInteger(health.requiredObservers) ||
@@ -672,7 +702,8 @@ async function publicDashboard(
         authorizationsPaused: health.authorizationsPaused,
       },
       chain: {
-        network: "Base observer",
+		chainId: health.chainId,
+		network: networkLabel(health.chainId),
         state: health.chainState,
         observers: health.chainState === "HEALTHY" && health.respondingObservers === health.requiredObservers
           ? `${observerProgress} agree`
@@ -700,7 +731,8 @@ function publicUnavailable(detail: string): DashboardSnapshot {
     generatedAt: "Unavailable",
     organization: { name: "FlowOps", plan: "Public operational status", authorizationsPaused: true },
     chain: {
-      network: "Base observer",
+	  chainId: 0,
+	  network: "Base network unavailable",
       state: "RECOVERING",
       observers: "Unavailable",
       lastTrustedBlock: "Unavailable",
@@ -801,6 +833,35 @@ function durationUntil(unixSeconds: number, now: Date): string {
 
 function formatAtomic(atomic: string): string {
   return BigInt(atomic).toLocaleString("en-US");
+}
+
+type AssetMetadata = { symbol: "USDC"; decimals: 6 };
+
+function validatedAssetMetadata(chainId: number, asset: string, reportedSymbol?: string, reportedDecimals?: number): AssetMetadata | null {
+	let expected: AssetMetadata | null = null;
+	if (chainId === 8453 && asset === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913") expected = { symbol: "USDC", decimals: 6 };
+	if (chainId === 84532 && asset === "0x036cbd53842c5426634e7929541ec2318f3dcf7e") expected = { symbol: "USDC", decimals: 6 };
+	if (reportedSymbol !== undefined || reportedDecimals !== undefined) {
+		if (!expected || reportedSymbol !== expected.symbol || reportedDecimals !== expected.decimals) throw new Error("asset metadata does not match the canonical chain asset");
+	}
+	return expected;
+}
+
+function tokenAmount(atomic: string, metadata: AssetMetadata | null): string {
+	if (!metadata) return `${formatAtomic(atomic)} atomic`;
+	const negative = atomic.startsWith("-");
+	const magnitude = negative ? atomic.slice(1) : atomic;
+	const padded = magnitude.padStart(metadata.decimals + 1, "0");
+	const split = padded.length - metadata.decimals;
+	return `${negative ? "-" : ""}${BigInt(padded.slice(0, split)).toLocaleString("en-US")}.${padded.slice(split)} ${metadata.symbol}`;
+}
+
+function isSupportedBaseChain(value: unknown): value is 8453 | 84532 {
+	return value === 8453 || value === 84532;
+}
+
+function networkLabel(chainId: 8453 | 84532): string {
+	return chainId === 8453 ? "Base Mainnet (8453)" : "Base Sepolia (84532)";
 }
 
 function atomicPercent(spent: string, limit: string): number {

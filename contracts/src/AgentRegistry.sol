@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {ASCPTypeHashes} from "./libraries/ASCPTypeHashes.sol";
 
 /// @title AgentRegistry
 /// @notice Single-organization registry whose hot administrator signs exact,
@@ -15,9 +16,7 @@ contract AgentRegistry is EIP712 {
         0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5;
     bytes32 public constant REGISTRY_ADMIN_ROLE = keccak256("ASCP_REGISTRY_ADMIN");
     bytes32 public constant AGENT_ID_DOMAIN = keccak256("ASCP_AGENT_ID_V1");
-    bytes32 public constant ADMIN_ACTION_TYPEHASH = keccak256(
-        "AdminActionAuthorization(bytes32 orgDomain,address contractAddress,uint256 chainId,bytes32 authorityRole,bytes4 functionSelector,bytes32 payloadHash,bytes32 adminOperationId,uint256 adminNonce,uint64 adminEpoch,uint64 validAfter,uint64 validBefore,bytes32 workflowId)"
-    );
+    bytes32 public constant ADMIN_ACTION_TYPEHASH = ASCPTypeHashes.ADMIN_ACTION_AUTHORIZATION;
     uint64 public constant MAX_AUTHORIZATION_WINDOW = 10 minutes;
     uint256 public constant MAX_LABEL_BYTES = 64;
 

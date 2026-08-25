@@ -30,6 +30,13 @@ func NewPostgresStore(db *sql.DB, siteSessions ...*SiteSessionCodec) (*PostgresS
 	return &PostgresStore{db: db, siteSessions: codec}, nil
 }
 
+func (s *PostgresStore) Ready(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("PostgreSQL store is unavailable")
+	}
+	return s.db.PingContext(ctx)
+}
+
 func (s *PostgresStore) Authenticate(ctx context.Context, token string) (Principal, error) {
 	if strings.HasPrefix(token, siteSessionPrefix) && s.siteSessions != nil {
 		claims, err := s.siteSessions.Verify(token)

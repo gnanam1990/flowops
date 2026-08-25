@@ -84,6 +84,19 @@ func TestPostgresDashboardProjectionUsesDurableASCPRecords(t *testing.T) {
 	}
 }
 
+func TestDecorateDashboardApprovalsExposesOnlyCanonicalAssetMetadata(t *testing.T) {
+	canonical := "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+	unknown := "0x1111111111111111111111111111111111111111"
+	projection := DashboardProjection{PendingApprovals: []DashboardApproval{{Asset: canonical}, {Asset: unknown}}}
+	decorateDashboardApprovals(&projection, 8453)
+	if got := projection.PendingApprovals[0]; got.ChainID != 8453 || got.AssetSymbol != "USDC" || got.AssetDecimals == nil || *got.AssetDecimals != 6 {
+		t.Fatalf("canonical metadata = %+v", got)
+	}
+	if got := projection.PendingApprovals[1]; got.ChainID != 8453 || got.AssetSymbol != "" || got.AssetDecimals != nil {
+		t.Fatalf("unknown asset metadata was invented = %+v", got)
+	}
+}
+
 func TestDashboardProjectionRejectsInvalidScope(t *testing.T) {
 	store, _, db := newMockStore(t)
 	defer db.Close()

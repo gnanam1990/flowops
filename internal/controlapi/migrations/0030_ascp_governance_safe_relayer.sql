@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS ascp_workflow_safe_retry_proofs (
 );
 
 ALTER TABLE ascp_workflow_actions DROP CONSTRAINT IF EXISTS ascp_workflow_actions_action_v2_check;
+ALTER TABLE ascp_workflow_actions DROP CONSTRAINT IF EXISTS ascp_workflow_actions_action_v3_check;
 ALTER TABLE ascp_workflow_actions
     ADD CONSTRAINT ascp_workflow_actions_action_v3_check CHECK (action IN (
         'CREATE','APPROVE','CANCEL','COMPLETE','EXPIRE','SUBMIT','SUBMIT_RECOVERED','SUBMIT_PROVEN_RETRY','CONFIRM','FINALIZE',
@@ -237,35 +238,52 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     source_topic text;
     source_payload jsonb;
-    workflow ascp_proposal_workflows%ROWTYPE;
+    workflow_state text;
+    workflow_id_value text;
+    workflow_organization_id text;
+    workflow_kind text;
+    workflow_payload_hash text;
+    workflow_chain_id numeric;
+    workflow_contract_address text;
+    workflow_function_selector text;
+    workflow_calldata text;
+    workflow_governance_action jsonb;
+    workflow_approved_by text;
+    workflow_approved_at timestamptz;
 BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'governance relay jobs cannot be deleted' USING ERRCODE = '55000';
     END IF;
     IF TG_OP = 'INSERT' THEN
-        SELECT outbox.topic, outbox.payload_json, proposal
-        INTO source_topic, source_payload, workflow
+        SELECT outbox.topic, outbox.payload_json, proposal.state, proposal.workflow_id,
+               proposal.organization_id, proposal.kind, proposal.payload_hash, proposal.chain_id,
+               proposal.contract_address, proposal.function_selector, proposal.calldata,
+               proposal.governance_action, proposal.approved_by, proposal.approved_at
+        INTO source_topic, source_payload, workflow_state, workflow_id_value,
+             workflow_organization_id, workflow_kind, workflow_payload_hash, workflow_chain_id,
+             workflow_contract_address, workflow_function_selector, workflow_calldata,
+             workflow_governance_action, workflow_approved_by, workflow_approved_at
         FROM ascp_workflow_outbox outbox
         JOIN ascp_proposal_workflows proposal
           ON proposal.workflow_id = outbox.workflow_id AND proposal.organization_id = outbox.organization_id
         WHERE outbox.outbox_id = NEW.outbox_id;
         IF (FOUND AND source_topic = 'ascp.governance.execute' AND source_payload = NEW.command_json AND
-           workflow.state = 'APPROVED_PENDING_CHAIN' AND NEW.workflow_id = workflow.workflow_id AND
-           NEW.organization_id = workflow.organization_id AND
+           workflow_state = 'APPROVED_PENDING_CHAIN' AND NEW.workflow_id = workflow_id_value AND
+           NEW.organization_id = workflow_organization_id AND
            NEW.command_json->>'version' = 'ASCP_GOVERNANCE_EXECUTION_V1' AND
-           NEW.command_json->>'workflowId' = workflow.workflow_id AND
-           NEW.command_json->>'organizationId' = workflow.organization_id AND
-           NEW.command_json->>'kind' = workflow.kind AND
-           NEW.command_json->>'payloadHash' = workflow.payload_hash AND
-           (NEW.command_json->>'chainId')::numeric = workflow.chain_id AND
-           NEW.command_json->>'contractAddress' = workflow.contract_address AND
-           NEW.command_json->>'functionSelector' = workflow.function_selector AND
-           NEW.command_json->>'calldata' = workflow.calldata AND
+           NEW.command_json->>'workflowId' = workflow_id_value AND
+           NEW.command_json->>'organizationId' = workflow_organization_id AND
+           NEW.command_json->>'kind' = workflow_kind AND
+           NEW.command_json->>'payloadHash' = workflow_payload_hash AND
+           (NEW.command_json->>'chainId')::numeric = workflow_chain_id AND
+           NEW.command_json->>'contractAddress' = workflow_contract_address AND
+           NEW.command_json->>'functionSelector' = workflow_function_selector AND
+           NEW.command_json->>'calldata' = workflow_calldata AND
            NEW.command_json->>'value' = '0' AND NEW.command_json->>'operation' = 'CALL' AND
-           NEW.command_json->'governanceAction' = workflow.governance_action AND
-           NEW.command_json->>'approvedBy' = workflow.approved_by AND
-           (NEW.command_json->>'approvedAt')::bigint = extract(epoch FROM workflow.approved_at)::bigint AND
-           (NEW.command_json->>'executeAfter')::bigint = extract(epoch FROM workflow.approved_at)::bigint + 1 AND
+           NEW.command_json->'governanceAction' = workflow_governance_action AND
+           NEW.command_json->>'approvedBy' = workflow_approved_by AND
+           (NEW.command_json->>'approvedAt')::bigint = extract(epoch FROM workflow_approved_at)::bigint AND
+           (NEW.command_json->>'executeAfter')::bigint = extract(epoch FROM workflow_approved_at)::bigint + 1 AND
            NEW.command_json->>'approvalActionHash' ~ '^0x[0-9a-f]{64}$') IS NOT TRUE THEN
             RAISE EXCEPTION 'governance relay command is not the approved workflow command' USING ERRCODE = '55000';
         END IF;
@@ -318,17 +336,23 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS ascp_governance_relay_jobs_guard ON ascp_governance_relay_jobs;
 CREATE TRIGGER ascp_governance_relay_jobs_guard
 BEFORE INSERT OR UPDATE OR DELETE ON ascp_governance_relay_jobs
 FOR EACH ROW EXECUTE FUNCTION flowops_guard_governance_relay_job();
 
+DROP TRIGGER IF EXISTS ascp_governance_relay_jobs_no_truncate ON ascp_governance_relay_jobs;
 CREATE TRIGGER ascp_governance_relay_jobs_no_truncate BEFORE TRUNCATE ON ascp_governance_relay_jobs
 FOR EACH STATEMENT EXECUTE FUNCTION flowops_reject_immutable_mutation();
+DROP TRIGGER IF EXISTS ascp_governance_relay_authorizations_immutable ON ascp_governance_relay_authorizations;
 CREATE TRIGGER ascp_governance_relay_authorizations_immutable BEFORE UPDATE OR DELETE ON ascp_governance_relay_authorizations
 FOR EACH ROW EXECUTE FUNCTION flowops_reject_immutable_mutation();
+DROP TRIGGER IF EXISTS ascp_governance_relay_authorizations_no_truncate ON ascp_governance_relay_authorizations;
 CREATE TRIGGER ascp_governance_relay_authorizations_no_truncate BEFORE TRUNCATE ON ascp_governance_relay_authorizations
 FOR EACH STATEMENT EXECUTE FUNCTION flowops_reject_immutable_mutation();
+DROP TRIGGER IF EXISTS ascp_workflow_safe_retry_proofs_immutable ON ascp_workflow_safe_retry_proofs;
 CREATE TRIGGER ascp_workflow_safe_retry_proofs_immutable BEFORE UPDATE OR DELETE ON ascp_workflow_safe_retry_proofs
 FOR EACH ROW EXECUTE FUNCTION flowops_reject_immutable_mutation();
+DROP TRIGGER IF EXISTS ascp_workflow_safe_retry_proofs_no_truncate ON ascp_workflow_safe_retry_proofs;
 CREATE TRIGGER ascp_workflow_safe_retry_proofs_no_truncate BEFORE TRUNCATE ON ascp_workflow_safe_retry_proofs
 FOR EACH STATEMENT EXECUTE FUNCTION flowops_reject_immutable_mutation();

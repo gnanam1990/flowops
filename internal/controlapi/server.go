@@ -130,6 +130,8 @@ type ServerConfig struct {
 	ASCPWorkflows            ASCPWorkflowService
 	ASCPSettlement           ASCPSettlementRegistrar
 	KeeperCallbackKey        []byte
+	MetricsKey               []byte
+	Readiness                ReadinessChecker
 }
 
 type Server struct {
@@ -152,6 +154,9 @@ type Server struct {
 	ascpWorkflows            ASCPWorkflowService
 	ascpSettlement           ASCPSettlementRegistrar
 	keeperCallbackKey        []byte
+	metricsKey               []byte
+	readiness                ReadinessChecker
+	metrics                  *operationalMetrics
 	handler                  http.Handler
 }
 
@@ -188,6 +193,12 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		ascpWorkflows:          cfg.ASCPWorkflows,
 		ascpSettlement:         cfg.ASCPSettlement,
 		keeperCallbackKey:      append([]byte(nil), cfg.KeeperCallbackKey...),
+		metricsKey:             append([]byte(nil), cfg.MetricsKey...),
+		readiness:              cfg.Readiness,
+		metrics:                newOperationalMetrics(),
+	}
+	if s.readiness == nil {
+		s.readiness, _ = cfg.Store.(ReadinessChecker)
 	}
 	if len(s.operatorControlKey) != 0 && len(s.operatorControlKey) != 32 {
 		return nil, errors.New("operator control key must contain exactly 32 bytes")
@@ -198,7 +209,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if len(s.operatorControlKey) == 32 && len(s.keeperCallbackKey) == 32 && subtle.ConstantTimeCompare(s.operatorControlKey, s.keeperCallbackKey) == 1 {
 		return nil, errors.New("keeper callback key must be distinct from operator control key")
 	}
+	if len(s.metricsKey) != 0 && len(s.metricsKey) != 32 {
+		return nil, errors.New("metrics key must contain exactly 32 bytes")
+	}
+	for name, key := range map[string][]byte{"operator control": s.operatorControlKey, "keeper callback": s.keeperCallbackKey} {
+		if len(s.metricsKey) == 32 && len(key) == 32 && subtle.ConstantTimeCompare(s.metricsKey, key) == 1 {
+			return nil, fmt.Errorf("metrics key must be distinct from %s key", name)
+		}
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /livez", s.handleLiveness)
+	mux.HandleFunc("GET /readyz", s.handleReadiness)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /v1/sites/session", s.handleSiteSessionExchange)
 	mux.Handle("GET /v1/session", s.authenticate(http.HandlerFunc(s.handleSession)))
@@ -244,7 +265,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if s.ascpSettlement != nil && len(s.keeperCallbackKey) == 32 {
 		mux.Handle("POST /v1/ascp/settlement-attempts", s.authenticateStaticKey(s.keeperCallbackKey, http.HandlerFunc(s.handleASCPSettlementAttempt)))
 	}
-	s.handler = securityHeaders(s.withAgentCorrelation(mux))
+	if len(s.metricsKey) == 32 {
+		mux.Handle("GET /metrics", s.authenticateStaticKey(s.metricsKey, http.HandlerFunc(s.handleMetrics)))
+	}
+	s.handler = s.metrics.middleware(securityHeaders(s.withAgentCorrelation(mux)))
 	return s, nil
 }
 
@@ -408,6 +432,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	status := s.chain.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"controlPlane":         "AVAILABLE",
+		"chainId":              status.ChainID,
 		"chainState":           status.State,
 		"authorizationsPaused": status.AuthorizationsPaused,
 		"requiredObservers":    status.RequiredObserverQuorum,
@@ -416,6 +441,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"readyForManualResume": status.ReadyForManualResume,
 		"lastTrusted":          status.LastTrusted,
 	})
+}
+
+func (s *Server) handleLiveness(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "LIVE"})
+}
+
+func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	if s.readiness == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "NOT_READY"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.readiness.Ready(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "NOT_READY"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "READY"})
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	status := s.chain.Status()
+	s.metrics.serve(w, func() string { return string(status.State) }, status.ChainID, status.AuthorizationsPaused)
 }
 
 func (s *Server) handleSignerBroadcast(w http.ResponseWriter, r *http.Request) {
@@ -1538,7 +1586,8 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	now := s.clock().UTC()
-	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: s.chain.Status(), GeneratedAt: now}
+	chainStatus := s.chain.Status()
+	reconciliationView := reconciliation.OrganizationView{Available: false, Chain: chainStatus, GeneratedAt: now}
 	if s.reconciliation != nil {
 		reconciliationView = s.reconciliation.OrganizationView(principal.OrganizationID)
 	}
@@ -1554,9 +1603,10 @@ func (s *Server) handleDashboardSnapshot(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
+	decorateDashboardApprovals(&ascpView, chainStatus.ChainID)
 	writeJSON(w, http.StatusOK, DashboardSnapshot{
 		Live: true, GeneratedAt: now, OrganizationID: principal.OrganizationID,
-		Chain: s.chain.Status(), PendingApprovals: approvals, Agents: agents, Organization: organization,
+		Chain: chainStatus, PendingApprovals: approvals, Agents: agents, Organization: organization,
 		Reconciliation: reconciliationView, ASCP: ascpView,
 	})
 }

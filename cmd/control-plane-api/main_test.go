@@ -18,7 +18,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 		"FLOWOPS_ASCP_KEEPER_CALLBACK_KEY_B64",
 		"FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS", "FLOWOPS_ASCP_ADAPTATION_KEY_ID",
 		"FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET", "FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT",
-		"FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", "FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK",
+		"FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", "FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", "FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK",
 		"FLOWOPS_BASE_RPC_PROVIDERS_JSON",
 		"FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC",
 	} {
@@ -42,6 +42,11 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	if cfg.address != defaultAddress || cfg.trustProxy || !cfg.applyMigrations || len(cfg.envelopeKey) != ed25519.PrivateKeySize || len(cfg.siteSessionKey) != 32 || cfg.ascpDirectoryMaxAge != time.Minute || cfg.ascpMaxActiveOperations != 1000 {
 		t.Fatalf("configuration was not normalized: %+v", cfg)
 	}
+	t.Setenv("FLOWOPS_METRICS_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32))))
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "metrics key must be distinct") {
+		t.Fatalf("shared metrics capability error=%v", err)
+	}
+	t.Setenv("FLOWOPS_METRICS_KEY_B64", "")
 	t.Setenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT", "0x0000000000000000000000000000000000000000")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("zero ASCP directory contract was accepted")
@@ -98,6 +103,61 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	t.Setenv("FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "02")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("noncanonical adaptation key epoch was accepted")
+	}
+}
+
+func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
+	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("r", ed25519.SeedSize)))
+	setObserverRuntime(t)
+	manifest := setMainnetReleaseRuntime(t)
+	previousBuildSource := buildSourceCommit
+	previousArtifactHasher := runningExecutableSHA256
+	buildSourceCommit = manifest.SourceCommit
+	runningExecutableSHA256 = func() (string, error) { return manifest.ControlPlaneArtifactSHA256, nil }
+	t.Cleanup(func() {
+		buildSourceCommit = previousBuildSource
+		runningExecutableSHA256 = previousArtifactHasher
+	})
+	t.Setenv("FLOWOPS_DATABASE_URL", strings.Join([]string{"postgres", "://flowops@localhost/flowops?sslmode=require"}, ""))
+	t.Setenv("FLOWOPS_ENVELOPE_KEY_ID", "flowops_control_1")
+	t.Setenv("FLOWOPS_ENVELOPE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
+	t.Setenv("FLOWOPS_SITE_SESSION_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
+	t.Setenv("FLOWOPS_RECONCILIATION_JOURNAL", "/var/lib/flowops/reconciliation.log")
+	t.Setenv("FLOWOPS_ASCP_DIRECTORY_CONTRACT", observerAddress(10))
+	t.Setenv("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", observerAddress(11))
+	t.Setenv("FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", observerAddress(12))
+	t.Setenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", observerAddress(13))
+	t.Setenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK", "100")
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "FLOWOPS_METRICS_KEY_B64") {
+		t.Fatalf("mainnet without private metrics credential error=%v", err)
+	}
+	t.Setenv("FLOWOPS_METRICS_KEY_B64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("m", 32))))
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.observerConfig.ChainID != 8453 || cfg.ascpAgentRegistryContract != observerAddress(11) {
+		t.Fatalf("mainnet config=%+v", cfg)
+	}
+	if len(cfg.metricsKey) != 32 {
+		t.Fatal("mainnet metrics key was not loaded")
+	}
+
+	buildSourceCommit = strings.Repeat("b", 40)
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "build source") {
+		t.Fatalf("mismatched control-plane build source error=%v", err)
+	}
+	buildSourceCommit = manifest.SourceCommit
+	runningExecutableSHA256 = func() (string, error) { return observerDigest(99), nil }
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "running control-plane artifact") {
+		t.Fatalf("substituted control-plane artifact error=%v", err)
+	}
+	runningExecutableSHA256 = func() (string, error) { return manifest.ControlPlaneArtifactSHA256, nil }
+
+	t.Setenv("FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", observerAddress(99))
+	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "signed Base mainnet release") {
+		t.Fatalf("registry substitution error=%v", err)
 	}
 }
 

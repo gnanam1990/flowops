@@ -285,7 +285,7 @@
       "title": "Dependency-graph checks",
       "expectation": "§25.5 isolation; meta-test catches planted violation",
       "active": true,
-      "status": "partial",
+      "status": "local_evidence",
       "primaryOwner": "mcp_base_adapter",
       "participants": [
         "mcp_base_adapter"
@@ -294,13 +294,26 @@
         "INV-AUTHZ",
         "INV-ISOLATION"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/mcp/dependency_test.go",
+          "ref": "TestMCPProductionDependencyGraphHasNoWalletChainOrSignerPath",
+          "command": "go test -race ./internal/mcp -run '^TestMCPProductionDependencyGraphHasNoWalletChainOrSignerPath$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/mcp/dependency_test.go",
+          "ref": "TestDependencyGraphMetaTestDetectsPlantedViolation",
+          "command": "go test -race ./internal/mcp -run '^TestDependencyGraphMetaTestDetectsPlantedViolation$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "Related implementation exists, but no mapped executable adapter proves every clause of this criterion."
+      "gap": "The production dependency graph and a planted-violation meta-test have direct local executable evidence; the full AC artifact bundle and release-stage proof remain outstanding."
     },
     {
       "id": "AC-10",
@@ -817,7 +830,7 @@
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "Related implementation exists, but no mapped executable adapter proves every clause of this criterion."
+      "gap": "Local asset-health coverage exists, but no pinned Base fork forces canonical USDC pause and blacklist failures through lock, release, and refund while proving reservation and ledger reconciliation."
     },
     {
       "id": "AC-27",
@@ -1044,7 +1057,7 @@
       "title": "Sustained peak + retries + restart",
       "expectation": "SLOs met; zero leaked reservations/authorizations/duplicates/unbounded queues",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "dashboard_ops",
       "participants": [
         "dashboard_ops"
@@ -1054,13 +1067,32 @@
         "INV-AVAILABILITY",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpcapacity/evidence_test.go",
+          "ref": "TestAnalyzeAcceptsBoundedSustainedRestartRun",
+          "command": "go test -race ./internal/ascpcapacity -run '^TestAnalyzeAcceptsBoundedSustainedRestartRun$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpcapacity/evidence_test.go",
+          "ref": "TestAnalyzeRejectsAC34FailureClasses",
+          "command": "go test -race ./internal/ascpcapacity -run '^TestAnalyzeRejectsAC34FailureClasses$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpexecauth/postgres_test.go",
+          "ref": "TestPostgresCapacityExhaustionRollsBackReservationWithoutAuthorization",
+          "command": "go test -race ./internal/ascpexecauth -run '^TestPostgresCapacityExhaustionRollsBackReservationWithoutAuthorization$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "The strict load-evidence auditor and rollback-safe capacity boundary have local executable evidence; an externally driven production-equivalent sustained run and release artifact bundle remain outstanding."
     },
     {
       "id": "AC-35",
@@ -1249,7 +1281,7 @@
       "title": "Retry after 7/30/365 days + restores",
       "expectation": "Tombstones + seller result store prevent any new effect",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "controlplane",
       "participants": [
         "controlplane",
@@ -1260,13 +1292,32 @@
         "INV-IDEMPOTENCY",
         "INV-X402"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpintake/intake_test.go",
+          "ref": "TestPermanentTombstoneSurvivesSevenThirtyAnd365DayRestores",
+          "command": "go test -race ./internal/ascpintake -run '^TestPermanentTombstoneSurvivesSevenThirtyAnd365DayRestores$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/sellerresult/sellerresult_test.go",
+          "ref": "TestExactResultSurvivesSevenThirtyAnd365DayRestores",
+          "command": "go test -race ./pkg/sellerresult -run '^TestExactResultSurvivesSevenThirtyAnd365DayRestores$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "pkg/sellerresult/sellerresult_test.go",
+          "ref": "TestRestoreOfUnknownSideEffectFailsClosed",
+          "command": "go test -race ./pkg/sellerresult -run '^TestRestoreOfUnknownSideEffectFailsClosed$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "Permanent tombstone and seller-result restores at 7, 30, and 365 days have direct local executable evidence; managed backup/restore and release-stage artifacts remain outstanding."
     },
     {
       "id": "AC-43",
@@ -1581,7 +1632,7 @@
       "title": "Standby promotion with old-host traffic injected at every controlled sink through cutover",
       "expectation": "Every old-epoch issuance/effect rejected from cutover; evidence names sink and observed epoch; cutover not declared before drain completion",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "dashboard_ops",
       "participants": [
         "dashboard_ops"
@@ -1592,13 +1643,26 @@
         "INV-AVAILABILITY",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpleadership/leadership_test.go",
+          "ref": "TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce",
+          "command": "go test -race ./internal/ascpleadership -run '^TestPostgresLeadershipDrainWaitsForFencedEffectAndAdvancesExactlyOnce$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpleadership/leadership_test.go",
+          "ref": "TestPostgresLeadershipDatabaseRejectsDirectAdvanceWhileEffectIsInFlight",
+          "command": "go test -race ./internal/ascpleadership -run '^TestPostgresLeadershipDatabaseRejectsDirectAdvanceWhileEffectIsInFlight$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "The durable drain fence rejects old-epoch effects at all six named sinks and blocks premature cutover in local PostgreSQL evidence; production failover-drill artifacts remain outstanding."
     },
     {
       "id": "AC-55",
@@ -2009,7 +2073,7 @@
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "Related implementation exists, but no mapped executable adapter proves every clause of this criterion."
+      "gap": "Typed governance workflows cover only the implemented action subset; no complete inventory maps every chain-mutating Owner endpoint to an exact action schema, independent approval, Safe calldata, receipt ownership, and immutable audit evidence."
     },
     {
       "id": "AC-67",
@@ -2356,7 +2420,7 @@
       "title": "Generate all amended EIP-712/JSON types from the normative appendix in Solidity, Go, and TypeScript",
       "expectation": "Identical type strings, domain separators, struct hashes, digests, and canonical JSON bytes",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "schemas_vectors",
       "participants": [
         "schemas_vectors",
@@ -2365,13 +2429,37 @@
       "invariants": [
         "INV-CANONICAL"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "pkg/typedregistry/registry_test.go",
+          "ref": "TestNormativeRegistryPinsEveryGoTypeAndArtifact",
+          "command": "go test -race ./pkg/typedregistry -run '^TestNormativeRegistryPinsEveryGoTypeAndArtifact$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPTypeHashes.t.sol",
+          "ref": "testRegistryPinsEveryNormativeTypeString",
+          "command": "forge test --match-path contracts/test/ASCPTypeHashes.t.sol --match-test '^testRegistryPinsEveryNormativeTypeString$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/ASCPTypeHashes.t.sol",
+          "ref": "testSellerQuoteMatchesPublishedCrossLanguageVector",
+          "command": "forge test --match-path contracts/test/ASCPTypeHashes.t.sol --match-test '^testSellerQuoteMatchesPublishedCrossLanguageVector$'"
+        },
+        {
+          "kind": "script",
+          "path": "sdk/typescript/test/typedData.test.ts",
+          "command": "npm test --prefix sdk/typescript"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "All six normative types, exact Solidity type strings, shared vector hashes/digests, TypeScript encodings, and canonical JSON bytes have direct local executable evidence; signed release-manifest and release-stage artifacts remain outstanding."
     },
     {
       "id": "AC-78",
@@ -2555,7 +2643,7 @@
       "title": "Safe action pending, dropped, reorged, mined-revert, or stale after changed preconditions",
       "expectation": "Only byte-identical relay-safe cases auto-retry; owner re-sign/reapproval occurs when Safe nonce or authorization changes",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "contracts",
       "participants": [
         "contracts",
@@ -2568,13 +2656,38 @@
         "INV-CANONICAL",
         "INV-AVAILABILITY"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpgovernancerelay/kernel_test.go",
+          "ref": "TestPrepareAndRetryOnlyExactSafeTransaction",
+          "command": "go test -race ./internal/ascpgovernancerelay -run '^TestPrepareAndRetryOnlyExactSafeTransaction$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpgovernancerelay/service_test.go",
+          "ref": "TestServiceRequiresReapprovalWhenSafeNonceChangesBeforeRetry",
+          "command": "go test -race ./internal/ascpgovernancerelay -run '^TestServiceRequiresReapprovalWhenSafeNonceChangesBeforeRetry$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpgovernancerelay/service_test.go",
+          "ref": "TestServiceMinedRevertRequiresOneStepReapprovalWithoutNonceConsumption",
+          "command": "go test -race ./internal/ascpgovernancerelay -run '^TestServiceMinedRevertRequiresOneStepReapprovalWithoutNonceConsumption$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpgovernancerelay/service_test.go",
+          "ref": "TestServiceDoesNotResendProvenDroppedOuterAfterBindingDrift",
+          "command": "go test -race ./internal/ascpgovernancerelay -run '^TestServiceDoesNotResendProvenDroppedOuterAfterBindingDrift$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "Exact Safe-byte retry, pending/dropped handling, changed-nonce reapproval, mined-revert reapproval, and binding-drift refusal have direct local executable evidence; production Safe ceremony artifacts remain outstanding."
     },
     {
       "id": "AC-84",
@@ -2612,7 +2725,7 @@
       "title": "Agent invokes every MCP tool and attempts owner/admin parameters",
       "expectation": "Credential-derived identity and tool scopes hold; no approval, signer, keeper, evidence, or admin boundary is bypassed",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "mcp_base_adapter",
       "participants": [
         "mcp_base_adapter",
@@ -2624,13 +2737,20 @@
         "INV-ISOLATION",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/mcp/server_test.go",
+          "ref": "TestEveryAdvertisedToolIsBoundToTheAuthenticatedPrincipalClass",
+          "command": "go test -race ./internal/mcp -run '^(TestEveryAdvertisedToolIsBoundToTheAuthenticatedPrincipalClass|TestEveryAdvertisedToolHasAReachableHandlerForItsAllowedPrincipal|TestOwnerAdminAndDuplicateParametersFailBeforeToolDelegation)$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "The complete local MCP tool and parameter matrix is executable, but production identity-provider and release-stage evidence remain outstanding."
     },
     {
       "id": "AC-86",
@@ -2638,7 +2758,7 @@
       "title": "Seller quote/content/tool result contains prompt injection, fake tool calls, secrets, or destination changes",
       "expectation": "Content remains data; policy, payee, calldata, system instructions, logs, and approval UI are unchanged or safely escaped",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "mcp_base_adapter",
       "participants": [
         "mcp_base_adapter",
@@ -2650,13 +2770,25 @@
         "INV-ISOLATION",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/mcp/server_test.go",
+          "ref": "TestHostileBackendContentRemainsMarkedDataAndSecretsAreRedacted",
+          "command": "go test -race ./internal/mcp -run '^TestHostileBackendContentRemainsMarkedDataAndSecretsAreRedacted$'"
+        },
+        {
+          "kind": "script",
+          "path": "apps/dashboard/tests/browser/control-room.spec.ts",
+          "command": "npm run test:browser --prefix apps/dashboard"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "Hostile MCP data framing, secret redaction, dashboard escaping, and Chromium desktop/mobile approval confirmation have local executable evidence; production seller and release-stage evidence remain outstanding."
     },
     {
       "id": "AC-87",
@@ -2664,7 +2796,7 @@
       "title": "ASCP MCP/Base adapter/official Base MCP requests signing, arbitrary send, swap, contract call, private key, allowance, x402 write, unknown tool, or single-provider override",
       "expectation": "Production capability firewall denies all; only pinned read tools work; dependency-graph tests fail if a write path is planted",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "mcp_base_adapter",
       "participants": [
         "mcp_base_adapter",
@@ -2676,13 +2808,26 @@
         "INV-ISOLATION",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/basemcp/firewall_test.go",
+          "ref": "TestProductionFirewallDeniesEveryWalletAndOverrideCapability",
+          "command": "go test -race ./internal/basemcp -run '^(TestProductionFirewallAllowsOnlyPinnedAdvisoryReads|TestProductionFirewallDeniesEveryWalletAndOverrideCapability|TestProductionFirewallRejectsEndpointArgumentAndResultSubstitution)$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/architecturedeps/isolation_test.go",
+          "ref": "TestBaseMCPPolicyCatchesPlantedWalletPath",
+          "command": "go test -race ./internal/architecturedeps -run '^(TestProductionDependencyGraphSatisfiesStructuralIsolation|TestBaseMCPPolicyCatchesPlantedWalletPath)$'"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "The pinned official Base MCP read-only firewall, complete denied-capability matrix, production dependency graph, and planted wallet-path meta-test are locally executable; production adapter deployment evidence remains outstanding."
     },
     {
       "id": "AC-88",
@@ -2690,7 +2835,7 @@
       "title": "Submit the same intent concurrently through REST and MCP; lose responses and restart",
       "expectation": "One operation, quote nonce, reservation, authorization, and economic effect; both surfaces replay the same outcome",
       "active": true,
-      "status": "missing",
+      "status": "local_evidence",
       "primaryOwner": "controlplane",
       "participants": [
         "controlplane",
@@ -2702,13 +2847,24 @@
         "INV-X402",
         "INV-CANONICAL"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/controlapi/ascp_cross_surface_test.go",
+          "ref": "TestASCPRealPostgresCrossSurfaceDurableUniqueness",
+          "command": "FLOWOPS_TEST_DATABASE_URL=postgres://... go test -race ./internal/controlapi -run '^TestASCPRealPostgresCrossSurfaceDurableUniqueness$' -count=3"
+        },
+        {
+          "kind": "docs",
+          "path": "docs/modules/ASCP_CROSS_SURFACE_IDEMPOTENCY.md"
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "No executable repository adapter currently proves the complete criterion; implementation and evidence are required."
+      "gap": "Real-PostgreSQL REST/MCP races, response loss, service reconstruction, and exact durable row counts run in CI; finalized on-chain economic uniqueness and the full release artifact bundle remain outstanding."
     }
   ]
 }

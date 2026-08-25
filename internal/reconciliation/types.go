@@ -157,6 +157,7 @@ type Checkpoint struct {
 }
 
 type ChainStatus struct {
+	ChainID                 uint64      `json:"chainId"`
 	State                   ChainState  `json:"state"`
 	Reason                  string      `json:"reason"`
 	LastTrusted             *Checkpoint `json:"lastTrusted,omitempty"`

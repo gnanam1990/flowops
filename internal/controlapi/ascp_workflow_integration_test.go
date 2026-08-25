@@ -134,13 +134,8 @@ func TestASCPWorkflowRealPostgresConcurrentDecisionAndImmutableAudit(t *testing.
 		t.Fatalf("pending chain=%+v err=%v", chainWorkflow, err)
 	}
 	chainTransactionHash := fmt.Sprintf("0x%064x", 4)
-	chainWorkflow, err = verifiedService.RecordSubmission(ctx, "org_workflow_it", chainWorkflow.WorkflowID, chainTransactionHash)
-	if err != nil || chainWorkflow.State != ascpworkflow.Submitted {
-		t.Fatalf("submitted chain=%+v err=%v", chainWorkflow, err)
-	}
-	chainWorkflow, err = verifiedService.RecordConfirmation(ctx, "org_workflow_it", chainWorkflow.WorkflowID, chainTransactionHash)
-	if err != nil || chainWorkflow.State != ascpworkflow.Confirmed {
-		t.Fatalf("confirmed chain=%+v err=%v", chainWorkflow, err)
+	if submitted, err := verifiedService.RecordSubmission(ctx, "org_workflow_it", chainWorkflow.WorkflowID, chainTransactionHash); err == nil {
+		t.Fatalf("blind submission bypassed relay/receipt ownership: %+v", submitted)
 	}
 	completed, err := verifiedService.ObserveAndComplete(ctx, "org_workflow_it", chainWorkflow.WorkflowID)
 	if err != nil || completed.State != ascpworkflow.Finalized || completed.CompletionDigest == "" {
@@ -388,7 +383,7 @@ func (workflowCompletionObserver) ValidateGovernanceAction(governanceworkflow.Bo
 
 func (workflowCompletionObserver) ObserveWorkflowCompletion(_ context.Context, workflow ascpworkflow.Workflow) (ascpworkflow.CompletionReceipt, error) {
 	return ascpworkflow.CompletionReceipt{
-		WorkflowID: workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ChainID: workflow.ChainID,
+		WorkflowID: workflow.WorkflowID, PayloadHash: workflow.PayloadHash, ChainAction: workflow.ChainAction, ChainID: workflow.ChainID,
 		TransactionHash: fmt.Sprintf("0x%064x", 4), BlockNumber: 99, BlockHash: fmt.Sprintf("0x%064x", 5),
 		BlockTimestamp: uint64(workflow.ApprovedAt + 1), ConfirmedHead: 130, FinalizedHead: 120, LogIndex: 2,
 		ContractAddress: workflow.ContractAddress,

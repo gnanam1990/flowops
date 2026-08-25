@@ -27,8 +27,13 @@ Status: inactive fallback; hosted GitHub Actions runs on `ubuntu-24.04-arm`
 
 ## Gate
 
-The active hosted job runs formatting, vet, race-enabled Go tests, Solidity
-checks, readiness mutations, and dashboard checks on `ubuntu-24.04-arm`. A
+The active hosted job runs formatting, vet, race-enabled Go tests against an
+ephemeral PostgreSQL 17 service, Solidity checks, readiness mutations, and
+dashboard checks on `ubuntu-24.04-arm`. `FLOWOPS_TEST_DATABASE_URL` is set at
+job scope, so integration tests cannot silently downgrade to skip; AC-88's real
+PostgreSQL cross-surface race is also repeated in a named CI step. The database
+service uses trust authentication only on the job-isolated container network;
+its runtime-composed URL and role have no production authority. A
 green check is required before merge. If this fallback is reactivated, its
 self-hosted job must run the same workflow steps. The
 module's independent clean-clone, Linux-container, and relevant live read-only

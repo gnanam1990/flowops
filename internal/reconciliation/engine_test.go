@@ -134,8 +134,28 @@ func TestLegacyChainStatusReplayNormalizesObserverMetadata(t *testing.T) {
 	}
 	defer engine.Close()
 	status := engine.Status()
-	if status.RequiredObserverQuorum != 2 || !status.LastObservationAt.Equal(observedAt) {
+	if status.ChainID != 84532 || status.RequiredObserverQuorum != 2 || !status.LastObservationAt.Equal(observedAt) {
 		t.Fatalf("normalized legacy status = %+v", status)
+	}
+}
+
+func TestChainStatusReplayRejectsDifferentNetwork(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "reconciliation.log")
+	journal, err := openJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := ChainStatus{ChainID: 8453, State: StateHalted, Reason: "wrong network", StateChangedAt: clock.Now()}
+	if _, err := journal.append(context.Background(), clock.Now(), eventChainStatus, "wrong-chain", chainPayload{Status: status}); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path, testConfig(clock)); err == nil || !strings.Contains(err.Error(), "does not match configured chain") {
+		t.Fatalf("wrong-network replay error = %v", err)
 	}
 }
 

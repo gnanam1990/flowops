@@ -109,7 +109,10 @@ func (s *PostgresStore) Authorize(ctx context.Context, organizationID, workflowI
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, organizationID+"\x00"+key); err != nil {
+	// Both values reject whitespace, so a newline is a collision-free separator
+	// that PostgreSQL text accepts. A NUL separator cannot cross the text
+	// protocol and made the durable authorization path fail before locking.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, organizationID+"\n"+key); err != nil {
 		return Job{}, false, err
 	}
 	var storedHash, storedWorkflow string

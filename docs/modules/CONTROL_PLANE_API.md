@@ -210,6 +210,13 @@ action, transaction hash, and release-only delivery/evidence hashes. It has no
 field or authority for success, finality, release, refund, or ledger state;
 those outcomes require independent Base receipt quorum.
 
+`GET /livez`, `GET /readyz`, and `GET /health` have intentionally different
+contracts: process liveness, bounded PostgreSQL readiness, and public product /
+chain health respectively. `GET /metrics` exists only when a distinct 32-byte
+`FLOWOPS_METRICS_KEY_B64` is configured and accepts that credential alone. Base
+mainnet startup requires it. Metrics use bounded route/status labels and never
+emit tenant, principal, path-value, address, digest, or token labels.
+
 `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` is optional. When present it is a strict
 array of `organizationId`, `customerId`, `keyId`, and `publicKeyB64`; the last
 field must contain exactly one 32-byte Ed25519 public key. Private-key-shaped

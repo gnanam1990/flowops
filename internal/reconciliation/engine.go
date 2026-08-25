@@ -74,7 +74,8 @@ func Open(path string, config Config) (*Engine, error) {
 	engine := &Engine{
 		config: config, journal: journal,
 		status: ChainStatus{
-			State: StateSuspectedStall, Reason: "startup requires fresh independent Base observations",
+			ChainID: config.ChainID,
+			State:   StateSuspectedStall, Reason: "startup requires fresh independent Base observations",
 			RequiredObserverQuorum: config.ObserverQuorum, StateChangedAt: now,
 		},
 		executions: make(map[string]Execution), executionByHash: make(map[string]string),
@@ -759,6 +760,15 @@ func (e *Engine) apply(event journalEvent) error {
 		e.applyLedger(payload.Transaction)
 	default:
 		return fmt.Errorf("unsupported reconciliation event kind %q", event.Kind)
+	}
+	// ChainID was added after the original reconciliation journal format. A
+	// missing value is normalized for rollback compatibility, while a non-zero
+	// mismatch is rejected so an operator can never replay one network's chain
+	// state into another network's runtime.
+	if e.status.ChainID == 0 {
+		e.status.ChainID = e.config.ChainID
+	} else if e.status.ChainID != e.config.ChainID {
+		return fmt.Errorf("reconciliation chain status %d does not match configured chain %d", e.status.ChainID, e.config.ChainID)
 	}
 	return nil
 }
