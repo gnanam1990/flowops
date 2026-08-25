@@ -62,6 +62,8 @@ func TestReleaseManifestRejectsResignedUnsafeMutations(t *testing.T) {
 		"missing contract":      func(m *Manifest) { m.Contracts = m.Contracts[:3] },
 		"weak Safe":             func(m *Manifest) { m.Safe.Threshold = 1 },
 		"diluted Safe":          func(m *Manifest) { m.Safe.Owners = append(m.Safe.Owners, address(9)) },
+		"deployer is asset":     func(m *Manifest) { m.Deployer = m.Asset.Address },
+		"Safe is asset":         func(m *Manifest) { m.Safe.Address = m.Asset.Address; m.Authorities.Governor = m.Asset.Address },
 		"deployer is owner":     func(m *Manifest) { m.Deployer = m.Safe.Owners[0] },
 		"duplicate owner":       func(m *Manifest) { m.Safe.Owners[1] = m.Safe.Owners[0] },
 		"shared authority":      func(m *Manifest) { m.Authorities.RegistryAdmin = m.Authorities.DirectoryPublisher },

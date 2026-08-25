@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,19 +75,61 @@ func captureStdout(t *testing.T, action func() error) (string, error) {
 	}
 	original := os.Stdout
 	os.Stdout = write
+	closed := false
+	var closeErr error
+	restore := func() {
+		if closed {
+			return
+		}
+		os.Stdout = original
+		closeErr = write.Close()
+		closed = true
+	}
+	defer restore()
+	type captureResult struct {
+		output string
+		err    error
+	}
+	captured := make(chan captureResult, 1)
+	go func() {
+		defer read.Close()
+		output, err := io.ReadAll(read)
+		captured <- captureResult{output: string(output), err: err}
+	}()
 	actionErr := action()
-	os.Stdout = original
-	if err := write.Close(); err != nil {
-		t.Fatal(err)
+	restore()
+	result := <-captured
+	if closeErr != nil {
+		t.Fatal(closeErr)
 	}
-	var output bytes.Buffer
-	if _, err := output.ReadFrom(read); err != nil {
-		t.Fatal(err)
+	if result.err != nil {
+		t.Fatal(result.err)
 	}
-	if err := read.Close(); err != nil {
-		t.Fatal(err)
+	return result.output, actionErr
+}
+
+func TestCaptureStdoutDrainsLargeOutputAndRestoresAfterPanic(t *testing.T) {
+	payload := strings.Repeat("x", 1<<20)
+	output, err := captureStdout(t, func() error {
+		_, err := os.Stdout.WriteString(payload)
+		return err
+	})
+	if err != nil || output != payload {
+		t.Fatalf("large stdout capture: bytes=%d err=%v", len(output), err)
 	}
-	return output.String(), actionErr
+
+	original := os.Stdout
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("capture action did not panic")
+			}
+		}()
+		_, _ = captureStdout(t, func() error { panic("capture failure") })
+	}()
+	if os.Stdout != original {
+		t.Fatal("stdout was not restored after capture panic")
+	}
 }
 
 func writeManifest(t *testing.T, path string, manifest releaseadmission.Manifest) {

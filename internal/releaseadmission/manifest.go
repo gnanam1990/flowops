@@ -416,10 +416,10 @@ func validateSafeAndAuthorities(deployer, asset string, safe SafeBinding, author
 		int(safe.Threshold)*3 < len(safe.Owners)*2 {
 		return errors.New("release deployer and Safe must be canonical with a two-of-three-or-stronger threshold")
 	}
-	seen := map[string]struct{}{deployer: {}, asset: {}, safe.Address: {}}
-	if deployer == safe.Address {
-		return errors.New("release deployer, Safe, owners, and authorities must be independently assigned")
+	if deployer == asset || safe.Address == asset || deployer == safe.Address {
+		return errors.New("release asset, deployer, Safe, owners, and authorities must be independently assigned")
 	}
+	seen := map[string]struct{}{deployer: {}, asset: {}, safe.Address: {}}
 	for _, owner := range safe.Owners {
 		if !canonicalAddress(owner) {
 			return errors.New("release Safe owners must be canonical non-zero addresses")
