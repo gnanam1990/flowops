@@ -219,6 +219,9 @@ func TestProxyTransportBoundaryRejectsUntrustedPlaintext(t *testing.T) {
 		want            int
 	}{
 		{path: "/health", want: http.StatusNoContent},
+		{path: "/livez", want: http.StatusNoContent},
+		{path: "/readyz", want: http.StatusNoContent},
+		{path: "/readyz/", want: http.StatusBadRequest},
 		{path: "/v1/dashboard/snapshot", forwarded: "https", want: http.StatusNoContent},
 		{path: "/v1/dashboard/snapshot", forwarded: "HTTPS, http", want: http.StatusNoContent},
 		{path: "/v1/dashboard/snapshot", forwarded: "http", want: http.StatusBadRequest},

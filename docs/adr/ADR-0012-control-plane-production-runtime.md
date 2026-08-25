@@ -28,11 +28,14 @@ role only its required permissions. The default remains enabled for local
 development, so production configuration must set the variable explicitly.
 
 The API may bind a non-loopback address only when
-`FLOWOPS_TRUST_PROXY_HEADERS=true`. In that mode every route except `/health`
-requires the first `X-Forwarded-Proto` value to be `https`. This mode is valid
-only when the service port is reachable exclusively through the selected
-platform edge. It must not be enabled on a directly reachable host or a network
-where another tenant can connect to the container port and forge proxy headers.
+`FLOWOPS_TRUST_PROXY_HEADERS=true`. In that mode every route except the exact
+non-sensitive platform probes `/health`, `/livez`, and `/readyz` requires the
+first `X-Forwarded-Proto` value to be `https`. The probe exemption lets the
+platform health checker reach the container without fabricating an external
+proxy header; lookalike paths remain protected. This mode is valid only when
+the service port is reachable exclusively through the selected platform edge.
+It must not be enabled on a directly reachable host or a network where another
+tenant can connect to the container port and forge proxy headers.
 
 `flowops-admin sites-bootstrap-owner` reads one strict JSON object from stdin,
 applies immutable migrations, and atomically creates or verifies:

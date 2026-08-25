@@ -769,7 +769,7 @@ func enforceTransportSecurity(next http.Handler, trustProxy bool) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/health" && firstForwardedValue(request.Header.Get("X-Forwarded-Proto")) != "https" {
+		if !isPlatformProbe(request.URL.Path) && firstForwardedValue(request.Header.Get("X-Forwarded-Proto")) != "https" {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusBadRequest)
 			_, _ = writer.Write([]byte(`{"error":{"code":"HTTPS_REQUIRED","message":"secure transport is required"}}`))
@@ -777,6 +777,10 @@ func enforceTransportSecurity(next http.Handler, trustProxy bool) http.Handler {
 		}
 		next.ServeHTTP(writer, request)
 	})
+}
+
+func isPlatformProbe(path string) bool {
+	return path == "/health" || path == "/livez" || path == "/readyz"
 }
 
 func firstForwardedValue(value string) string {
