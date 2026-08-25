@@ -233,7 +233,7 @@ func ValidateUnsigned(manifest Manifest, now time.Time) error {
 		manifest.SettlementWindowSeconds < 30*60 || manifest.SettlementWindowSeconds > 30*24*60*60 {
 		return errors.New("release manifest has invalid governance or settlement observation bounds")
 	}
-	if err := validateSafeAndAuthorities(manifest.Deployer, manifest.Safe, manifest.Authorities, manifest.Contracts); err != nil {
+	if err := validateSafeAndAuthorities(manifest.Deployer, manifest.Asset.Address, manifest.Safe, manifest.Authorities, manifest.Contracts); err != nil {
 		return err
 	}
 	if manifest.Pilot.MaxPerActionAtomic != InitialMaxPerActionAtomic || manifest.Pilot.MaxOutstandingAtomic != InitialMaxOutstandingAtomic {
@@ -411,12 +411,12 @@ func validateContracts(contracts []ContractBinding) error {
 	return nil
 }
 
-func validateSafeAndAuthorities(deployer string, safe SafeBinding, authorities AuthorityBinding, contracts []ContractBinding) error {
+func validateSafeAndAuthorities(deployer, asset string, safe SafeBinding, authorities AuthorityBinding, contracts []ContractBinding) error {
 	if !canonicalAddress(deployer) || !canonicalAddress(safe.Address) || len(safe.Owners) < 3 || safe.Threshold < 2 || int(safe.Threshold) > len(safe.Owners) ||
 		int(safe.Threshold)*3 < len(safe.Owners)*2 {
 		return errors.New("release deployer and Safe must be canonical with a two-of-three-or-stronger threshold")
 	}
-	seen := map[string]struct{}{deployer: {}, safe.Address: {}}
+	seen := map[string]struct{}{deployer: {}, asset: {}, safe.Address: {}}
 	if deployer == safe.Address {
 		return errors.New("release deployer, Safe, owners, and authorities must be independently assigned")
 	}
@@ -444,7 +444,7 @@ func validateSafeAndAuthorities(deployer string, safe SafeBinding, authorities A
 	}
 	for _, contract := range contracts {
 		if _, duplicate := seen[contract.Address]; duplicate {
-			return errors.New("release contracts must not overlap Safe, owners, or authorities")
+			return errors.New("release contracts must not overlap the asset, Safe, owners, or authorities")
 		}
 		seen[contract.Address] = struct{}{}
 	}

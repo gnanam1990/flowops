@@ -58,6 +58,7 @@ func TestReleaseManifestRejectsResignedUnsafeMutations(t *testing.T) {
 		"wrong asset":           func(m *Manifest) { m.Asset.Address = address(99) },
 		"unverified source":     func(m *Manifest) { m.Contracts[0].SourceVerified = false },
 		"duplicate contract":    func(m *Manifest) { m.Contracts[1].Address = m.Contracts[0].Address },
+		"contract is asset":     func(m *Manifest) { m.Contracts[0].Address = m.Asset.Address },
 		"missing contract":      func(m *Manifest) { m.Contracts = m.Contracts[:3] },
 		"weak Safe":             func(m *Manifest) { m.Safe.Threshold = 1 },
 		"diluted Safe":          func(m *Manifest) { m.Safe.Owners = append(m.Safe.Owners, address(9)) },

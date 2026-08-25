@@ -54,6 +54,78 @@ func (*refusingRuntimeSigner) ProveUnactivated(context.Context, ascpbearer.Activ
 	return ascpbearer.UnactivatedProof{}, errors.New("expiry must not run for refused work")
 }
 
+func TestASCPCapacitySecurityDefinerRejectsTemporaryRelationSubstitution(t *testing.T) {
+	db := ascpIntegrationDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var schema string
+	if err := conn.QueryRowContext(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	operationID, reservationID := ascpIntegrationHash(900001), ascpIntegrationHash(900002)
+	if _, err := conn.ExecContext(ctx, `INSERT INTO organizations (id,name) VALUES ('org_capacity_shadow','Capacity Shadow')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO agents (organization_id,id,customer_id,name,status)
+		VALUES ('org_capacity_shadow','agent_capacity_shadow','customer_capacity_shadow','Capacity Agent','ACTIVE')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO ascp_intents
+		(operation_id,organization_id,actor_id,endpoint,idempotency_key,canonical_input_hash,quote_hash,
+		 purchase_spec_hash,quote_nonce,directory_version,directory_contract,seller_signer,quote_json,
+		 purchase_spec_json,purchase_spec_bytes,request_body,created_at)
+		VALUES ($1,'org_capacity_shadow','agent_capacity_shadow','ascp.intent.create','capacity_shadow',$2,$3,$4,$5,
+		 1,$6,$7,'{}'::jsonb,'{}'::jsonb,'{}'::bytea,''::bytea,$8)`, operationID, fmt.Sprintf("%064x", 900003),
+		ascpIntegrationHash(900004), ascpIntegrationHash(900005), ascpIntegrationHash(900006), ascpIntegrationDirectory,
+		ascpIntegrationSigner, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO ascp_budget_reservations
+		(reservation_id,operation_id,amount_base_units,state,dimensions,created_at,expires_at)
+		VALUES ($1,$2,'10','RESERVED','[]'::jsonb,$3,$4)`, reservationID, operationID, base, base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+		CREATE TEMP TABLE ascp_capacity_counters (
+			scope text PRIMARY KEY,max_active_operations integer,active_operations integer,updated_at timestamptz
+		);
+		INSERT INTO ascp_capacity_counters VALUES ('GLOBAL',999,999,now());
+		CREATE TEMP TABLE ascp_budget_reservations (reservation_id text,operation_id text,state text);
+		CREATE TEMP TABLE ascp_capacity_admissions (
+			operation_id text,reservation_id text,scope text,state text,acquired_at timestamptz,
+			released_at timestamptz,release_reservation_state text
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	var outcome string
+	if err := conn.QueryRowContext(ctx, fmt.Sprintf(`SELECT %s.ascp_acquire_capacity($1,$2,1000,$3)`, schema), operationID, reservationID, base).Scan(&outcome); err != nil || outcome != "ACQUIRED" {
+		t.Fatalf("secure capacity acquisition outcome=%q err=%v", outcome, err)
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf(`UPDATE %s.ascp_budget_reservations SET state='RELEASED' WHERE reservation_id=$1`, schema), reservationID); err != nil {
+		t.Fatalf("secure capacity release: %v", err)
+	}
+	var admissionState string
+	var applicationCount, temporaryCount int
+	if err := conn.QueryRowContext(ctx, fmt.Sprintf(`SELECT state FROM %s.ascp_capacity_admissions WHERE operation_id=$1`, schema), operationID).Scan(&admissionState); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRowContext(ctx, fmt.Sprintf(`SELECT active_operations FROM %s.ascp_capacity_counters WHERE scope='GLOBAL'`, schema)).Scan(&applicationCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRowContext(ctx, `SELECT active_operations FROM pg_temp.ascp_capacity_counters WHERE scope='GLOBAL'`).Scan(&temporaryCount); err != nil {
+		t.Fatal(err)
+	}
+	if admissionState != "RELEASED" || applicationCount != 0 || temporaryCount != 999 {
+		t.Fatalf("admission=%s application_count=%d temporary_count=%d", admissionState, applicationCount, temporaryCount)
+	}
+}
+
 func TestASCPSignerRefusalMigrationReconcilesOnlyUnambiguousLegacyRows(t *testing.T) {
 	script, err := migrationFiles.ReadFile("migrations/0025_ascp_signer_refusal_shape.sql")
 	if err != nil {

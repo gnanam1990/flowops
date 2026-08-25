@@ -59,7 +59,7 @@ a { color: inherit; }
 .nav-item.active em { color: var(--base-blue); background: white; }
 .sidebar-foot { margin-top: auto; display: grid; gap: 13px; padding: 16px 16px 20px; border-top: 1px solid var(--line); }
 .preview-rail { width: fit-content; display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; border-radius: 999px; color: var(--amber); background: var(--amber-soft); font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
-.preview-rail i, .chain-dot, .healthy-dot, .halted-dot { width: 7px; height: 7px; display: inline-block; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
+.preview-rail i, .chain-dot, .healthy-dot, .halted-dot { width: 7px; height: 7px; display: inline-block; flex: 0 0 auto; border-radius: 50%; background: currentcolor; }
 .preview-rail.live { color: var(--green); background: var(--green-soft); }
 .chain-summary { display: flex; align-items: center; gap: 10px; }
 .chain-dot, .healthy-dot { color: var(--green); box-shadow: 0 0 0 4px rgba(22,143,83,.1); }
@@ -73,7 +73,7 @@ a { color: inherit; }
 .context-strip { min-width: 0; flex: 1; display: flex; align-items: center; gap: 38px; margin: 0; padding: 10px 28px; }
 .context-strip > div { min-width: 0; }
 .context-strip dt { color: var(--muted-2); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.context-strip dd { margin: 4px 0 0; font: 650 12px var(--font-geist-mono); white-space: nowrap; }.context-strip dd span { color: var(--muted); }.context-strip .quorum { display: flex; align-items: center; gap: 7px; color: var(--green); }.quorum i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.context-strip dd { margin: 4px 0 0; font: 650 12px var(--font-geist-mono); white-space: nowrap; }.context-strip dd span { color: var(--muted); }.context-strip .quorum { display: flex; align-items: center; gap: 7px; color: var(--green); }.quorum i { width: 6px; height: 6px; border-radius: 50%; background: currentcolor; }
 .topbar-actions { display: flex; align-items: center; gap: 9px; padding: 0 18px; border-left: 1px solid var(--line); }
 .fresh-label { color: var(--muted); font-size: 10px; }
 .preview-pill { padding: 7px 10px; border-radius: 999px; color: var(--amber); background: var(--amber-soft); font-size: 9px; font-weight: 750; text-transform: uppercase; }.preview-pill.live { color: var(--green); background: var(--green-soft); }

@@ -130,6 +130,87 @@ contract DeployASCPBaseMainnetTest is Test {
         );
     }
 
+    function testFuzz_releaseGateRejectsEveryZeroAuthority(uint8 selectedRole) public {
+        address[6] memory roles = [address(1), address(2), address(3), address(4), address(5), address(6)];
+        selectedRole = uint8(bound(selectedRole, 0, 5));
+        roles[selectedRole] = address(0);
+        if (selectedRole == 0) {
+            vm.expectRevert(DeployASCPBaseMainnet.MainnetDeployerNotDesignated.selector);
+        } else if (selectedRole == 1) {
+            vm.expectRevert(DeployASCPBaseMainnet.ProductionSafeNotDesignated.selector);
+        } else {
+            vm.expectRevert(DeployASCPBaseMainnet.AuthorityNotDesignated.selector);
+        }
+        deployment.validateReleaseGates(
+            roles[0],
+            roles[1],
+            roles[2],
+            roles[3],
+            roles[4],
+            roles[5],
+            bytes32(uint256(1)),
+            bytes32(uint256(2)),
+            bytes32(uint256(3)),
+            true
+        );
+    }
+
+    function testFuzz_releaseGateRejectsEveryPairwiseAuthorityCollision(uint8 firstRole, uint8 secondRole) public {
+        address[6] memory roles = [address(1), address(2), address(3), address(4), address(5), address(6)];
+        firstRole = uint8(bound(firstRole, 0, 5));
+        secondRole = uint8(bound(secondRole, 0, 4));
+        if (secondRole >= firstRole) secondRole += 1;
+        roles[secondRole] = roles[firstRole];
+        vm.expectRevert(DeployASCPBaseMainnet.AuthoritySeparationInvalid.selector);
+        deployment.validateReleaseGates(
+            roles[0],
+            roles[1],
+            roles[2],
+            roles[3],
+            roles[4],
+            roles[5],
+            bytes32(uint256(1)),
+            bytes32(uint256(2)),
+            bytes32(uint256(3)),
+            true
+        );
+    }
+
+    function testFuzz_releaseGateRejectsEveryMissingDigest(uint8 selectedDigest) public {
+        bytes32[3] memory digests = [bytes32(uint256(1)), bytes32(uint256(2)), bytes32(uint256(3))];
+        selectedDigest = uint8(bound(selectedDigest, 0, 2));
+        digests[selectedDigest] = bytes32(0);
+        if (selectedDigest == 0) {
+            vm.expectRevert(DeployASCPBaseMainnet.OrganizationDomainNotDesignated.selector);
+        } else if (selectedDigest == 1) {
+            vm.expectRevert(DeployASCPBaseMainnet.ExternalReviewNotRecorded.selector);
+        } else {
+            vm.expectRevert(DeployASCPBaseMainnet.ReleasePlanNotRecorded.selector);
+        }
+        deployment.validateReleaseGates(
+            address(1),
+            address(2),
+            address(3),
+            address(4),
+            address(5),
+            address(6),
+            digests[0],
+            digests[1],
+            digests[2],
+            true
+        );
+    }
+
+    function testFuzz_releaseGateRejectsDisabledBroadcast(bytes32 org, bytes32 review, bytes32 release) public {
+        org = bytes32(uint256(org) | 1);
+        review = bytes32(uint256(review) | 1);
+        release = bytes32(uint256(release) | 1);
+        vm.expectRevert(DeployASCPBaseMainnet.MainnetBroadcastDisabled.selector);
+        deployment.validateReleaseGates(
+            address(1), address(2), address(3), address(4), address(5), address(6), org, review, release, false
+        );
+    }
+
     function test_promotedHarnessDeploysCompleteButWriteInertASCPGraph() public {
         ProductionSafeFixture safe = new ProductionSafeFixture();
         ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(safe));

@@ -42,11 +42,13 @@ jobs:
       - name: Configure isolated PostgreSQL integration URL
         run: printf '%s=%s%s\n' FLOWOPS_TEST_DATABASE_URL postgres '://flowops_ci@127.0.0.1:5432/flowops_ci?sslmode=disable' >> "$GITHUB_ENV"
       - name: Verify formatting
-        run: test -z "$(gofmt -l $(git ls-files '*.go'))" || (gofmt -l $(git ls-files '*.go') && exit 1)
+        run: |
+          unformatted="$(git ls-files -z '*.go' | xargs -0r gofmt -l)"
+          test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
       - name: Vet
-        run: go vet ./cmd/... ./internal/... ./pkg/...
+        run: go vet ./...
       - name: Test with race detector
-        run: go test -race ./cmd/... ./internal/... ./pkg/...
+        run: go test -race ./...
       - name: Prove real PostgreSQL cross-surface uniqueness
         run: go test -race ./internal/controlapi -run '^TestASCPRealPostgresCrossSurfaceDurableUniqueness$' -count=3
       - name: Validate ASCP v3.4 acceptance inventory

@@ -116,8 +116,8 @@ END;
 $$;
 
 -- Bind each SECURITY DEFINER function to the exact schema in which this
--- migration is installed. pg_catalog remains first and pg_temp is excluded,
--- so neither a caller's search_path nor a temporary object can redirect these
+-- migration is installed. pg_catalog remains first and pg_temp is explicit
+-- and last, so neither a caller's search_path nor a temporary object can redirect these
 -- privileged reads and writes. This also keeps isolated-schema acceptance
 -- tests faithful to the production function bodies.
 DO $$
@@ -127,11 +127,11 @@ BEGIN
         RAISE EXCEPTION 'capacity functions require a dedicated application schema';
     END IF;
     EXECUTE format(
-        'ALTER FUNCTION %I.ascp_acquire_capacity(text,text,integer,timestamptz) SET search_path = pg_catalog, %I',
+        'ALTER FUNCTION %I.ascp_acquire_capacity(text,text,integer,timestamptz) SET search_path = pg_catalog, %I, pg_temp',
         application_schema, application_schema
     );
     EXECUTE format(
-        'ALTER FUNCTION %I.flowops_release_capacity_on_reservation_terminal() SET search_path = pg_catalog, %I',
+        'ALTER FUNCTION %I.flowops_release_capacity_on_reservation_terminal() SET search_path = pg_catalog, %I, pg_temp',
         application_schema, application_schema
     );
 END;

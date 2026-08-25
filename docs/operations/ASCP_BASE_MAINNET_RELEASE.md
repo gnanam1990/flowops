@@ -37,6 +37,7 @@ Status: structurally implemented and deliberately blocked; no deployment or fund
 - `FLOWOPS_BASE_RPC_ADMISSION_JSON`
 - `FLOWOPS_BASE_MAINNET_RELEASE_MANIFEST_JSON`
 - `FLOWOPS_BASE_MAINNET_RELEASE_PUBLIC_KEY_B64`
+- `FLOWOPS_METRICS_KEY_B64`
 - `FLOWOPS_ESCROW_CONTRACT` equal to the signed `ascp_call_escrow`
 - `FLOWOPS_ESCROW_ASSET` equal to canonical Base USDC
 - `FLOWOPS_ESCROW_RELEASE_WINDOW_SECONDS` equal to the signed settlement window
@@ -45,6 +46,7 @@ Status: structurally implemented and deliberately blocked; no deployment or fund
 - `FLOWOPS_ASCP_CALL_ESCROW_CONTRACT`
 - `FLOWOPS_ASCP_SPEND_MODULE_CONTRACT`
 - `FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK`
-- the exact initial pilot limit variables
+- `FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC` equal to the signed initial per-action limit
+- `FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC` equal to the signed initial outstanding limit
 
 The private release-signing key must never be present in the production runtime.

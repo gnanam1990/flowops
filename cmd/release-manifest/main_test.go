@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -24,25 +25,69 @@ func TestReleaseManifestCommandSignsVerifiesAndRefusesOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "release.json")
 	writeManifest(t, path, manifest)
 	t.Setenv("FLOWOPS_BASE_MAINNET_RELEASE_PRIVATE_KEY_B64", base64.StdEncoding.EncodeToString(privateKey))
-	if err := run([]string{"sign", path}, now); err != nil {
-		t.Fatal(err)
-	}
-
-	manifest, err = releaseadmission.Sign(manifest, privateKey)
+	signedOutput, err := captureStdout(t, func() error { return run([]string{"sign", path}, now) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeManifest(t, path, manifest)
-	t.Setenv("FLOWOPS_BASE_MAINNET_RELEASE_PUBLIC_KEY_B64", base64.StdEncoding.EncodeToString(publicKey))
-	if err := run([]string{"verify", path}, now); err != nil {
+	manifest, err = releaseadmission.Decode(strings.TrimSpace(signedOutput))
+	if err != nil || manifest.Signature == "" {
+		t.Fatalf("decode CLI-signed manifest: signature=%q err=%v", manifest.Signature, err)
+	}
+	if err := os.WriteFile(path, []byte(signedOutput), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"digest", path}, now); err != nil {
+	t.Setenv("FLOWOPS_BASE_MAINNET_RELEASE_PUBLIC_KEY_B64", base64.StdEncoding.EncodeToString(publicKey))
+	if _, err := captureStdout(t, func() error { return run([]string{"verify", path}, now) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureStdout(t, func() error { return run([]string{"digest", path}, now) }); err != nil {
 		t.Fatal(err)
 	}
 	if err := run([]string{"sign", path}, now); err == nil || !strings.Contains(err.Error(), "replace") {
 		t.Fatalf("overwrite error=%v", err)
 	}
+
+	tampered := manifest
+	tampered.ReleaseID = "release_command_tampered"
+	writeManifest(t, path, tampered)
+	if _, err := captureStdout(t, func() error { return run([]string{"verify", path}, now) }); err == nil {
+		t.Fatal("CLI accepted a modified signed field")
+	}
+
+	expired := commandManifest(now)
+	expired.ReviewedAt = now.Add(-2 * time.Hour)
+	expired.ExpiresAt = now.Add(-time.Hour)
+	expired, err = releaseadmission.Sign(expired, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManifest(t, path, expired)
+	if _, err := captureStdout(t, func() error { return run([]string{"verify", path}, now) }); err == nil {
+		t.Fatal("CLI accepted an expired signed manifest")
+	}
+}
+
+func captureStdout(t *testing.T, action func() error) (string, error) {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stdout
+	os.Stdout = write
+	actionErr := action()
+	os.Stdout = original
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if _, err := output.ReadFrom(read); err != nil {
+		t.Fatal(err)
+	}
+	if err := read.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return output.String(), actionErr
 }
 
 func writeManifest(t *testing.T, path string, manifest releaseadmission.Manifest) {

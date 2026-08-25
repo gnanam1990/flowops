@@ -339,7 +339,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   const names = new Map(agents.map((agent) => [agent.id, agent.name]));
 	const approvals = [
 		...raw.pendingApprovals.map((approval) => mapApproval(approval, names, generatedAt, raw.chain.chainId)),
-		...raw.ascp.pendingApprovals.map((approval) => mapASCPApproval(approval, names, generatedAt)),
+		...raw.ascp.pendingApprovals.map((approval) => mapASCPApproval(approval, names, generatedAt, raw.chain.chainId)),
 	];
 	const activity = [
 		...raw.ascp.activity.map((item) => ({ occurredAt: parseDate(item.occurredAt), item: mapASCPActivity(item, names, generatedAt, raw.chain.chainId) })),
@@ -430,12 +430,12 @@ function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number]
   };
 }
 
-function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Map<string, string>, observedAt: Date): Approval {
+function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Map<string, string>, observedAt: Date, expectedChainId: 8453 | 84532): Approval {
 	if (!isIdentifier(raw.approvalId) || !/^0x[0-9a-f]{64}$/.test(raw.reviewDigest) || !/^0x[0-9a-f]{64}$/.test(raw.operationId) ||
 		!isIdentifier(raw.agentId) || (raw.taskId !== "" && !isBoundedText(raw.taskId, 1024)) ||
 		(raw.category !== "" && !isBoundedText(raw.category, 1024)) ||
 		!/^0x[0-9a-f]{40}$/.test(raw.recipient) || !/^0x[0-9a-f]{40}$/.test(raw.asset) || !validUnsignedAtomic(raw.amountAtomic) ||
-		!isSupportedBaseChain(raw.chainId)) {
+		!isSupportedBaseChain(raw.chainId) || raw.chainId !== expectedChainId) {
 		throw new Error("invalid ASCP approval");
 	}
 	const metadata = validatedAssetMetadata(raw.chainId, raw.asset, raw.assetSymbol, raw.assetDecimals);

@@ -357,6 +357,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   let agentName = "Research Agent";
   let approvalPurpose = "Buy verified dataset";
 	let approvalChainId = 84532;
+	let ascpApprovalChainId = 84532;
   const upstream = createServer(async (request, response) => {
     if (request.url === "/v1/sites/session") {
       assert.equal(request.method, "POST");
@@ -435,7 +436,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 			approvalId: `0x${"3".repeat(64)}`, reviewDigest: `0x${"4".repeat(64)}`,
 			operationId: `0x${"5".repeat(64)}`, agentId: "agent_live", taskId: "",
 			category: "", reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_live_1",
-			chainId: 84532,
+			chainId: ascpApprovalChainId,
 			recipient: `0x${"1".repeat(40)}`, asset: baseSepoliaUSDC, assetSymbol: "USDC", assetDecimals: 6, amountAtomic: "2500000",
 			requestedAt: new Date(now.getTime() - 20_000).toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
 		  }],
@@ -494,6 +495,19 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.doesNotMatch(html, /Northstar Labs|\$15,140\.00|Signal Harbor/);
   assert.doesNotMatch(html, new RegExp(exchangeCredential));
   assert.doesNotMatch(html, new RegExp(sessionToken.replaceAll(".", "\\.")));
+
+	ascpApprovalChainId = 8453;
+	const wrongASCPNetwork = await render({
+	  headers: {
+		"oai-authenticated-user-id": "sites-user-opaque",
+		"oai-authenticated-user-email": "owner@example.com",
+	  },
+	  env: configuredEnvironment(`http://127.0.0.1:${address.port}`, exchangeCredential),
+	});
+	const wrongASCPNetworkHtml = await wrongASCPNetwork.text();
+	assert.doesNotMatch(wrongASCPNetworkHtml, /Live control plane|Approval 0x333333…333333/);
+	assert.match(wrongASCPNetworkHtml, /Status unavailable/);
+	ascpApprovalChainId = 84532;
 
   organizationName = '<img src=x onerror="send_calls()">';
   agentName = '<script>swap("USDC","ETH")</script>';

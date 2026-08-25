@@ -609,43 +609,45 @@ func TestOperationalEndpointsSeparateLivenessReadinessProductHealthAndMetrics(t 
 	}
 	httpServer := httptest.NewServer(server)
 	defer httpServer.Close()
-
-	for path, want := range map[string]int{"/livez": http.StatusOK, "/readyz": http.StatusOK, "/health": http.StatusOK} {
-		response, err := httpServer.Client().Get(httpServer.URL + path)
+	do := func(method, path string) *http.Response {
+		t.Helper()
+		request, err := http.NewRequestWithContext(t.Context(), method, httpServer.URL+path, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
+		response, err := httpServer.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	for path, want := range map[string]int{"/livez": http.StatusOK, "/readyz": http.StatusOK, "/health": http.StatusOK} {
+		response := do(http.MethodGet, path)
 		_ = response.Body.Close()
 		if response.StatusCode != want {
 			t.Fatalf("%s status = %d", path, response.StatusCode)
 		}
 	}
 	readiness.err = errors.New("database unavailable with secret details")
-	response, err := httpServer.Client().Get(httpServer.URL + "/readyz")
-	if err != nil {
-		t.Fatal(err)
-	}
+	response := do(http.MethodGet, "/readyz")
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusServiceUnavailable || strings.Contains(string(body), "secret details") || !strings.Contains(string(body), "NOT_READY") {
 		t.Fatalf("not-ready response = %d %s", response.StatusCode, body)
 	}
-	request, _ := http.NewRequest("ATTACKER_METHOD_IGNORED", httpServer.URL+"/not-a-route", nil)
-	response, err = httpServer.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	response = do("ATTACKER_METHOD_IGNORED", "/not-a-route")
 	_ = response.Body.Close()
 
-	response, err = httpServer.Client().Get(httpServer.URL + "/metrics")
-	if err != nil {
-		t.Fatal(err)
-	}
+	response = do(http.MethodGet, "/metrics")
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated metrics status = %d", response.StatusCode)
 	}
-	request, _ = http.NewRequest(http.MethodGet, httpServer.URL+"/metrics", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, httpServer.URL+"/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request.Header.Set("Authorization", "Bearer "+base64.StdEncoding.EncodeToString(metricsKey))
 	response, err = httpServer.Client().Do(request)
 	if err != nil {
