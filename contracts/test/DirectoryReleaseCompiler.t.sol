@@ -95,6 +95,17 @@ contract DirectoryReleaseCompilerParityTest is Test {
             directory.adminAuthorizationDigest(authorization),
             0x40849e12a6f903e1fbe06ce35bd6221718a22ff50d0e2201f3ece255f7847f58
         );
+
+        authorization.adminOperationId = 0xa53a48f2c55e5f5c0e3cc8003a2591c72002efdfa46891ed177913443ca76274;
+        assertEq(
+            directory.adminAuthorizationDigest(authorization),
+            0x9cbb7e3fe80865bc2b64ff003aa7b371cfdb22ed900a4909818b468cdede4268
+        );
+        bytes memory publisherSignature =
+            hex"2e323d839bc5f4469141f5505c81948a9100e5790e6326e569537bc002d63a505607c7321eecfdc1382e05f0b984c02e23c2636f629d17331918374b491c1c9e1c";
+        bytes memory callData = abi.encodeCall(directory.proposeVersion, (proposal, authorization, publisherSignature));
+        assertEq(callData.length, 900);
+        assertEq(keccak256(callData), 0xc520aad5acbd7e942a753e30db6eae2bba4d546cb76d7d05c0498f2c7c25c7ee);
     }
 
     function _hashPair(bytes32 left, bytes32 right) private pure returns (bytes32) {

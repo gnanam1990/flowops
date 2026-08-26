@@ -145,8 +145,9 @@ two-provider unused operation/nonce proof. Immediately before external signing,
 rerun `prepare` rather than signing an older package; its 10-minute window and
 two-minute remote evidence age are deliberately short.
 
-The next module must accept only a valid external publisher signature, recover
-the deployed publisher, reconstruct the complete `proposeVersion` calldata,
-simulate it against current chain state, and still stop before broadcast unless
-the user separately authorizes that exact transaction. Safe approval, the
-minimum 24-hour activation delay, and funding remain later independent gates.
+The [directory relay simulation gate](ASCP_DIRECTORY_RELAY_SIMULATION.md) now
+accepts only a valid external publisher signature, recovers the deployed
+publisher, reconstructs the complete `proposeVersion` calldata privately, and
+checks its contract semantics against current two-provider chain state. It
+still cannot broadcast. Safe approval, the minimum 24-hour activation delay,
+and funding remain later independent gates.
