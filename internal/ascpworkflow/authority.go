@@ -47,6 +47,75 @@ const (
 	ActionSafeChangeThreshold       ChainAction = "SAFE_CHANGE_THRESHOLD"
 )
 
+// OwnerChainActionInventoryEntry classifies every reviewed chain mutation.
+// Enabled entries are reachable through the closed /v1/workflows action
+// schema and have an independent receipt-observer rule. Disabled entries are
+// retained in the inventory so adding a contract method cannot silently turn
+// it into an Owner API capability.
+type OwnerChainActionInventoryEntry struct {
+	Action          ChainAction                   `json:"action"`
+	ActionType      governanceworkflow.ActionType `json:"actionType,omitempty"`
+	OwnerAPIEnabled bool                          `json:"ownerApiEnabled"`
+	OwnerAPIPath    string                        `json:"ownerApiPath,omitempty"`
+	Approval        string                        `json:"approval,omitempty"`
+	Execution       string                        `json:"execution,omitempty"`
+	Receipt         string                        `json:"receipt,omitempty"`
+	Audit           string                        `json:"audit,omitempty"`
+	DisabledReason  string                        `json:"disabledReason,omitempty"`
+}
+
+// OwnerChainActionInventory is the executable AC-66 inventory. The returned
+// slice is a copy and may be safely sorted or encoded by callers.
+func OwnerChainActionInventory() []OwnerChainActionInventoryEntry {
+	result := make([]OwnerChainActionInventoryEntry, len(ownerChainActionInventory))
+	copy(result, ownerChainActionInventory)
+	return result
+}
+
+var ownerChainActionInventory = []OwnerChainActionInventoryEntry{
+	enabledOwnerAction(ActionCallEscrowAddVerifier, governanceworkflow.ActionCallEscrowAddVerifier),
+	enabledOwnerAction(ActionCallEscrowRevokeVerifier, governanceworkflow.ActionCallEscrowRevokeVerifier),
+	enabledOwnerAction(ActionCallEscrowPause, governanceworkflow.ActionCallEscrowPause),
+	enabledOwnerAction(ActionDirectoryPublish, governanceworkflow.ActionDirectoryApprove),
+	enabledOwnerAction(ActionDirectoryCancel, governanceworkflow.ActionDirectoryCancel),
+	disabledOwnerAction(ActionDirectorySetPublisher, "no typed Owner action or independent receipt rule"),
+	disabledOwnerAction(ActionDirectorySetPauser, "no typed Owner action or independent receipt rule"),
+	disabledOwnerAction(ActionDirectoryPauseSeller, "no typed signed-admin action or independent receipt rule"),
+	disabledOwnerAction(ActionDirectoryUnpauseSeller, "no typed governor action or independent receipt rule"),
+	disabledOwnerAction(ActionDirectoryRevokeQuoteKey, "no typed signed-admin action or independent receipt rule"),
+	disabledOwnerAction(ActionDirectoryUnrevokeQuoteKey, "no typed governor action or independent receipt rule"),
+	disabledOwnerAction(ActionAgentRegister, "ROLE_ADMIN is local-only and has no chain receipt lifecycle"),
+	disabledOwnerAction(ActionAgentUpdatePolicy, "ROLE_ADMIN is local-only and has no chain receipt lifecycle"),
+	disabledOwnerAction(ActionAgentSetStatus, "ROLE_ADMIN is local-only and has no chain receipt lifecycle"),
+	disabledOwnerAction(ActionAgentSetRegistryAdmin, "no typed Owner action or independent receipt rule"),
+	enabledOwnerAction(ActionSpendSetAuthorizer, governanceworkflow.ActionSpendAuthorizer),
+	enabledOwnerAction(ActionSpendSetAllowlist, governanceworkflow.ActionSpendAllowlist),
+	enabledOwnerAction(ActionSpendScheduleCaps, governanceworkflow.ActionSpendCaps),
+	enabledOwnerAction(ActionSpendPause, governanceworkflow.ActionSpendPause),
+	enabledOwnerAction(ActionSpendInvalidateNonces, governanceworkflow.ActionSpendInvalidateNonces),
+	disabledOwnerAction(ActionSafeEnableModule, "Safe action has no typed Owner action or workflow-bound receipt rule"),
+	disabledOwnerAction(ActionSafeDisableModule, "Safe action has no typed Owner action or workflow-bound receipt rule"),
+	disabledOwnerAction(ActionSafeAddOwner, "Safe owner action has no typed precondition schema or workflow-bound receipt rule"),
+	disabledOwnerAction(ActionSafeRemoveOwner, "Safe owner action has no typed precondition schema or workflow-bound receipt rule"),
+	disabledOwnerAction(ActionSafeSwapOwner, "Safe owner action has no typed precondition schema or workflow-bound receipt rule"),
+	disabledOwnerAction(ActionSafeChangeThreshold, "Safe threshold action has no typed precondition schema or workflow-bound receipt rule"),
+}
+
+func enabledOwnerAction(action ChainAction, actionType governanceworkflow.ActionType) OwnerChainActionInventoryEntry {
+	return OwnerChainActionInventoryEntry{
+		Action: action, ActionType: actionType, OwnerAPIEnabled: true,
+		OwnerAPIPath: "POST /v1/workflows -> POST /v1/workflows/{workflowId}/approve",
+		Approval:     "two distinct human principals with kind-specific roles and fresh step-up",
+		Execution:    "immutable ascp.governance.execute command -> exact Safe CALL calldata",
+		Receipt:      "independent finalized provider quorum plus atomic receipt ownership",
+		Audit:        "append-only workflow action, event, outbox, relay, and receipt records",
+	}
+}
+
+func disabledOwnerAction(action ChainAction, reason string) OwnerChainActionInventoryEntry {
+	return OwnerChainActionInventoryEntry{Action: action, DisabledReason: reason}
+}
+
 type RelayerMode string
 
 const (
@@ -236,7 +305,7 @@ func validAuthorityRule(rule AuthorityRule) bool {
 	wantKind, wantProposer, wantApprover, mapped := expectedAuthorityWorkflow(rule.Action)
 	wantSelector, wantActionEvent, wantSecondaryEvent, wantWorkflowEvent, surfaceMapped :=
 		expectedAuthoritySurface(rule.Action)
-	if !validChainAction(rule.Action) || !validKind(rule.Kind) || (rule.ChainID != 8453 && rule.ChainID != 84532) ||
+	if !ownerAPIEnabled(rule.Action) || !validChainAction(rule.Action) || !validKind(rule.Kind) || (rule.ChainID != 8453 && rule.ChainID != 84532) ||
 		!canonicalAddress(rule.ContractAddress) || !hash(rule.ContractCodeHash) || !canonicalAddress(rule.OnChainPrincipal) ||
 		!mapped || rule.Kind != wantKind || rule.ProposerRole != wantProposer || rule.ApproverRole != wantApprover ||
 		!canPropose(rule.Kind, rule.ProposerRole) || !canApprove(rule.Kind, rule.ApproverRole) || rule.WorkflowQuorum != 2 ||
@@ -249,6 +318,15 @@ func validAuthorityRule(rule AuthorityRule) bool {
 		return canonicalAddress(rule.Relayer)
 	}
 	return rule.RelayerMode == RelayerAny && rule.Relayer == ""
+}
+
+func ownerAPIEnabled(action ChainAction) bool {
+	for _, entry := range ownerChainActionInventory {
+		if entry.Action == action {
+			return entry.OwnerAPIEnabled && entry.ActionType != "" && entry.DisabledReason == ""
+		}
+	}
+	return false
 }
 
 func observationMatchesRule(observation AuthorityObservation, rule AuthorityRule, workflow Workflow, receipt CompletionReceipt) bool {
@@ -300,19 +378,12 @@ func sameAuthorityOutcome(left, right AuthorityObservation) bool {
 }
 
 func validChainAction(action ChainAction) bool {
-	switch action {
-	case ActionCallEscrowAddVerifier, ActionCallEscrowRevokeVerifier, ActionCallEscrowPause,
-		ActionDirectoryPublish, ActionDirectoryCancel, ActionDirectorySetPublisher, ActionDirectorySetPauser,
-		ActionDirectoryPauseSeller, ActionDirectoryUnpauseSeller,
-		ActionDirectoryRevokeQuoteKey, ActionDirectoryUnrevokeQuoteKey,
-		ActionAgentRegister, ActionAgentUpdatePolicy, ActionAgentSetStatus, ActionAgentSetRegistryAdmin,
-		ActionSpendSetAuthorizer, ActionSpendSetAllowlist, ActionSpendScheduleCaps, ActionSpendPause, ActionSpendInvalidateNonces,
-		ActionSafeEnableModule, ActionSafeDisableModule, ActionSafeAddOwner, ActionSafeRemoveOwner,
-		ActionSafeSwapOwner, ActionSafeChangeThreshold:
-		return true
-	default:
-		return false
+	for _, entry := range ownerChainActionInventory {
+		if entry.Action == action {
+			return true
+		}
 	}
+	return false
 }
 
 func expectedAuthorityWorkflow(action ChainAction) (Kind, Role, Role, bool) {

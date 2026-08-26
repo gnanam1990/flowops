@@ -2097,7 +2097,7 @@
       "title": "Every Owner API that changes chain state",
       "expectation": "Exact on-chain principal, workflow quorum, relayer, receipt, and event proven per §26.4; single-role/single-key bypass fails for every dual-control row",
       "active": true,
-      "status": "partial",
+      "status": "local_evidence",
       "primaryOwner": "keeper_chain",
       "participants": [
         "keeper_chain",
@@ -2109,13 +2109,49 @@
         "INV-OPERATIONS",
         "INV-UI-EVIDENCE"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "go_test",
+          "path": "internal/ascpworkflow/authority_test.go",
+          "ref": "TestOwnerChainActionInventoryIsCompleteAndFailClosed",
+          "command": "go test -race ./internal/ascpworkflow -run '^TestOwnerChainActionInventoryIsCompleteAndFailClosed$'",
+          "artifacts": [
+            "executable-evidence"
+          ]
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpgovernanceobserver/observer_test.go",
+          "ref": "TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence",
+          "command": "go test -race ./internal/ascpgovernanceobserver -run '^TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpgovernanceobserver/observer_test.go",
+          "ref": "TestObserverRuleMapCoversEveryChainWorkflowKind",
+          "command": "go test -race ./internal/ascpgovernanceobserver -run '^TestObserverRuleMapCoversEveryChainWorkflowKind$'"
+        },
+        {
+          "kind": "evidence",
+          "path": "docs/evidence/AC66_OWNER_CHAIN_API_INVENTORY_2026-08-26.json",
+          "artifacts": [
+            "manifest-hash"
+          ]
+        },
+        {
+          "kind": "evidence",
+          "path": "docs/evidence/AC66_OWNER_CHAIN_API_2026-08-26.md",
+          "artifacts": [
+            "evidence-report"
+          ]
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "Typed governance workflows cover only the implemented action subset; no complete inventory maps every chain-mutating Owner endpoint to an exact action schema, independent approval, Safe calldata, receipt ownership, and immutable audit evidence."
+      "gap": "Local executable evidence maps every reviewed mutation surface, enables only the ten actions with a complete typed Owner API and receipt lifecycle, and blocks the other sixteen at configuration. Production closure still requires the signed release authority manifest, real Safe owner signatures, runtime-code/principal evidence, and finalized mainnet receipt bundle."
     },
     {
       "id": "AC-67",

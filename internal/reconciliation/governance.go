@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 const (
@@ -23,11 +25,12 @@ var (
 )
 
 type GovernanceRule struct {
-	Contract             string `json:"contract"`
-	FunctionSelector     string `json:"functionSelector"`
-	ActionEventSignature string `json:"actionEventSignature"`
-	MultipleActionEvents bool   `json:"multipleActionEvents"`
-	ExpectedActionEvents int    `json:"expectedActionEvents,omitempty"`
+	Contract                 string `json:"contract"`
+	FunctionSelector         string `json:"functionSelector"`
+	ActionEventSignature     string `json:"actionEventSignature"`
+	MultipleActionEvents     bool   `json:"multipleActionEvents"`
+	ExpectedActionEvents     int    `json:"expectedActionEvents,omitempty"`
+	AuthorityPrincipalGetter string `json:"authorityPrincipalGetter,omitempty"`
 }
 
 type GovernanceExpectedReceipt struct {
@@ -54,6 +57,10 @@ type GovernanceReceiptEvidence struct {
 	ActionLogIndexes     []uint64 `json:"actionLogIndexes"`
 	ConfirmedHead        uint64   `json:"confirmedHead"`
 	FinalizedHead        uint64   `json:"finalizedHead"`
+	ContractCodeHash     string   `json:"contractCodeHash,omitempty"`
+	OnChainPrincipal     string   `json:"onChainPrincipal,omitempty"`
+	Relayer              string   `json:"relayer,omitempty"`
+	ObservedDelaySeconds uint64   `json:"observedDelaySeconds,omitempty"`
 }
 
 type GovernanceReceiptResult struct {
@@ -76,7 +83,8 @@ func (expected GovernanceExpectedReceipt) Validate() error {
 			!validFunctionSelector(rule.FunctionSelector) || rule.FunctionSelector == "0x00000000" ||
 			!hashPattern.MatchString(rule.ActionEventSignature) || rule.ActionEventSignature == zeroHash ||
 			rule.ExpectedActionEvents < 0 || rule.ExpectedActionEvents > 100 ||
-			(!rule.MultipleActionEvents && rule.ExpectedActionEvents > 1) {
+			(!rule.MultipleActionEvents && rule.ExpectedActionEvents > 1) ||
+			(rule.AuthorityPrincipalGetter != "" && (!validFunctionSelector(rule.AuthorityPrincipalGetter) || rule.AuthorityPrincipalGetter == "0x00000000")) {
 			return errors.New("governance receipt rule is invalid")
 		}
 		if _, duplicate := seen[key]; duplicate {
@@ -246,13 +254,62 @@ func (s *ObserverSet) governanceReceipt(ctx context.Context, provider RPCProvide
 	if finalized.number < blockNumber {
 		return failure, ErrGovernanceReceiptPending
 	}
+	var codeHash, principal, relayer string
+	var observedDelay uint64
+	if rule.AuthorityPrincipalGetter != "" {
+		codeHash, principal, relayer, err = s.governanceAuthorityEvidence(ctx, provider, rule, txHash, blockNumber, blockHash)
+		if err != nil {
+			return failure, err
+		}
+		observedDelay = uint64(canonical.timestamp.Unix()) - expected.ApprovedAt
+	}
 	return GovernanceReceiptEvidence{
 		Provider: provider.Name, ChainID: s.chainID, WorkflowID: expected.WorkflowID, PayloadHash: expected.PayloadHash,
 		TransactionHash: txHash, BlockNumber: blockNumber, BlockHash: blockHash, BindingLogIndex: bindingIndex,
 		BlockTimestamp:  uint64(canonical.timestamp.Unix()),
 		ContractAddress: contract, FunctionSelector: selector, ActionEventSignature: rule.ActionEventSignature,
 		ActionLogIndexes: actionIndexes, ConfirmedHead: latest.number, FinalizedHead: finalized.number,
+		ContractCodeHash: codeHash, OnChainPrincipal: principal, Relayer: relayer, ObservedDelaySeconds: observedDelay,
 	}, nil
+}
+
+func (s *ObserverSet) governanceAuthorityEvidence(
+	ctx context.Context,
+	provider RPCProvider,
+	rule GovernanceRule,
+	transactionHash string,
+	blockNumber uint64,
+	blockHash string,
+) (string, string, string, error) {
+	tag := fmt.Sprintf("0x%x", blockNumber)
+	var code string
+	if err := s.call(ctx, provider, "eth_getCode", []any{rule.Contract, tag}, &code); err != nil {
+		return "", "", "", err
+	}
+	decodedCode, err := decodeHexBytes(code)
+	if err != nil || len(decodedCode) == 0 {
+		return "", "", "", invalidGovernanceReceipt("governance target code is empty or invalid")
+	}
+	var principalWord string
+	if err := s.call(ctx, provider, "eth_call", []any{map[string]string{
+		"to": rule.Contract, "data": rule.AuthorityPrincipalGetter,
+	}, tag}, &principalWord); err != nil {
+		return "", "", "", err
+	}
+	principal, err := addressFromStorageWord(principalWord)
+	if err != nil {
+		return "", "", "", invalidGovernanceReceipt("governance principal getter returned invalid data")
+	}
+	var transaction *rpcTransaction
+	if err := s.call(ctx, provider, "eth_getTransactionByHash", []any{transactionHash}, &transaction); err != nil {
+		return "", "", "", err
+	}
+	if transaction == nil || strings.ToLower(transaction.Hash) != transactionHash ||
+		strings.ToLower(transaction.BlockHash) != blockHash || transaction.BlockNumber != tag ||
+		!validAssetHealthAddress(strings.ToLower(transaction.From)) {
+		return "", "", "", invalidGovernanceReceipt("governance transaction identity is invalid")
+	}
+	return strings.ToLower(crypto.Keccak256Hash(decodedCode).Hex()), principal, strings.ToLower(transaction.From), nil
 }
 
 func verifyGovernanceReceiptLogs(logs []rpcLog, expected GovernanceExpectedReceipt, rule GovernanceRule, txHash string, blockNumber uint64, blockHash string, bindingIndex uint64) ([]uint64, error) {

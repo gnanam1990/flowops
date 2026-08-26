@@ -95,6 +95,13 @@ type rpcReceipt struct {
 	Logs             []rpcLog `json:"logs"`
 }
 
+type rpcTransaction struct {
+	Hash        string `json:"hash"`
+	From        string `json:"from"`
+	BlockNumber string `json:"blockNumber"`
+	BlockHash   string `json:"blockHash"`
+}
+
 type rpcLog struct {
 	Address          string   `json:"address"`
 	Topics           []string `json:"topics"`

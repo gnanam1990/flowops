@@ -302,7 +302,7 @@ func run(ctx context.Context) (returnErr error) {
 			Observers: observers, Quorum: cfg.observerConfig.ObserverQuorum,
 			FinalizedConfirmations: cfg.observerConfig.ReorgLookback + 1, FromBlock: cfg.ascpGovernanceFromBlock,
 			CallEscrowContract: cfg.ascpCallEscrowContract, SpendModuleContract: cfg.ascpSpendModuleContract,
-			DirectoryContract: cfg.ascpDirectoryContract,
+			DirectoryContract: cfg.ascpDirectoryContract, AuthorityRules: cfg.ascpAuthorityRules,
 		})
 		if err != nil {
 			return fmt.Errorf("create ASCP governance receipt observer: %w", err)
@@ -593,6 +593,9 @@ func loadConfig() (startupConfig, error) {
 				return startupConfig{}, errors.New("ASCP chain authority rules must use the configured observer chain")
 			}
 		}
+		if _, err := ascpworkflow.NewAuthorityVerifier(cfg.ascpAuthorityRules, cfg.observerConfig.ObserverQuorum); err != nil {
+			return startupConfig{}, fmt.Errorf("FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON: %w", err)
+		}
 	}
 	if cfg.ascpDirectoryContract != "" {
 		if len(cfg.ascpDirectoryContract) != 42 || !common.IsHexAddress(cfg.ascpDirectoryContract) || common.HexToAddress(cfg.ascpDirectoryContract) == (common.Address{}) {
@@ -620,6 +623,9 @@ func loadConfig() (startupConfig, error) {
 			return startupConfig{}, errors.New("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK must be a positive canonical integer")
 		}
 		cfg.ascpGovernanceFromBlock = fromBlock
+	}
+	if (len(cfg.ascpAuthorityRules) != 0) != (cfg.ascpGovernanceFromBlock != 0) {
+		return startupConfig{}, errors.New("chain-changing Owner workflows require both the authority rules and complete governance observer tuple")
 	}
 	if cfg.ascpAdaptationSigner != "" && (len(cfg.ascpAdaptationSigner) != 42 || !common.IsHexAddress(cfg.ascpAdaptationSigner) || common.HexToAddress(cfg.ascpAdaptationSigner) == (common.Address{})) {
 		return startupConfig{}, errors.New("FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS must be a non-zero canonical address")

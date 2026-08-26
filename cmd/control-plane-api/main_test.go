@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 		"FLOWOPS_ASCP_ADAPTATION_SIGNER_ADDRESS", "FLOWOPS_ASCP_ADAPTATION_KEY_ID",
 		"FLOWOPS_ASCP_ADAPTATION_KEY_EPOCH", "FLOWOPS_ASCP_ADAPTATION_HSM_SOCKET", "FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT",
 		"FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT", "FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", "FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", "FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK",
+		"FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON",
 		"FLOWOPS_BASE_RPC_PROVIDERS_JSON",
 		"FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC", "FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC",
 	} {
@@ -67,6 +69,10 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 		t.Fatal("noncanonical governance start block was accepted")
 	}
 	t.Setenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK", "100")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("governance Owner API configuration without authority rules was accepted")
+	}
+	t.Setenv("FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON", testAuthorityRulesJSON(84532, "0x3333333333333333333333333333333333333333"))
 	cfg, err = loadConfig()
 	if err != nil || cfg.ascpGovernanceFromBlock != 100 {
 		t.Fatalf("governance observer config=%+v err=%v", cfg, err)
@@ -106,6 +112,10 @@ func TestLoadConfigRequiresExplicitSecurityAndNetworkInputs(t *testing.T) {
 	}
 }
 
+func testAuthorityRulesJSON(chainID uint64, contract string) string {
+	return fmt.Sprintf(`[{"action":"SPEND_SCHEDULE_CAPS","kind":"SIGNER_CAPS","chainId":%d,"contractAddress":"%s","contractCodeHash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","onChainPrincipal":"0x4444444444444444444444444444444444444444","proposerRole":"SIGNER_OPERATOR","approverRole":"ORG_ADMIN","workflowQuorum":2,"relayerMode":"EXACT","relayer":"0x5555555555555555555555555555555555555555","functionSelector":"0x4863f194","actionEventSignature":"0x6040444013009a863522866cc7dc4131940355951a105ea775750a7cdb24f163","workflowEventSignature":"0x71840a8df3cf7e14c302ff72b4fd1c651a2845389dfb0a4fdd884a2ffb104bfe","minimumTimelockSeconds":3600,"emergencyPath":"signed deployment recovery runbook"}]`, chainID, contract)
+}
+
 func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
 	privateKey := ed25519.NewKeyFromSeed([]byte(strings.Repeat("r", ed25519.SeedSize)))
 	setObserverRuntime(t)
@@ -128,6 +138,7 @@ func TestLoadConfigBindsCompleteSignedBaseMainnetRelease(t *testing.T) {
 	t.Setenv("FLOWOPS_ASCP_CALL_ESCROW_CONTRACT", observerAddress(12))
 	t.Setenv("FLOWOPS_ASCP_SPEND_MODULE_CONTRACT", observerAddress(13))
 	t.Setenv("FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK", "100")
+	t.Setenv("FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON", testAuthorityRulesJSON(8453, observerAddress(13)))
 	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "FLOWOPS_METRICS_KEY_B64") {
 		t.Fatalf("mainnet without private metrics credential error=%v", err)
 	}

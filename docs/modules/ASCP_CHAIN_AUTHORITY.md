@@ -23,14 +23,25 @@ Each `AuthorityRule` names:
 - exact relayer or an explicit any-relayer policy;
 - code-fixed function selector, primary action event, any required secondary
   action event, and workflow-binding event;
-- minimum decoded timelock and documented emergency path.
+- minimum observed approval-to-execution delay and documented emergency path.
 
-Actions are separate for CallEscrow verifier governance, ServiceDirectory
-publish/cancel/authority rotation/pause/key revocation, AgentRegistry
-register/policy/status/admin rotation,
-ASCPSpendModule authorizer/allowlist/caps/pause/nonces, Safe module
-enable/disable, and Safe owner rotation. An action absent from the installed
-matrix cannot be created as a chain workflow.
+The executable inventory contains all 26 reviewed contract mutation surfaces.
+Ten are currently enabled through the Owner workflow API: CallEscrow verifier
+add/revoke/pause, ServiceDirectory publish/cancel, and ASCPSpendModule
+authorizer/allowlist/caps/pause/nonce invalidation. Each enabled entry maps the
+Owner endpoint, closed typed action, two-person approval, immutable Safe CALL
+command, finalized observer quorum, atomic receipt ownership, and append-only
+audit records.
+
+The other 16 surfaces are deliberately classified as disabled: directory
+authority/overlay operations, AgentRegistry mutations, and Safe module/owner
+mutations do not yet have the complete typed action plus independent receipt
+lifecycle. A disabled row cannot be installed through
+`FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON`; startup rejects it. This preserves
+the reviewed ABI/event inventory without pretending that a contract method is
+already an Owner API capability. The machine-readable inventory is
+`docs/evidence/AC66_OWNER_CHAIN_API_INVENTORY_2026-08-26.json` and a test locks
+it byte-semantically to `OwnerChainActionInventory()`.
 
 The release configuration cannot redefine an action's ABI surface. The module
 derives the required selector and event topics from a closed action matrix and
@@ -40,11 +51,14 @@ rejects a mismatching rule at startup. Safe owner swap requires both its
 ## Completion
 
 The internal observer supplies at least the configured quorum of independent
-`AuthorityObservation` records. They must have distinct provider identities
+`AuthorityObservation` records. At the exact receipt block, every provider
+reads target runtime code, the code-fixed `governor()` or `safe()` principal,
+and the outer transaction sender. They must have distinct provider identities
 and agree byte-for-byte after provider name is removed. Each proves the exact
 transaction and canonical finalized block, contract/code hash, principal,
-relayer, selector, events, workflow/payload, log indexes, and decoded timelock.
-Only then may `APPROVED_PENDING_CHAIN` become `APPROVED`. Owner HTTP routes do
+relayer, selector, events, workflow/payload, log indexes, and the observed
+approval-to-execution delay.
+Only then may `APPROVED_PENDING_CHAIN` become `FINALIZED`. Owner HTTP routes do
 not expose completion.
 
 Scheduled governance completes the workflow for the scheduling transaction;
@@ -53,7 +67,7 @@ finalized chain observation.
 
 ## Failure behavior
 
-Unknown action, malformed matrix, role mismatch, same-person approval, fewer
+Unknown or disabled action, malformed matrix, role mismatch, same-person approval, fewer
 than two providers, duplicate provider, provider disagreement, wrong code or
 principal, relayer substitution, missing/coincident required events, short
 timelock, non-final receipt, and receipt replay against another workflow all
@@ -61,8 +75,11 @@ fail closed without changing workflow state.
 
 ## Operational boundary
 
-`FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON` is release-manifest configuration and
-must not be generated from an Owner request. Retain the signed matrix, contract
+`FLOWOPS_ASCP_CHAIN_AUTHORITY_RULES_JSON` is mandatory release-manifest
+configuration whenever the governance observer tuple enables chain-changing
+Owner workflows, and must not be generated from an Owner request. Neither side
+can start alone. Missing historical code, principal, or
+transaction RPC evidence fails completion closed. Retain the signed matrix, contract
 source/runtime match, Safe threshold and owner evidence, hot-key rotation
 evidence, raw provider receipts/blocks/traces, decoded logs, and rule-change
 approval. A rule change is a deployment governance event, not a workflow

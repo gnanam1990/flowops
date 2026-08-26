@@ -1,9 +1,16 @@
 package ascpworkflow
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"os"
+	"reflect"
 	"testing"
+
+	"github.com/gnanam1990/flowops/pkg/governanceworkflow"
 )
 
 func TestAuthorityVerifierBindsDualControlPrincipalRelayerAndReceiptQuorum(t *testing.T) {
@@ -77,7 +84,7 @@ func TestAuthorityRuleRejectsConfiguredABISubstitution(t *testing.T) {
 	}
 }
 
-func TestSafeOwnerSwapRequiresRemovedAndAddedOwnerEvents(t *testing.T) {
+func TestDisabledSafeOwnerSwapCannotBeInstalledAsOwnerAPIRule(t *testing.T) {
 	functionSelector, actionEvent, secondaryEvent, workflowEvent, _ := expectedAuthoritySurface(ActionSafeSwapOwner)
 	rule := AuthorityRule{
 		Action: ActionSafeSwapOwner, Kind: BreakGlass, ChainID: 84532,
@@ -88,26 +95,117 @@ func TestSafeOwnerSwapRequiresRemovedAndAddedOwnerEvents(t *testing.T) {
 		SecondaryActionEventSignature: secondaryEvent, WorkflowEventSignature: workflowEvent,
 		MinimumTimelockSeconds: 3600, EmergencyPath: "Safe owner recovery procedure",
 	}
-	verifier, err := NewAuthorityVerifier([]AuthorityRule{rule}, 2)
+	if secondaryEvent == "" || workflowEvent != "" {
+		t.Fatalf("Safe swap surface lost its two-event contract: secondary=%s workflow=%s", secondaryEvent, workflowEvent)
+	}
+	if _, err := NewAuthorityVerifier([]AuthorityRule{rule}, 2); !errors.Is(err, ErrAuthorityProof) {
+		t.Fatalf("disabled Safe action was installable: %v", err)
+	}
+}
+
+func TestOwnerChainActionInventoryIsCompleteAndFailClosed(t *testing.T) {
+	inventory := OwnerChainActionInventory()
+	if len(inventory) != 26 {
+		t.Fatalf("inventory entries=%d want=26", len(inventory))
+	}
+	enabledTypes := map[governanceworkflow.ActionType]ChainAction{
+		governanceworkflow.ActionCallEscrowAddVerifier:    ActionCallEscrowAddVerifier,
+		governanceworkflow.ActionCallEscrowRevokeVerifier: ActionCallEscrowRevokeVerifier,
+		governanceworkflow.ActionCallEscrowPause:          ActionCallEscrowPause,
+		governanceworkflow.ActionDirectoryApprove:         ActionDirectoryPublish,
+		governanceworkflow.ActionDirectoryCancel:          ActionDirectoryCancel,
+		governanceworkflow.ActionSpendAuthorizer:          ActionSpendSetAuthorizer,
+		governanceworkflow.ActionSpendAllowlist:           ActionSpendSetAllowlist,
+		governanceworkflow.ActionSpendCaps:                ActionSpendScheduleCaps,
+		governanceworkflow.ActionSpendPause:               ActionSpendPause,
+		governanceworkflow.ActionSpendInvalidateNonces:    ActionSpendInvalidateNonces,
+	}
+	seenActions := make(map[ChainAction]struct{}, len(inventory))
+	seenTypes := make(map[governanceworkflow.ActionType]struct{}, len(enabledTypes))
+	for _, entry := range inventory {
+		if _, duplicate := seenActions[entry.Action]; duplicate || !validChainAction(entry.Action) {
+			t.Fatalf("duplicate or invalid inventory action %q", entry.Action)
+		}
+		seenActions[entry.Action] = struct{}{}
+		rule := authorityRuleForAction(entry.Action)
+		if entry.OwnerAPIEnabled {
+			wantAction, ok := enabledTypes[entry.ActionType]
+			if !ok || wantAction != entry.Action || entry.DisabledReason != "" || entry.OwnerAPIPath == "" ||
+				entry.Approval == "" || entry.Execution == "" || entry.Receipt == "" || entry.Audit == "" {
+				t.Fatalf("invalid enabled inventory entry %+v", entry)
+			}
+			if _, duplicate := seenTypes[entry.ActionType]; duplicate {
+				t.Fatalf("duplicate enabled action type %q", entry.ActionType)
+			}
+			seenTypes[entry.ActionType] = struct{}{}
+			verifier, err := NewAuthorityVerifier([]AuthorityRule{rule}, 2)
+			if err != nil {
+				t.Fatalf("enabled action %s rejected: %v", entry.Action, err)
+			}
+			workflow := Workflow{
+				WorkflowID: testHash(70), OrganizationID: "org_a", Kind: rule.Kind, ChainAction: entry.Action,
+				PayloadHash: testHash(71), ProposedBy: "principal_a", ProposerRole: rule.ProposerRole,
+				ApprovedBy: "principal_b", ApproverRole: rule.ApproverRole, State: ApprovedPendingChain,
+			}
+			receipt := authorityReceiptFixture(workflow, rule)
+			if err := verifier.VerifyWorkflowCompletion(context.Background(), workflow, receipt); err != nil {
+				t.Fatalf("enabled action %s completion rejected: %v", entry.Action, err)
+			}
+			workflow.ApprovedBy = workflow.ProposedBy
+			if err := verifier.VerifyWorkflowCompletion(context.Background(), workflow, receipt); !errors.Is(err, ErrAuthorityProof) {
+				t.Fatalf("enabled action %s allowed one principal: %v", entry.Action, err)
+			}
+			continue
+		}
+		if entry.ActionType != "" || entry.DisabledReason == "" || entry.OwnerAPIPath != "" || entry.Approval != "" ||
+			entry.Execution != "" || entry.Receipt != "" || entry.Audit != "" {
+			t.Fatalf("disabled entry lacks a closed reason: %+v", entry)
+		}
+		if _, err := NewAuthorityVerifier([]AuthorityRule{rule}, 2); !errors.Is(err, ErrAuthorityProof) {
+			t.Fatalf("disabled action %s was installable: %v", entry.Action, err)
+		}
+	}
+	if len(seenTypes) != len(enabledTypes) {
+		t.Fatalf("enabled action types=%d want=%d", len(seenTypes), len(enabledTypes))
+	}
+}
+
+func TestOwnerChainActionEvidenceManifestMatchesExecutableInventory(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/evidence/AC66_OWNER_CHAIN_API_INVENTORY_2026-08-26.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	workflow := Workflow{
-		WorkflowID: testHash(51), OrganizationID: "org_a", Kind: BreakGlass, ChainAction: ActionSafeSwapOwner,
-		PayloadHash: testHash(52), ProposedBy: "owner_a", ProposerRole: OrgAdmin,
-		ApprovedBy: "responder_b", ApproverRole: IncidentResponder, State: ApprovedPendingChain,
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var manifest struct {
+		SchemaVersion       int                              `json:"schemaVersion"`
+		AcceptanceCriterion string                           `json:"acceptanceCriterion"`
+		Entries             []OwnerChainActionInventoryEntry `json:"entries"`
 	}
-	receipt := authorityReceiptFixture(workflow, rule)
-	for index := range receipt.AuthorityProof {
-		receipt.AuthorityProof[index].Relayer = "0x3333333333333333333333333333333333333333"
-		receipt.AuthorityProof[index].SecondaryActionLogIndex = 2
-	}
-	if err := verifier.VerifyWorkflowCompletion(context.Background(), workflow, receipt); err != nil {
+	if err := decoder.Decode(&manifest); err != nil {
 		t.Fatal(err)
 	}
-	receipt.AuthorityProof[0].SecondaryActionEventSignature = ""
-	if err := verifier.VerifyWorkflowCompletion(context.Background(), workflow, receipt); !errors.Is(err, ErrAuthorityProof) {
-		t.Fatalf("missing AddedOwner error=%v", err)
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		t.Fatalf("trailing manifest value: %v", err)
+	}
+	if manifest.SchemaVersion != 1 || manifest.AcceptanceCriterion != "AC-66" ||
+		!reflect.DeepEqual(manifest.Entries, OwnerChainActionInventory()) {
+		t.Fatalf("evidence manifest drifted from executable inventory")
+	}
+}
+
+func authorityRuleForAction(action ChainAction) AuthorityRule {
+	kind, proposer, approver, _ := expectedAuthorityWorkflow(action)
+	functionSelector, actionEvent, secondaryEvent, workflowEvent, _ := expectedAuthoritySurface(action)
+	return AuthorityRule{
+		Action: action, Kind: kind, ChainID: 84532,
+		ContractAddress: "0x1111111111111111111111111111111111111111", ContractCodeHash: testHash(72),
+		OnChainPrincipal: "0x2222222222222222222222222222222222222222",
+		ProposerRole:     proposer, ApproverRole: approver, WorkflowQuorum: 2,
+		RelayerMode: RelayerExact, Relayer: "0x3333333333333333333333333333333333333333",
+		FunctionSelector: functionSelector, ActionEventSignature: actionEvent,
+		SecondaryActionEventSignature: secondaryEvent, WorkflowEventSignature: workflowEvent,
+		MinimumTimelockSeconds: 3600, EmergencyPath: "deployment-owned recovery runbook",
 	}
 }
 

@@ -38,6 +38,7 @@ type Config struct {
 	CallEscrowContract     string
 	SpendModuleContract    string
 	DirectoryContract      string
+	AuthorityRules         []ascpworkflow.AuthorityRule
 }
 
 // ValidateGovernanceAction is the proposal-time allowlist boundary. It uses
@@ -67,6 +68,7 @@ type Observer struct {
 	callEscrow             string
 	spendModule            string
 	directory              string
+	authorityRules         map[string]ascpworkflow.AuthorityRule
 }
 
 func New(config Config) (*Observer, error) {
@@ -76,10 +78,24 @@ func New(config Config) (*Observer, error) {
 		config.CallEscrowContract == config.DirectoryContract || config.SpendModuleContract == config.DirectoryContract {
 		return nil, ErrInvalidConfiguration
 	}
+	authorityRules := make(map[string]ascpworkflow.AuthorityRule, len(config.AuthorityRules))
+	if len(config.AuthorityRules) != 0 {
+		if _, err := ascpworkflow.NewAuthorityVerifier(config.AuthorityRules, config.Quorum); err != nil {
+			return nil, ErrInvalidConfiguration
+		}
+		for _, rule := range config.AuthorityRules {
+			key := authorityRuleKey(rule.ContractAddress, rule.FunctionSelector)
+			if _, duplicate := authorityRules[key]; duplicate {
+				return nil, ErrInvalidConfiguration
+			}
+			authorityRules[key] = rule
+		}
+	}
 	return &Observer{
 		observers: config.Observers, quorum: config.Quorum, finalizedConfirmations: config.FinalizedConfirmations,
 		fromBlock: config.FromBlock, callEscrow: config.CallEscrowContract,
 		spendModule: config.SpendModuleContract, directory: config.DirectoryContract,
+		authorityRules: authorityRules,
 	}, nil
 }
 
@@ -146,6 +162,25 @@ func (o *Observer) ObserveWorkflowCompletion(ctx context.Context, workflow ascpw
 		EventSignature: ascpworkflow.GovernanceWorkflowBoundTopic, FunctionSelector: canonical.FunctionSelector,
 		ActionEventSignature: canonical.ActionEventSignature, ActionLogIndexes: slices.Clone(canonical.ActionLogIndexes),
 		Observers: slices.Clone(providers), Finality: "FINALIZED",
+	}
+	if authorityRule, ok := o.authorityRules[authorityRuleKey(canonical.ContractAddress, canonical.FunctionSelector)]; ok {
+		receipt.AuthorityProof = make([]ascpworkflow.AuthorityObservation, 0, len(agreeing))
+		for _, evidence := range agreeing {
+			if len(evidence.ActionLogIndexes) == 0 {
+				return ascpworkflow.CompletionReceipt{}, ErrReceiptRejected
+			}
+			receipt.AuthorityProof = append(receipt.AuthorityProof, ascpworkflow.AuthorityObservation{
+				Provider: evidence.Provider, ChainID: evidence.ChainID, TransactionHash: evidence.TransactionHash,
+				BlockNumber: evidence.BlockNumber, BlockHash: evidence.BlockHash,
+				ContractAddress: evidence.ContractAddress, ContractCodeHash: evidence.ContractCodeHash,
+				OnChainPrincipal: evidence.OnChainPrincipal, Relayer: evidence.Relayer,
+				FunctionSelector: evidence.FunctionSelector, ActionEventSignature: evidence.ActionEventSignature,
+				WorkflowEventSignature: authorityRule.WorkflowEventSignature,
+				WorkflowID:             evidence.WorkflowID, PayloadHash: evidence.PayloadHash,
+				ActionLogIndex: evidence.ActionLogIndexes[0], WorkflowLogIndex: evidence.BindingLogIndex,
+				ObservedTimelockSeconds: evidence.ObservedDelaySeconds, Finality: "FINALIZED",
+			})
+		}
 	}
 	receipt.EvidenceDigest = evidenceDigest(receipt)
 	return receipt, nil
@@ -242,10 +277,14 @@ func agreeingQuorum(evidence []reconciliation.GovernanceReceiptEvidence, quorum 
 
 func (o *Observer) rules(kind ascpworkflow.Kind) ([]reconciliation.GovernanceRule, error) {
 	rule := func(contract, function, event string, multiple bool) reconciliation.GovernanceRule {
-		return reconciliation.GovernanceRule{
+		result := reconciliation.GovernanceRule{
 			Contract: contract, FunctionSelector: functionSelector(function),
 			ActionEventSignature: eventTopic(event), MultipleActionEvents: multiple, ExpectedActionEvents: 1,
 		}
+		if authorityRule, ok := o.authorityRules[authorityRuleKey(result.Contract, result.FunctionSelector)]; ok {
+			result.AuthorityPrincipalGetter = authorityPrincipalGetter(authorityRule.Action)
+		}
+		return result
 	}
 	switch kind {
 	case ascpworkflow.PayoutChange:
@@ -281,7 +320,26 @@ func sameEvidence(left, right reconciliation.GovernanceReceiptEvidence) bool {
 		left.BlockTimestamp == right.BlockTimestamp &&
 		left.BindingLogIndex == right.BindingLogIndex && left.ContractAddress == right.ContractAddress &&
 		left.FunctionSelector == right.FunctionSelector && left.ActionEventSignature == right.ActionEventSignature &&
-		slices.Equal(left.ActionLogIndexes, right.ActionLogIndexes)
+		slices.Equal(left.ActionLogIndexes, right.ActionLogIndexes) && left.ContractCodeHash == right.ContractCodeHash &&
+		left.OnChainPrincipal == right.OnChainPrincipal && left.Relayer == right.Relayer &&
+		left.ObservedDelaySeconds == right.ObservedDelaySeconds
+}
+
+func authorityRuleKey(contract, selector string) string { return contract + "\x00" + selector }
+
+func authorityPrincipalGetter(action ascpworkflow.ChainAction) string {
+	switch action {
+	case ascpworkflow.ActionSpendSetAuthorizer, ascpworkflow.ActionSpendSetAllowlist,
+		ascpworkflow.ActionSpendScheduleCaps, ascpworkflow.ActionSpendPause,
+		ascpworkflow.ActionSpendInvalidateNonces:
+		return functionSelector("safe()")
+	case ascpworkflow.ActionCallEscrowAddVerifier, ascpworkflow.ActionCallEscrowRevokeVerifier,
+		ascpworkflow.ActionCallEscrowPause, ascpworkflow.ActionDirectoryPublish,
+		ascpworkflow.ActionDirectoryCancel:
+		return functionSelector("governor()")
+	default:
+		return ""
+	}
 }
 
 func evidenceDigest(receipt ascpworkflow.CompletionReceipt) string {

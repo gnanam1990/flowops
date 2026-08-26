@@ -13,24 +13,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gnanam1990/flowops/internal/ascpworkflow"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/gnanam1990/flowops/pkg/governanceworkflow"
 )
 
 type governanceTransport struct {
-	mu        sync.Mutex
-	head      uint64
-	block     uint64
-	blockHash string
-	txHash    string
-	workflow  string
-	payload   string
-	contract  string
-	selector  string
-	action    string
-	timestamp uint64
-	invalid   map[string]bool
+	mu               sync.Mutex
+	head             uint64
+	block            uint64
+	blockHash        string
+	txHash           string
+	workflow         string
+	payload          string
+	contract         string
+	selector         string
+	action           string
+	timestamp        uint64
+	invalid          map[string]bool
+	code             string
+	principal        string
+	relayer          string
+	authorityFailure bool
 }
 
 func (t *governanceTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -76,6 +81,15 @@ func (t *governanceTransport) RoundTrip(request *http.Request) (*http.Response, 
 			hash = testHash(t.head)
 		}
 		result = map[string]any{"number": fmt.Sprintf("0x%x", number), "hash": hash, "timestamp": fmt.Sprintf("0x%x", t.timestamp)}
+	case "eth_getCode":
+		if t.authorityFailure {
+			return nil, errors.New("historical state RPC unavailable")
+		}
+		result = t.code
+	case "eth_call":
+		result = "0x" + strings.Repeat("0", 24) + t.principal[2:]
+	case "eth_getTransactionByHash":
+		result = map[string]any{"hash": t.txHash, "from": t.relayer, "blockNumber": fmt.Sprintf("0x%x", t.block), "blockHash": t.blockHash}
 	default:
 		return nil, fmt.Errorf("unexpected RPC method %s", call.Method)
 	}
@@ -101,11 +115,25 @@ func TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence(t *testing.T) {
 	workflow := ascpworkflow.Workflow{WorkflowID: testHash(1), PayloadHash: bound.PayloadHash, Kind: ascpworkflow.SignerCaps,
 		State: ascpworkflow.ApprovedPendingChain, ApprovedAt: 1_800_000_000, ChainID: 84532,
 		ContractAddress: spend, FunctionSelector: selector, Calldata: bound.Calldata,
-		GovernanceAction: bound.CanonicalAction}
+		GovernanceAction: bound.CanonicalAction, ChainAction: ascpworkflow.ActionSpendScheduleCaps,
+		ProposedBy: "signer_a", ProposerRole: ascpworkflow.SignerOperator,
+		ApprovedBy: "owner_b", ApproverRole: ascpworkflow.OrgAdmin}
+	principal := "0x4444444444444444444444444444444444444444"
+	relayer := "0x5555555555555555555555555555555555555555"
+	code := "0x60016000"
+	authorityRule := ascpworkflow.AuthorityRule{
+		Action: ascpworkflow.ActionSpendScheduleCaps, Kind: ascpworkflow.SignerCaps, ChainID: 84532,
+		ContractAddress: spend, ContractCodeHash: crypto.Keccak256Hash([]byte{0x60, 0x01, 0x60, 0x00}).Hex(),
+		OnChainPrincipal: principal, ProposerRole: ascpworkflow.SignerOperator, ApproverRole: ascpworkflow.OrgAdmin,
+		WorkflowQuorum: 2, RelayerMode: ascpworkflow.RelayerExact, Relayer: relayer,
+		FunctionSelector: selector, ActionEventSignature: eventTopic("CapsScheduled(uint256,uint256,uint256,uint64)"),
+		WorkflowEventSignature: eventTopic(governanceWorkflowBoundSignature), MinimumTimelockSeconds: 1,
+		EmergencyPath: "signed deployment recovery runbook",
+	}
 	transport := &governanceTransport{head: 120, block: 100, blockHash: testHash(100), txHash: testHash(3), timestamp: 1_800_000_001,
 		workflow: workflow.WorkflowID, payload: workflow.PayloadHash, contract: spend,
 		selector: selector,
-		action:   eventTopic("CapsScheduled(uint256,uint256,uint256,uint64)"),
+		action:   eventTopic("CapsScheduled(uint256,uint256,uint256,uint64)"), code: code, principal: principal, relayer: relayer,
 	}
 	client := &http.Client{Transport: transport, Timeout: time.Second}
 	providers := []reconciliation.RPCProvider{{Name: "rpc_a", URL: "https://a.rpc.example"}, {Name: "rpc_b", URL: "https://b.rpc.example"}}
@@ -115,7 +143,7 @@ func TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence(t *testing.T) {
 	}
 	observer, err := New(Config{Observers: set, Quorum: 2, FinalizedConfirmations: 12, FromBlock: 80,
 		CallEscrowContract: "0x1111111111111111111111111111111111111111", SpendModuleContract: spend,
-		DirectoryContract: "0x3333333333333333333333333333333333333333"})
+		DirectoryContract: "0x3333333333333333333333333333333333333333", AuthorityRules: []ascpworkflow.AuthorityRule{authorityRule}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +166,54 @@ func TestObserverDiscoversFinalizedReceiptWithoutCallerEvidence(t *testing.T) {
 	}
 	if receipt.WorkflowID != workflow.WorkflowID || receipt.TransactionHash != transport.txHash || receipt.LogIndex != 2 ||
 		receipt.FunctionSelector != transport.selector || receipt.BlockTimestamp != transport.timestamp ||
-		len(receipt.Observers) != 2 || receipt.EvidenceDigest == "" {
+		len(receipt.Observers) != 2 || len(receipt.AuthorityProof) != 2 || receipt.EvidenceDigest == "" {
 		t.Fatalf("receipt=%+v", receipt)
+	}
+	verifier, err := ascpworkflow.NewAuthorityVerifier([]ascpworkflow.AuthorityRule{authorityRule}, 2)
+	if err != nil || verifier.VerifyWorkflowCompletion(t.Context(), workflow, receipt) != nil {
+		t.Fatalf("strict authority completion failed: receipt=%+v err=%v", receipt, err)
+	}
+	for name, mutation := range map[string]struct {
+		mutate  func()
+		restore func()
+	}{
+		"runtime code substitution": {
+			mutate: func() { transport.code = "0x60026000" }, restore: func() { transport.code = code },
+		},
+		"principal substitution": {
+			mutate:  func() { transport.principal = "0x6666666666666666666666666666666666666666" },
+			restore: func() { transport.principal = principal },
+		},
+		"relayer substitution": {
+			mutate:  func() { transport.relayer = "0x7777777777777777777777777777777777777777" },
+			restore: func() { transport.relayer = relayer },
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			transport.mu.Lock()
+			mutation.mutate()
+			transport.mu.Unlock()
+			changed, observeErr := observer.ObserveWorkflowCompletion(t.Context(), workflow)
+			transport.mu.Lock()
+			mutation.restore()
+			transport.mu.Unlock()
+			if observeErr != nil {
+				t.Fatal(observeErr)
+			}
+			if err := verifier.VerifyWorkflowCompletion(t.Context(), workflow, changed); !errors.Is(err, ascpworkflow.ErrAuthorityProof) {
+				t.Fatalf("substituted authority evidence accepted: %+v error=%v", changed.AuthorityProof, err)
+			}
+		})
+	}
+	transport.mu.Lock()
+	transport.authorityFailure = true
+	transport.mu.Unlock()
+	_, authorityErr := observer.ObserveWorkflowCompletion(t.Context(), workflow)
+	transport.mu.Lock()
+	transport.authorityFailure = false
+	transport.mu.Unlock()
+	if !errors.Is(authorityErr, ErrQuorumUnavailable) || errors.Is(authorityErr, ErrReceiptRejected) {
+		t.Fatalf("transient authority RPC failure was terminalized: %v", authorityErr)
 	}
 	late := workflow
 	late.State, late.SubmissionTxHash = ascpworkflow.TimedOut, transport.txHash
@@ -235,6 +309,7 @@ func TestObserverRuleMapCoversEveryChainWorkflowKind(t *testing.T) {
 		{ascpworkflow.PayoutChange, 1}, {ascpworkflow.SignerCaps, 1}, {ascpworkflow.VerifierGovernance, 2},
 		{ascpworkflow.BreakGlass, 2}, {ascpworkflow.ModuleGovernance, 3}, {ascpworkflow.DirectoryCancel, 1},
 	}
+	totalRules := 0
 	for _, test := range tests {
 		rules, err := observer.rules(test.kind)
 		if err != nil || len(rules) != test.count {
@@ -245,6 +320,16 @@ func TestObserverRuleMapCoversEveryChainWorkflowKind(t *testing.T) {
 				t.Fatalf("kind=%s invalid rule=%+v", test.kind, rule)
 			}
 		}
+		totalRules += len(rules)
+	}
+	enabledActions := 0
+	for _, entry := range ascpworkflow.OwnerChainActionInventory() {
+		if entry.OwnerAPIEnabled {
+			enabledActions++
+		}
+	}
+	if totalRules != enabledActions {
+		t.Fatalf("receipt rules=%d enabled Owner actions=%d", totalRules, enabledActions)
 	}
 	if _, err := observer.rules(ascpworkflow.ProductionGate); !errors.Is(err, ErrUnsupportedWorkflow) {
 		t.Fatalf("non-chain workflow mapping error=%v", err)
