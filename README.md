@@ -12,6 +12,8 @@ Status: pre-alpha, Phase 1 implementation. No mainnet funds.
   [FLOWOPS_BASE_REVIEWER_BRIEF_V1.md](docs/proposals/FLOWOPS_BASE_REVIEWER_BRIEF_V1.md)
 - Base Sepolia ASCP activation evidence:
   [ASCP_BASE_SEPOLIA_ACTIVATION.md](docs/operations/ASCP_BASE_SEPOLIA_ACTIVATION.md)
+- Funding-disabled ServiceDirectory release compiler:
+  [ASCP_DIRECTORY_RELEASE.md](docs/modules/ASCP_DIRECTORY_RELEASE.md)
 
 The only pre-audit Base mainnet artifact is the separately gated, evidence-only
 `FlowOpsProposalAnchor`, deployed at
