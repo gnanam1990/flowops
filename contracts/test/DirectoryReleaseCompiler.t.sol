@@ -76,6 +76,25 @@ contract DirectoryReleaseCompilerParityTest is Test {
         assertEq(keccak256(abi.encode(proposal)), 0xd3840894110cb6203f36cd34e5d5042933f88b9d9f5b6552552b68fc014b65d9);
         assertEq(directory.proposeVersion.selector, bytes4(0xfd0d35e6));
         assertEq(directory.approveVersion.selector, bytes4(0x0bf45ed9));
+
+        ServiceDirectory.AdminActionAuthorization memory authorization = ServiceDirectory.AdminActionAuthorization({
+            orgDomain: bytes32(uint256(1)),
+            contractAddress: address(directory),
+            chainId: 84532,
+            authorityRole: directory.DIRECTORY_PUBLISHER_ROLE(),
+            functionSelector: directory.proposeVersion.selector,
+            payloadHash: keccak256(abi.encode(proposal)),
+            adminOperationId: 0x4305b3a7d59ec5cb8e073a531c8596fbdd5b770ca615c44907376b210ee0d4fd,
+            adminNonce: 41,
+            adminEpoch: 1,
+            validAfter: 1_787_745_570,
+            validBefore: 1_787_746_170,
+            workflowId: bytes32(uint256(2))
+        });
+        assertEq(
+            directory.adminAuthorizationDigest(authorization),
+            0x40849e12a6f903e1fbe06ce35bd6221718a22ff50d0e2201f3ece255f7847f58
+        );
     }
 
     function _hashPair(bytes32 left, bytes32 right) private pure returns (bytes32) {

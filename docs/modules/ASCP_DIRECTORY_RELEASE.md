@@ -102,12 +102,16 @@ proposal, and the original publisher/pauser epochs.
 
 ## Remaining consequential gates
 
-After real content is supplied and reviewed, a separate short-lived publisher
-authorization must bind the compiler's exact `functionSelector`,
-`payloadHash`, workflow ID, epoch, operation ID, nonce, and at-most-10-minute
-window. Only then may an untrusted relayer submit `proposeVersion`. The Safe
-approval is a second transaction, activation cannot become effective for at
-least 24 hours, and funding remains a later independent gate.
+After real content is supplied and reviewed, the
+[directory pre-sign gate](ASCP_DIRECTORY_PRESIGN.md) fetches both remote copies
+byte-for-byte and emits the separate short-lived publisher authorization
+package. It binds this compiler's exact `functionSelector`, `payloadHash`,
+workflow ID, epoch, deterministic operation ID, nonce, and 10-minute window.
+The package is still unsigned and cannot broadcast. Only after an external
+publisher signs that exact digest may a separate relayer submit
+`proposeVersion`. The Safe approval is a second transaction, activation cannot
+become effective for at least 24 hours, and funding remains a later independent
+gate.
 
 Both uploaded locations must be fetched and compared byte-for-byte with
 `canonicalBlob` immediately before that authorization is signed. The compiler

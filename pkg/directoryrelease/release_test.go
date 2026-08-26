@@ -173,6 +173,16 @@ func TestStrictDecodersRejectUnknownAndTrailingJSON(t *testing.T) {
 	if _, err := DecodeArtifact(append(artifactRaw, []byte(` null`)...)); err == nil {
 		t.Fatal("trailing artifact accepted")
 	}
+	duplicate := []byte(strings.Replace(string(raw), `"releaseId":"`+manifest.ReleaseID+`"`,
+		`"releaseId":"reviewed","releaseId":"`+manifest.ReleaseID+`"`, 1))
+	if _, err := DecodeManifest(duplicate); err == nil {
+		t.Fatal("duplicate manifest field accepted")
+	}
+	nestedDuplicate := []byte(strings.Replace(string(artifactRaw), `"expectedSigner":"`+manifest.DirectoryPublisher+`"`,
+		`"expectedSigner":"`+address(88)+`","expectedSigner":"`+manifest.DirectoryPublisher+`"`, 1))
+	if _, err := DecodeArtifact(nestedDuplicate); err == nil {
+		t.Fatal("nested duplicate artifact field accepted")
+	}
 }
 
 func validFixture() (Manifest, []byte) {

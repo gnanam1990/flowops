@@ -557,6 +557,9 @@ func (record deploymentRecord) directoryAddress() string {
 }
 
 func decodeStrict(raw []byte, target any) error {
+	if err := rejectDuplicateJSONKeys(raw); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -564,6 +567,64 @@ func decodeStrict(raw []byte, target any) error {
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return errors.New("trailing JSON value")
+	}
+	return nil
+}
+
+func rejectDuplicateJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := scanJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("trailing JSON value")
+	}
+	return nil
+}
+
+func scanJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, composite := token.(json.Delim)
+	if !composite {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, keyErr := decoder.Token()
+			key, ok := keyToken.(string)
+			if keyErr != nil || !ok {
+				return errors.New("invalid JSON object key")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return errors.New("duplicate JSON object key")
+			}
+			seen[key] = struct{}{}
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, endErr := decoder.Token()
+		if endErr != nil || end != json.Delim('}') {
+			return errors.New("invalid JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, endErr := decoder.Token()
+		if endErr != nil || end != json.Delim(']') {
+			return errors.New("invalid JSON array")
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
 	}
 	return nil
 }
