@@ -2,10 +2,13 @@
 
 Status: the ASCP v4 graph was deployed and source verified on Base Sepolia from
 commit `fdcfce6b7f23fb8989e6cd38f0132c3f9021b36d`. The canonical machine-readable
-record is `deployments/base-sepolia-ascp-v4.json`. The graph remains
-write-inert: the Safe module is disabled, no escrow is allowlisted, no directory
-root is published, and no funds or token approvals were provided. This testnet
-evidence does not authorize any additional Safe, funding, or mainnet action.
+record is `deployments/base-sepolia-ascp-v4.json`. That record is an immutable
+post-deployment snapshot: at block `45974646` the Safe module was disabled, no
+escrow was allowlisted, no directory root was published, and no funds or token
+approvals were provided. A later, separately approved capability activation is
+recorded in `deployments/base-sepolia-ascp-activation-v1.json` and documented in
+`docs/operations/ASCP_BASE_SEPOLIA_ACTIVATION.md`. Neither record authorizes
+funding or a Base mainnet action.
 
 `contracts/script/DeployASCPBaseSepolia.s.sol` deploys the complete ASCP v4
 contract graph against Circle test USDC on Base Sepolia:
@@ -133,9 +136,9 @@ The offline checker validates the record's schema, cross-links, per-contract
 nonce order, source commit, compiler settings, and per-transaction fee totals.
 It does not treat recorded transaction hashes as chain truth. Re-observe the
 transactions, receipts, canonical blocks, creation-input hashes, runtime code,
-constructor-bound state, Safe membership/module status, zero balances and
-allowances, and exact Sourcify matches through two independent public RPC
-providers with:
+constructor-bound state, the historical post-deployment state at block
+`45974646`, zero balances and allowances, and exact Sourcify matches through two
+independent public RPC providers with:
 
 ```sh
 make verify-ascp-sepolia-deployment
@@ -143,4 +146,7 @@ make verify-ascp-sepolia-deployment
 
 That command is deliberately network-dependent and is not part of the
 deterministic CI gate. It is read-only and fails closed on provider disagreement
-or if the graph is no longer write-inert.
+or if the recorded post-deployment snapshot cannot be reproduced. It does not
+claim that the snapshot is the latest chain state. Use
+`make verify-ascp-sepolia-activation` for the current activated,
+funding-disabled state.

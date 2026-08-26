@@ -10,6 +10,8 @@ Status: pre-alpha, Phase 1 implementation. No mainnet funds.
 - Base reviewer brief: [flowopsagent.xyz/base](https://flowopsagent.xyz/base)
 - Shareable reviewer document:
   [FLOWOPS_BASE_REVIEWER_BRIEF_V1.md](docs/proposals/FLOWOPS_BASE_REVIEWER_BRIEF_V1.md)
+- Base Sepolia ASCP activation evidence:
+  [ASCP_BASE_SEPOLIA_ACTIVATION.md](docs/operations/ASCP_BASE_SEPOLIA_ACTIVATION.md)
 
 The only pre-audit Base mainnet artifact is the separately gated, evidence-only
 `FlowOpsProposalAnchor`, deployed at

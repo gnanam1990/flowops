@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "activationId": "ascp-v4-base-sepolia-activation-v1-2026-08-26",
+  "network": "base-sepolia",
+  "chainId": 84532,
+  "status": "executed-verified-funding-disabled",
+  "sourceDeployment": {
+    "record": "deployments/base-sepolia-ascp-v4.json",
+    "releaseId": "ascp-v4-base-sepolia-2026-08-26",
+    "sourceCommit": "fdcfce6b7f23fb8989e6cd38f0132c3f9021b36d"
+  },
+  "safe": {
+    "address": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+    "threshold": 2,
+    "safeTxHash": "0x067e9a25bb5cf3586ede0678b0dad7b5c5c4144d5b4e055586ea056d83562e9e",
+    "nonceBefore": 0,
+    "nonceAfter": 1,
+    "confirmedOwners": [
+      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+      "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb"
+    ]
+  },
+  "contracts": {
+    "serviceDirectory": "0x36ac2f2baaea674b0645aa58c5d47a70b17479c9",
+    "agentRegistry": "0x55167a6b1b1e48f805faed9e277c21f3be1c0c19",
+    "escrow": "0x4122414fe2398ea2504eb6e35208f3b8d67e711d",
+    "spendModule": "0xac81e7abf6114209ad1357dabf1ae606b793f7b4",
+    "asset": "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+  },
+  "safeTransaction": {
+    "to": "0x9641d764fc13c8b624c04430c7356c1c7c8102e2",
+    "value": "0",
+    "operation": 1,
+    "safeTxGas": "0",
+    "baseGas": "0",
+    "gasPrice": "0",
+    "gasToken": "0x0000000000000000000000000000000000000000",
+    "refundReceiver": "0x0000000000000000000000000000000000000000",
+    "nonce": 0,
+    "data": "0x8d80ff0a0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000015200ac81e7abf6114209ad1357dabf1ae606b793f7b4000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000847a22532a0000000000000000000000004122414fe2398ea2504eb6e35208f3b8d67e711d0bf34c89d599a4bbbb94fb793e0c83efa50575f39e9cd342db5a4db5a863b53157b99dbedc928233bc83dd385fcf5676b14d963318148caf2a20c5c6d3009abe610eef7e0f30613f4f9175ab916c66e48100c0a8092b54e3f8b17a09102995a100f6ac2af2c441ff8886b250233a7adfc206ab0b5700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000024610b5925000000000000000000000000ac81e7abf6114209ad1357dabf1ae606b793f7b40000000000000000000000000000",
+    "dataHash": "0x4116196987a5aa8f60e156b8d02b6f969b28da3e51fef00ede44e2d9f9a83b30"
+  },
+  "actions": [
+    {
+      "order": 1,
+      "to": "0xac81e7abf6114209ad1357dabf1ae606b793f7b4",
+      "value": "0",
+      "operation": "CALL",
+      "method": "setEscrowAllowlist(address,bytes32,bytes32,bytes32)",
+      "escrow": "0x4122414fe2398ea2504eb6e35208f3b8d67e711d",
+      "escrowRuntimeCodeHash": "0x0bf34c89d599a4bbbb94fb793e0c83efa50575f39e9cd342db5a4db5a863b531",
+      "workflowId": "0x57b99dbedc928233bc83dd385fcf5676b14d963318148caf2a20c5c6d3009abe",
+      "workflowPayloadHash": "0x610eef7e0f30613f4f9175ab916c66e48100c0a8092b54e3f8b17a09102995a1",
+      "data": "0x7a22532a0000000000000000000000004122414fe2398ea2504eb6e35208f3b8d67e711d0bf34c89d599a4bbbb94fb793e0c83efa50575f39e9cd342db5a4db5a863b53157b99dbedc928233bc83dd385fcf5676b14d963318148caf2a20c5c6d3009abe610eef7e0f30613f4f9175ab916c66e48100c0a8092b54e3f8b17a09102995a1"
+    },
+    {
+      "order": 2,
+      "to": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+      "value": "0",
+      "operation": "CALL",
+      "method": "enableModule(address)",
+      "module": "0xac81e7abf6114209ad1357dabf1ae606b793f7b4",
+      "data": "0x610b5925000000000000000000000000ac81e7abf6114209ad1357dabf1ae606b793f7b4"
+    }
+  ],
+  "execution": {
+    "transactionHash": "0x46bf7bade9900bc551d326b3c4214f101b41df4cce02428586b9fdb8988d751e",
+    "outerFrom": "0xc066ac5d385419b1a8c43a0e146fa439837a8b8c",
+    "outerTo": "0xdb9b1e94b5b69df7e401ddbede43491141047db3",
+    "outerNonce": 96255,
+    "outerInputHash": "0x7098ea9c18980a85714b1ef2f3aa9ab571a055eaa032d3ee4d6dbfd16ca7f8ae",
+    "transactionType": 4,
+    "receiptStatus": true,
+    "blockNumber": 45978991,
+    "blockHash": "0x1304c6d130bc0a739193371dab9de0148b2e2c1799f0f7ab1817a7b84be8a49d",
+    "blockTimestamp": "2026-08-26T06:37:50Z",
+    "transactionIndex": 14,
+    "gasUsed": 303577,
+    "effectiveGasPriceWei": "6000001",
+    "l1FeeWei": "43522369340"
+  },
+  "eventEvidence": {
+    "executionSuccessTopic": "0x442e715f626346e8c54381002da614f62bee8d27386535b2521ec8540898556e",
+    "enabledModuleTopic": "0xecdf3a3effea5783a3c4c2140e677577666428d44ed9d474a0b3a4c9943f8440",
+    "escrowAllowlistSetTopic": "0x02b8c7e709e3f27c20a4ecb3669d2682fcba9309e1902881bf1814c71b9f6eb3",
+    "governanceWorkflowBoundTopic": "0x71840a8df3cf7e14c302ff72b4fd1c651a2845389dfb0a4fdd884a2ffb104bfe"
+  },
+  "postState": {
+    "safeNonce": 1,
+    "spendModuleEnabled": true,
+    "escrowAllowlistCodeHash": "0x0bf34c89d599a4bbbb94fb793e0c83efa50575f39e9cd342db5a4db5a863b531",
+    "directoryVersion": 0,
+    "directoryRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "agentCount": 0,
+    "escrowTotalLocked": "0",
+    "spendExecutedPrincipal": "0",
+    "callEscrowEmergencyPaused": false,
+    "spendModuleEmergencyPaused": false,
+    "safeNativeBalanceWei": "0",
+    "safeUsdcBalance": "0",
+    "allContractNativeBalancesWei": "0",
+    "allContractUsdcBalances": "0",
+    "safeToSpendModuleUsdcAllowance": "0",
+    "safeToCallEscrowUsdcAllowance": "0",
+    "runtimeEnabled": true,
+    "fundingEnabled": false
+  },
+  "verification": {
+    "verifiedAt": "2026-08-26T06:53:13Z",
+    "providersAgreed": true,
+    "rpcEvidence": [
+      {
+        "provider": "Base public RPC",
+        "url": "https://sepolia.base.org",
+        "observedHead": 45979402
+      },
+      {
+        "provider": "PublicNode",
+        "url": "https://base-sepolia-rpc.publicnode.com",
+        "observedHead": 45979402
+      }
+    ],
+    "safeTransactionUrl": "https://app.safe.global/transactions/tx?id=multisig_0xF6ac2Af2c441fF8886B250233a7aDFc206aB0b57_0x067e9a25bb5cf3586ede0678b0dad7b5c5c4144d5b4e055586ea056d83562e9e&safe=basesep%3A0xF6ac2Af2c441fF8886B250233a7aDFc206aB0b57",
+    "safeTransactionServiceUrl": "https://api.safe.global/tx-service/basesep/api/v1/multisig-transactions/0x067e9a25bb5cf3586ede0678b0dad7b5c5c4144d5b4e055586ea056d83562e9e/",
+    "baseScanTransactionUrl": "https://sepolia.basescan.org/tx/0x46bf7bade9900bc551d326b3c4214f101b41df4cce02428586b9fdb8988d751e",
+    "tenderlySimulationUrl": "https://dashboard.tenderly.co/public/safe/safe-apps/simulator/328e3935-7b8c-4ca3-a0f3-53b27a6f1f31"
+  },
+  "mainnetApproved": false,
+  "notes": "Base Sepolia capability activation only. The exact escrow bytecode was allowlisted and the spend module was enabled through the existing 2-of-3 Safe. No USDC approval, funding, directory publication, verifier activation, agent registration, or mainnet action was included."
+}

@@ -26,6 +26,7 @@ directory="$(jq -er '.contracts[] | select(.name == "service_directory") | .addr
 registry="$(jq -er '.contracts[] | select(.name == "agent_registry") | .address' "${record}")"
 escrow="$(jq -er '.contracts[] | select(.name == "ascp_call_escrow") | .address' "${record}")"
 module="$(jq -er '.contracts[] | select(.name == "ascp_spend_module") | .address' "${record}")"
+snapshot_block="$(jq -er '[.contracts[].deploymentBlock] | max' "${record}")"
 zero_digest='0x0000000000000000000000000000000000000000000000000000000000000000'
 
 call_address() {
@@ -34,6 +35,15 @@ call_address() {
   local signature="$3"
   shift 3
   cast call --rpc-url "${rpc_url}" "${target}" "${signature}" "$@" | tr '[:upper:]' '[:lower:]'
+}
+
+call_snapshot() {
+  local rpc_url="$1"
+  local target="$2"
+  local signature="$3"
+  shift 3
+  cast call --rpc-url "${rpc_url}" --block "${snapshot_block}" "${target}" "${signature}" "$@" \
+    | tr '[:upper:]' '[:lower:]'
 }
 
 observe_provider() {
@@ -112,46 +122,46 @@ observe_provider() {
   test "${asset_hash}" = "${asset_code_hash}"
 
   expected_owners="$(jq -r '.safe.owners | sort | join(",")' "${record}")"
-  owners="$(cast call --rpc-url "${rpc_url}" "${safe}" 'getOwners()(address[])' --json | jq -er '.[0] | map(ascii_downcase) | sort | join(",")')"
-  threshold="$(call_address "${rpc_url}" "${safe}" 'getThreshold()(uint256)')"
+  owners="$(cast call --rpc-url "${rpc_url}" --block "${snapshot_block}" "${safe}" 'getOwners()(address[])' --json | jq -er '.[0] | map(ascii_downcase) | sort | join(",")')"
+  threshold="$(call_snapshot "${rpc_url}" "${safe}" 'getThreshold()(uint256)')"
   test "${owners}" = "${expected_owners}"
   test "${threshold}" = "$(jq -er '.safe.threshold' "${record}")"
-  test "$(call_address "${rpc_url}" "${safe}" 'isModuleEnabled(address)(bool)' "${module}")" = 'false'
+  test "$(call_snapshot "${rpc_url}" "${safe}" 'isModuleEnabled(address)(bool)' "${module}")" = 'false'
 
-  test "$(call_address "${rpc_url}" "${directory}" 'governor()(address)')" = "${safe}"
-  test "$(call_address "${rpc_url}" "${directory}" 'orgDomain()(bytes32)')" = "$(jq -er '.organizationDomain' "${record}")"
-  test "$(call_address "${rpc_url}" "${directory}" 'directoryPublisher()(address)')" = "$(jq -er '.authorities.directoryPublisher' "${record}")"
-  test "$(call_address "${rpc_url}" "${directory}" 'pauser()(address)')" = "$(jq -er '.authorities.directoryPauser' "${record}")"
-  test "$(call_address "${rpc_url}" "${directory}" 'currentVersion()(uint64)')" = '0'
-  test "$(call_address "${rpc_url}" "${directory}" 'currentRoot()(bytes32)')" = "${zero_digest}"
+  test "$(call_snapshot "${rpc_url}" "${directory}" 'governor()(address)')" = "${safe}"
+  test "$(call_snapshot "${rpc_url}" "${directory}" 'orgDomain()(bytes32)')" = "$(jq -er '.organizationDomain' "${record}")"
+  test "$(call_snapshot "${rpc_url}" "${directory}" 'directoryPublisher()(address)')" = "$(jq -er '.authorities.directoryPublisher' "${record}")"
+  test "$(call_snapshot "${rpc_url}" "${directory}" 'pauser()(address)')" = "$(jq -er '.authorities.directoryPauser' "${record}")"
+  test "$(call_snapshot "${rpc_url}" "${directory}" 'currentVersion()(uint64)')" = '0'
+  test "$(call_snapshot "${rpc_url}" "${directory}" 'currentRoot()(bytes32)')" = "${zero_digest}"
 
-  test "$(call_address "${rpc_url}" "${registry}" 'governor()(address)')" = "${safe}"
-  test "$(call_address "${rpc_url}" "${registry}" 'orgDomain()(bytes32)')" = "$(jq -er '.organizationDomain' "${record}")"
-  test "$(call_address "${rpc_url}" "${registry}" 'registryAdmin()(address)')" = "$(jq -er '.authorities.registryAdmin' "${record}")"
-  test "$(call_address "${rpc_url}" "${registry}" 'agentCount()(uint256)')" = '0'
+  test "$(call_snapshot "${rpc_url}" "${registry}" 'governor()(address)')" = "${safe}"
+  test "$(call_snapshot "${rpc_url}" "${registry}" 'orgDomain()(bytes32)')" = "$(jq -er '.organizationDomain' "${record}")"
+  test "$(call_snapshot "${rpc_url}" "${registry}" 'registryAdmin()(address)')" = "$(jq -er '.authorities.registryAdmin' "${record}")"
+  test "$(call_snapshot "${rpc_url}" "${registry}" 'agentCount()(uint256)')" = '0'
 
-  test "$(call_address "${rpc_url}" "${escrow}" 'usdc()(address)')" = "${asset}"
-  test "$(call_address "${rpc_url}" "${escrow}" 'serviceDirectory()(address)')" = "${directory}"
-  test "$(call_address "${rpc_url}" "${escrow}" 'safe()(address)')" = "${safe}"
-  test "$(call_address "${rpc_url}" "${escrow}" 'governor()(address)')" = "${safe}"
-  test "$(call_address "${rpc_url}" "${escrow}" 'totalLocked()(uint256)')" = '0'
-  test "$(call_address "${rpc_url}" "${escrow}" 'emergencyPaused()(bool)')" = 'false'
+  test "$(call_snapshot "${rpc_url}" "${escrow}" 'usdc()(address)')" = "${asset}"
+  test "$(call_snapshot "${rpc_url}" "${escrow}" 'serviceDirectory()(address)')" = "${directory}"
+  test "$(call_snapshot "${rpc_url}" "${escrow}" 'safe()(address)')" = "${safe}"
+  test "$(call_snapshot "${rpc_url}" "${escrow}" 'governor()(address)')" = "${safe}"
+  test "$(call_snapshot "${rpc_url}" "${escrow}" 'totalLocked()(uint256)')" = '0'
+  test "$(call_snapshot "${rpc_url}" "${escrow}" 'emergencyPaused()(bool)')" = 'false'
 
-  test "$(call_address "${rpc_url}" "${module}" 'safe()(address)')" = "${safe}"
-  test "$(call_address "${rpc_url}" "${module}" 'token()(address)')" = "${asset}"
-  test "$(call_address "${rpc_url}" "${module}" 'spendAuthorizer()(address)')" = "$(jq -er '.authorities.spendAuthorizer' "${record}")"
-  test "$(call_address "${rpc_url}" "${module}" 'executedPrincipal()(uint256)')" = '0'
-  test "$(call_address "${rpc_url}" "${module}" 'emergencyPaused()(bool)')" = 'false'
-  test "$(call_address "${rpc_url}" "${module}" 'escrowAllowlist(address)(bytes32)' "${escrow}")" = "${zero_digest}"
-  caps="$(cast call --rpc-url "${rpc_url}" "${module}" 'caps()(uint256,uint256,uint256)' --json | jq -c '.')"
+  test "$(call_snapshot "${rpc_url}" "${module}" 'safe()(address)')" = "${safe}"
+  test "$(call_snapshot "${rpc_url}" "${module}" 'token()(address)')" = "${asset}"
+  test "$(call_snapshot "${rpc_url}" "${module}" 'spendAuthorizer()(address)')" = "$(jq -er '.authorities.spendAuthorizer' "${record}")"
+  test "$(call_snapshot "${rpc_url}" "${module}" 'executedPrincipal()(uint256)')" = '0'
+  test "$(call_snapshot "${rpc_url}" "${module}" 'emergencyPaused()(bool)')" = 'false'
+  test "$(call_snapshot "${rpc_url}" "${module}" 'escrowAllowlist(address)(bytes32)' "${escrow}")" = "${zero_digest}"
+  caps="$(cast call --rpc-url "${rpc_url}" --block "${snapshot_block}" "${module}" 'caps()(uint256,uint256,uint256)' --json | jq -c '.')"
   test "${caps}" = '[1000000,10000000,10000000]'
 
   while IFS= read -r address; do
-    test "$(cast balance --rpc-url "${rpc_url}" "${address}")" = '0'
-    test "$(call_address "${rpc_url}" "${asset}" 'balanceOf(address)(uint256)' "${address}")" = '0'
+    test "$(cast balance --rpc-url "${rpc_url}" --block "${snapshot_block}" "${address}")" = '0'
+    test "$(call_snapshot "${rpc_url}" "${asset}" 'balanceOf(address)(uint256)' "${address}")" = '0'
   done < <(jq -r '.contracts[].address' "${record}")
-  test "$(call_address "${rpc_url}" "${asset}" 'allowance(address,address)(uint256)' "${safe}" "${module}")" = '0'
-  test "$(call_address "${rpc_url}" "${asset}" 'allowance(address,address)(uint256)' "${safe}" "${escrow}")" = '0'
+  test "$(call_snapshot "${rpc_url}" "${asset}" 'allowance(address,address)(uint256)' "${safe}" "${module}")" = '0'
+  test "$(call_snapshot "${rpc_url}" "${asset}" 'allowance(address,address)(uint256)' "${safe}" "${escrow}")" = '0'
 }
 
 primary_observation="$(mktemp -t flowops-ascp-primary.XXXXXX)"
@@ -166,4 +176,4 @@ while IFS= read -r source_url; do
     | jq -e '.match == "exact_match" and .creationMatch == "exact_match" and .runtimeMatch == "exact_match"' >/dev/null
 done < <(jq -r '.contracts[].sourceVerification.sourcifyUrl' "${record}")
 
-printf 'ASCP v4 Base Sepolia deployment, exact source matches, and write-inert state verified read-only through two RPC providers\n'
+printf 'ASCP v4 Base Sepolia deployment and write-inert post-deployment snapshot at block %s verified read-only through two RPC providers\n' "${snapshot_block}"
