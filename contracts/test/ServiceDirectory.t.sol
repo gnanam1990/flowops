@@ -135,6 +135,16 @@ contract ServiceDirectoryTest is Test {
         assertEq(uint8(record.state), uint8(ServiceDirectory.ProposalState.Active));
     }
 
+    function testProposalExecutionFitsTransactionPreviewGasCeiling() public {
+        (,, bytes32 root) = _leavesAndRoot();
+        ServiceDirectory.DirectoryProposal memory proposal =
+            _proposal(root, 1, 1, ServiceDirectory.ChangeClass.Ordinary, uint64(block.timestamp));
+        uint256 gasBefore = gasleft();
+        _propose(proposal, PUBLISHER_KEY, 1);
+        uint256 gasUsed = gasBefore - gasleft();
+        assertLt(gasUsed, 500_000);
+    }
+
     function testProposalAuthorizationRejectsPayloadSubstitutionAndReplay() public {
         (,, bytes32 root) = _leavesAndRoot();
         ServiceDirectory.DirectoryProposal memory proposal =

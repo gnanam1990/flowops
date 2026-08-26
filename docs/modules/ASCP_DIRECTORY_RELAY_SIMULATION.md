@@ -124,8 +124,9 @@ No real simulation can be produced until a real seller/resource release has
 been compiled, uploaded to both immutable locations, pre-signed, and signed by
 the external publisher. This module does not authorize `proposeVersion`.
 
-A later submission gate would need a fresh explicit user decision for the exact
-chain, contract, relayer, calldata hash, nonce, fee ceiling, and expiry, then
-construct and display—but not silently broadcast—the matching transaction.
+The [transaction preview gate](ASCP_DIRECTORY_TRANSACTION_PREVIEW.md) now binds
+the exact chain, contract, relayer, calldata hash, nonce, fee ceiling, gas-spend
+ceiling, and expiry and creates the matching unsigned transaction only in an
+owner-private file. It still cannot sign, fund, submit, or broadcast.
 Safe approval of the resulting proposal is still a separate 2-of-3 governance
 transaction, followed by the contract's minimum 24-hour activation delay.

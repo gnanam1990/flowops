@@ -18,6 +18,8 @@ Status: pre-alpha, Phase 1 implementation. No mainnet funds.
   [ASCP_DIRECTORY_PRESIGN.md](docs/modules/ASCP_DIRECTORY_PRESIGN.md)
 - Non-disclosing publisher relay simulation gate:
   [ASCP_DIRECTORY_RELAY_SIMULATION.md](docs/modules/ASCP_DIRECTORY_RELAY_SIMULATION.md)
+- Owner-private unsigned relay transaction preview gate:
+  [ASCP_DIRECTORY_TRANSACTION_PREVIEW.md](docs/modules/ASCP_DIRECTORY_TRANSACTION_PREVIEW.md)
 
 The only pre-audit Base mainnet artifact is the separately gated, evidence-only
 `FlowOpsProposalAnchor`, deployed at
