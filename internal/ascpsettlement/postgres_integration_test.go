@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gnanam1990/flowops/internal/ascpassethealth"
 	"github.com/gnanam1990/flowops/internal/controlapi"
 	"github.com/gnanam1990/flowops/internal/reconciliation"
 	"github.com/jackc/pgx/v5"
@@ -170,6 +171,213 @@ func TestPostgresStoreSerializesCompetingTerminalAttempts(t *testing.T) {
 	}
 	if successes.Load() != 1 || terminalAttempts != 1 {
 		t.Fatalf("successful registrations=%d terminal rows=%d", successes.Load(), terminalAttempts)
+	}
+}
+
+func TestPostgresStoreRetriesExactRevertedTransferOnlyDuringFreshAssetRecovery(t *testing.T) {
+	for _, action := range []reconciliation.ASCPReceiptAction{
+		reconciliation.ASCPReceiptRelease,
+		reconciliation.ASCPReceiptRefund,
+	} {
+		t.Run(string(action), func(t *testing.T) {
+			db := settlementDatabase(t)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			operationID := settlementHash(700 + uint64(len(action)))
+			seedSettlementOperation(t, db, operationID, now)
+			store, err := NewPostgresStore(db, func() time.Time { return now })
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			lock := AttemptInput{OperationID: operationID, Action: reconciliation.ASCPReceiptLock, TransactionHash: settlementHash(720 + uint64(len(action)))}
+			if _, _, err := store.RegisterAttempt(ctx, lock); err != nil {
+				t.Fatal(err)
+			}
+			expected, err := store.Expected(ctx, operationID, reconciliation.ASCPReceiptLock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Apply(ctx, sealedResult(expected, Finalized, 700, settlementHash(700), 712, now)); err != nil {
+				t.Fatal(err)
+			}
+
+			first := AttemptInput{OperationID: operationID, Action: action, TransactionHash: settlementHash(730 + uint64(len(action)))}
+			if action == reconciliation.ASCPReceiptRelease {
+				first.DeliveryHash, first.EvidenceHash = settlementHash(731), settlementHash(732)
+			}
+			if _, _, err := store.RegisterAttempt(ctx, first); err != nil {
+				t.Fatal(err)
+			}
+			expected, err = store.Expected(ctx, operationID, action)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reverted := sealedResult(expected, Finalized, 701, settlementHash(701), 713, now)
+			reverted.Success = false
+			reverted.EvidenceDigest = resultDigest(reverted)
+			reverted.seal = resultSeal(reverted)
+			operation, err := store.Apply(ctx, reverted)
+			if err != nil || operation.State != PendingChainRecovery {
+				t.Fatalf("Apply(reverted %s) = %+v, %v", action, operation, err)
+			}
+			assertSettlementState(t, db, operationID, "COMMITTED_FINALIZED", "CONSUMED", "PENDING_CHAIN_RECOVERY", 1, 2)
+
+			retry := first
+			retry.TransactionHash = settlementHash(740 + uint64(len(action)))
+			if _, _, err := store.RegisterAttempt(ctx, retry); !errors.Is(err, ErrStateConflict) {
+				t.Fatalf("retry without clean recovery evidence error=%v", err)
+			}
+			if action == reconciliation.ASCPReceiptRelease {
+				seedAssetRecovery(t, db, now, 1)
+				if _, _, err := store.RegisterAttempt(ctx, retry); !errors.Is(err, ErrStateConflict) {
+					t.Fatalf("retry with prior-epoch clean evidence error=%v", err)
+				}
+				seedCurrentAssetRecoveryObservation(t, db, now)
+			} else {
+				seedAssetRecovery(t, db, now, 2)
+			}
+			if action == reconciliation.ASCPReceiptRelease {
+				changed := retry
+				changed.EvidenceHash = settlementHash(799)
+				if _, _, err := store.RegisterAttempt(ctx, changed); !errors.Is(err, ErrStateConflict) {
+					t.Fatalf("changed recovery payload error=%v", err)
+				}
+			}
+			if attempt, replay, err := store.RegisterAttempt(ctx, retry); err != nil || replay || attempt.State != AttemptSubmitted {
+				t.Fatalf("recovery retry = %+v, %t, %v", attempt, replay, err)
+			}
+			assertAssetRecoveryStillBlocked(t, db, now)
+			var attempts, revertedAttempts int
+			if err := db.QueryRow(`SELECT count(*),count(*) FILTER (WHERE state='REVERTED') FROM ascp_payment_attempts WHERE operation_id=$1 AND action=$2`, operationID, action).Scan(&attempts, &revertedAttempts); err != nil {
+				t.Fatal(err)
+			}
+			if attempts != 2 || revertedAttempts != 1 {
+				t.Fatalf("attempt history count=%d reverted=%d", attempts, revertedAttempts)
+			}
+
+			expected, err = store.Expected(ctx, operationID, action)
+			if err != nil || expected.TransactionHash != retry.TransactionHash {
+				t.Fatalf("recovery expected receipt=%+v err=%v", expected, err)
+			}
+			operation, err = store.Apply(ctx, sealedResult(expected, Finalized, 702, settlementHash(702), 714, now))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertAssetRecoveryStillBlocked(t, db, now)
+			reservation, state := "CONSUMED_ON_RELEASE", "RELEASED_FINALIZED"
+			if action == reconciliation.ASCPReceiptRefund {
+				reservation, state = "RESTORED_ON_REFUND", "REFUNDED_FINALIZED"
+			}
+			assertSettlementState(t, db, operationID, reservation, "CONSUMED", state, 2, 4)
+		})
+	}
+}
+
+func TestPostgresStoreRetriesExactRevertedLockOnlyDuringFreshAssetRecovery(t *testing.T) {
+	db := settlementDatabase(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	operationID := settlementHash(760)
+	seedSettlementOperation(t, db, operationID, now)
+	store, err := NewPostgresStore(db, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	first := AttemptInput{OperationID: operationID, Action: reconciliation.ASCPReceiptLock, TransactionHash: settlementHash(761)}
+	if _, _, err := store.RegisterAttempt(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := store.Expected(ctx, operationID, reconciliation.ASCPReceiptLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reverted := sealedResult(expected, Finalized, 760, settlementHash(762), 772, now)
+	reverted.Success = false
+	reverted.EvidenceDigest = resultDigest(reverted)
+	reverted.seal = resultSeal(reverted)
+	operation, err := store.Apply(ctx, reverted)
+	if err != nil || operation.State != PendingChainRecovery {
+		t.Fatalf("Apply(reverted lock) = %+v, %v", operation, err)
+	}
+	assertSettlementState(t, db, operationID, "AUTHORIZATION_LIVE", "LIVE", "PENDING_CHAIN_RECOVERY", 0, 0)
+
+	retry := first
+	retry.TransactionHash = settlementHash(763)
+	if _, _, err := store.RegisterAttempt(ctx, retry); !errors.Is(err, ErrStateConflict) {
+		t.Fatalf("lock retry without recovery evidence error=%v", err)
+	}
+	seedAssetRecovery(t, db, now, 2)
+	if attempt, replay, err := store.RegisterAttempt(ctx, retry); err != nil || replay || attempt.State != AttemptSubmitted {
+		t.Fatalf("lock recovery retry = %+v, %t, %v", attempt, replay, err)
+	}
+	assertAssetRecoveryStillBlocked(t, db, now)
+	var attempts, revertedAttempts int
+	if err := db.QueryRow(`SELECT count(*),count(*) FILTER (WHERE state='REVERTED') FROM ascp_payment_attempts WHERE operation_id=$1 AND action='LOCK'`, operationID).Scan(&attempts, &revertedAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || revertedAttempts != 1 {
+		t.Fatalf("lock attempt history count=%d reverted=%d", attempts, revertedAttempts)
+	}
+	expected, err = store.Expected(ctx, operationID, reconciliation.ASCPReceiptLock)
+	if err != nil || expected.TransactionHash != retry.TransactionHash {
+		t.Fatalf("lock recovery expected receipt=%+v err=%v", expected, err)
+	}
+	operation, err = store.Apply(ctx, sealedResult(expected, Finalized, 764, settlementHash(764), 776, now))
+	if err != nil || operation.State != LockedFinalized {
+		t.Fatalf("Apply(recovered lock) = %+v, %v", operation, err)
+	}
+	assertAssetRecoveryStillBlocked(t, db, now)
+	assertSettlementState(t, db, operationID, "COMMITTED_FINALIZED", "CONSUMED", "LOCKED_FINALIZED", 1, 2)
+}
+
+func assertAssetRecoveryStillBlocked(t *testing.T, db *sql.DB, now time.Time) {
+	t.Helper()
+	config := ascpassethealth.Config{
+		ChainID:             84532,
+		Asset:               "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+		ProxyImplementation: "0x1111111111111111111111111111111111111111",
+		RuntimeCodeHash:     settlementHash(881),
+		Quorum:              2,
+		MaxObservationAge:   time.Minute,
+	}
+	record := ascpassethealth.Record{
+		Config: config, State: ascpassethealth.Recovering, Epoch: 2,
+		EvidenceDigest: settlementHash(880), FinalizedBlock: 880, ObservedAt: now, UpdatedAt: now,
+	}
+	verifier, err := ascpassethealth.NewPostgresRecoveryVerifier(db, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifier.VerifyRecovery(context.Background(), record); !errors.Is(err, ascpassethealth.ErrRecoveryIncomplete) {
+		t.Fatalf("asset recovery completed with pending or unchecked retry: %v", err)
+	}
+}
+
+func seedAssetRecovery(t *testing.T, db *sql.DB, now time.Time, observationEpoch int64) {
+	t.Helper()
+	asset := "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+	evidence := settlementHash(880)
+	providers := `["rpc_alpha","rpc_beta"]`
+	if _, err := db.Exec(`INSERT INTO ascp_asset_health
+		(chain_id,asset,proxy_implementation,runtime_code_hash,quorum,state,epoch,evidence_digest,providers,finalized_block,observed_at,updated_at)
+		VALUES (84532,$1,'0x1111111111111111111111111111111111111111',$2,2,'RECOVERING',2,$3,$4,880,$5,$5)`,
+		asset, settlementHash(881), evidence, providers, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO ascp_asset_health_observations
+		(evidence_digest,chain_id,asset,previous_state,observed_state,resulting_state,epoch,providers,finalized_block,observed_at,recorded_at)
+		VALUES ($1,84532,$2,'TOKEN_PAUSED','NORMAL','RECOVERING',$3,$4,880,$5,$5)`, evidence, asset, observationEpoch, providers, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedCurrentAssetRecoveryObservation(t *testing.T, db *sql.DB, now time.Time) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO ascp_asset_health_observations
+		(evidence_digest,chain_id,asset,previous_state,observed_state,resulting_state,epoch,providers,finalized_block,observed_at,recorded_at)
+		VALUES ($1,84532,$2,'RECOVERING','NORMAL','RECOVERING',2,$3,881,$4,$4)`, settlementHash(882),
+		"0x036cbd53842c5426634e7929541ec2318f3dcf7e", `["rpc_alpha","rpc_beta"]`, now); err != nil {
+		t.Fatal(err)
 	}
 }
 

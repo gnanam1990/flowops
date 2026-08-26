@@ -108,24 +108,32 @@ func (s *PostgresStore) registerAttemptOnce(ctx context.Context, input AttemptIn
 	if err != nil {
 		return Attempt{}, false, err
 	}
+	recoveryRetryValidated := false
 	if existing, err := loadAttempt(ctx, tx, input.OperationID, input.Action, true); err == nil {
-		if existing.AttemptInput != input {
-			return Attempt{}, false, ErrStateConflict
+		if existing.AttemptInput == input {
+			if err := tx.Commit(); err != nil {
+				return Attempt{}, false, err
+			}
+			return existing, true, nil
 		}
-		if err := tx.Commit(); err != nil {
+		if err := validateAssetRecoveryRetry(ctx, tx, operation, existing, input, now); err != nil {
 			return Attempt{}, false, err
 		}
-		return existing, true, nil
+		recoveryRetryValidated = true
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Attempt{}, false, err
 	}
+	retry := operation.State == PendingChainRecovery
+	if retry && !recoveryRetryValidated {
+		return Attempt{}, false, ErrStateConflict
+	}
 	switch input.Action {
 	case reconciliation.ASCPReceiptLock:
-		if operation.State != AuthSigned || operation.LockedTransactionHash != "" {
+		if !retry && (operation.State != AuthSigned || operation.LockedTransactionHash != "") {
 			return Attempt{}, false, ErrStateConflict
 		}
 	case reconciliation.ASCPReceiptRelease, reconciliation.ASCPReceiptRefund:
-		if operation.State != LockedSafe && operation.State != LockedFinalized || operation.TerminalTransactionHash != "" {
+		if !retry && (operation.State != LockedSafe && operation.State != LockedFinalized || operation.TerminalTransactionHash != "") {
 			return Attempt{}, false, ErrStateConflict
 		}
 	default:
@@ -139,16 +147,47 @@ func (s *PostgresStore) registerAttemptOnce(ctx context.Context, input AttemptIn
 		return Attempt{}, false, classifyAttemptWrite(err)
 	}
 	if input.Action == reconciliation.ASCPReceiptLock {
+		fromState := AuthSigned
+		if retry {
+			fromState = PendingChainRecovery
+		}
 		_, err = tx.ExecContext(ctx, `
 			UPDATE ascp_payment_operations
 			SET state='LOCK_SUBMITTED', locked_transaction_hash=$2, updated_at=$3
-			WHERE operation_id=$1 AND state='AUTH_SIGNED'`, input.OperationID, input.TransactionHash, now)
+			WHERE operation_id=$1 AND state=$4`, input.OperationID, input.TransactionHash, now, fromState)
 	} else {
+		targetState := operation.State
+		if retry {
+			var lockFinalized bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+				SELECT 1 FROM ascp_ledger_transactions
+				WHERE operation_id=$1 AND kind='LOCK_FINALIZED'
+				  AND NOT EXISTS (
+					SELECT 1 FROM ascp_ledger_transactions reversal
+					WHERE reversal.reversal_of=ascp_ledger_transactions.transaction_id
+				  )
+			)`, input.OperationID).Scan(&lockFinalized); err != nil {
+				return Attempt{}, false, fmt.Errorf("derive ASCP retry lock finality: %w", err)
+			}
+			targetState = LockedSafe
+			if lockFinalized {
+				targetState = LockedFinalized
+			}
+		}
 		_, err = tx.ExecContext(ctx, `
 			UPDATE ascp_payment_operations
-			SET terminal_action=$2, terminal_transaction_hash=$3, updated_at=$4
+			SET state=$2, terminal_action=$3, terminal_transaction_hash=$4,
+			    terminal_block_number=NULL, terminal_block_hash=NULL, updated_at=$5
 			WHERE operation_id=$1 AND state IN ('LOCKED_SAFE','LOCKED_FINALIZED')`, input.OperationID,
-			input.Action, input.TransactionHash, now)
+			targetState, input.Action, input.TransactionHash, now)
+		if retry {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE ascp_payment_operations
+				SET state=$2, terminal_action=$3, terminal_transaction_hash=$4,
+				    terminal_block_number=NULL, terminal_block_hash=NULL, updated_at=$5
+				WHERE operation_id=$1 AND state='PENDING_CHAIN_RECOVERY'`, input.OperationID,
+				targetState, input.Action, input.TransactionHash, now)
+		}
 	}
 	if err != nil {
 		return Attempt{}, false, fmt.Errorf("bind ASCP payment attempt: %w", err)
@@ -257,7 +296,7 @@ func (s *PostgresStore) applyReorgOnce(ctx context.Context, result ReorgResult, 
 	if err != nil {
 		return Operation{}, err
 	}
-	attempt, err := loadAttempt(ctx, tx, result.OperationID, result.Action, true)
+	attempt, err := loadAttemptByTransaction(ctx, tx, result.OperationID, result.Action, result.TransactionHash, true)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -353,7 +392,7 @@ func (s *PostgresStore) applyOnce(ctx context.Context, result Result, now time.T
 	if err != nil {
 		return Operation{}, err
 	}
-	attempt, err := loadAttempt(ctx, tx, result.Expected.OperationID, result.Expected.Action, true)
+	attempt, err := loadAttemptByTransaction(ctx, tx, result.Expected.OperationID, result.Expected.Action, result.Expected.TransactionHash, true)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -682,7 +721,9 @@ func loadAttempt(ctx context.Context, query queryRower, operationID string, acti
 	err := query.QueryRowContext(ctx, `
 		SELECT operation_id, action, transaction_hash, delivery_hash, evidence_hash, state,
 		       registered_at, resolved_at, block_number, block_hash, evidence_digest, canonical_checked_at
-		FROM ascp_payment_attempts WHERE operation_id=$1 AND action=$2`+suffix, operationID, action).Scan(
+		FROM ascp_payment_attempts WHERE operation_id=$1 AND action=$2
+		ORDER BY (state IN ('SUBMITTED','CONFIRMED_SAFE','FINALIZED')) DESC,
+		         registered_at DESC, transaction_hash DESC LIMIT 1`+suffix, operationID, action).Scan(
 		&attempt.OperationID, &attempt.Action, &attempt.TransactionHash, &delivery, &evidence,
 		&attempt.State, &attempt.RegisteredAt, &resolved, &block, &blockHash, &evidenceDigest, &canonicalChecked)
 	if err != nil {
@@ -699,6 +740,69 @@ func loadAttempt(ctx context.Context, query queryRower, operationID string, acti
 		attempt.CanonicalCheckedAt = canonicalChecked.Time.UTC()
 	}
 	return attempt, nil
+}
+
+func loadAttemptByTransaction(ctx context.Context, query queryRower, operationID string, action reconciliation.ASCPReceiptAction, transactionHash string, lock bool) (Attempt, error) {
+	suffix := ""
+	if lock {
+		suffix = " FOR UPDATE"
+	}
+	var attempt Attempt
+	var delivery, evidence, blockHash, evidenceDigest sql.NullString
+	var resolved, canonicalChecked sql.NullTime
+	var block sql.NullInt64
+	err := query.QueryRowContext(ctx, `
+		SELECT operation_id, action, transaction_hash, delivery_hash, evidence_hash, state,
+		       registered_at, resolved_at, block_number, block_hash, evidence_digest, canonical_checked_at
+		FROM ascp_payment_attempts
+		WHERE operation_id=$1 AND action=$2 AND transaction_hash=$3`+suffix,
+		operationID, action, transactionHash).Scan(
+		&attempt.OperationID, &attempt.Action, &attempt.TransactionHash, &delivery, &evidence,
+		&attempt.State, &attempt.RegisteredAt, &resolved, &block, &blockHash, &evidenceDigest, &canonicalChecked)
+	if err != nil {
+		return Attempt{}, err
+	}
+	attempt.DeliveryHash, attempt.EvidenceHash = delivery.String, evidence.String
+	attempt.BlockHash, attempt.EvidenceDigest = blockHash.String, evidenceDigest.String
+	if resolved.Valid {
+		attempt.ResolvedAt = resolved.Time.UTC()
+	}
+	if block.Valid {
+		attempt.BlockNumber = uint64(block.Int64)
+	}
+	if canonicalChecked.Valid {
+		attempt.CanonicalCheckedAt = canonicalChecked.Time.UTC()
+	}
+	return attempt, nil
+}
+
+func validateAssetRecoveryRetry(ctx context.Context, tx *sql.Tx, operation Operation, previous Attempt, input AttemptInput, now time.Time) error {
+	if operation.State != PendingChainRecovery || previous.State != AttemptReverted || previous.Action != input.Action ||
+		previous.DeliveryHash != input.DeliveryHash || previous.EvidenceHash != input.EvidenceHash {
+		return ErrStateConflict
+	}
+	if input.Action != reconciliation.ASCPReceiptLock && operation.TerminalAction != string(input.Action) {
+		return ErrStateConflict
+	}
+	var fresh bool
+	err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM ascp_asset_health h
+			JOIN ascp_asset_health_observations o
+			  ON o.chain_id=h.chain_id AND o.asset=h.asset
+			WHERE h.chain_id=$1 AND h.asset=$2 AND h.state='RECOVERING'
+			  AND o.observed_state='NORMAL' AND o.resulting_state='RECOVERING'
+			  AND o.epoch=h.epoch
+			  AND o.observed_at BETWEEN $3 AND $4
+		)`, operation.ChainID, operation.Asset, now.Add(-maximumRecordDelay), now.Add(maximumRecordDelay)).Scan(&fresh)
+	if err != nil {
+		return fmt.Errorf("verify fresh asset recovery evidence: %w", err)
+	}
+	if !fresh {
+		return ErrStateConflict
+	}
+	return nil
 }
 
 type rowScanner interface {

@@ -814,7 +814,7 @@
       "title": "USDC paused/blacklisted (fork)",
       "expectation": "TOKEN states; §11.2 reclassifications; no false claims; recovery",
       "active": true,
-      "status": "partial",
+      "status": "local_evidence",
       "primaryOwner": "keeper_chain",
       "participants": [
         "keeper_chain"
@@ -824,13 +824,55 @@
         "INV-OPERATIONS",
         "INV-AVAILABILITY"
       ],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/CanonicalUSDCFork.t.sol",
+          "ref": "testCanonicalUSDCPauseBlocksLockAtomicallyAndRecovers",
+          "command": "BASE_MAINNET_FORK_RPC_URL=<reviewed-rpc> forge test --match-path contracts/test/CanonicalUSDCFork.t.sol --match-test '^testCanonicalUSDCPauseBlocksLockAtomicallyAndRecovers$'",
+          "artifacts": [
+            "executable-evidence"
+          ]
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/CanonicalUSDCFork.t.sol",
+          "ref": "testCanonicalUSDCPayoutBlacklistRollsBackReleaseAndNonceUntilRecovery",
+          "command": "BASE_MAINNET_FORK_RPC_URL=<reviewed-rpc> forge test --match-path contracts/test/CanonicalUSDCFork.t.sol --match-test '^testCanonicalUSDCPayoutBlacklistRollsBackReleaseAndNonceUntilRecovery$'"
+        },
+        {
+          "kind": "forge_test",
+          "path": "contracts/test/CanonicalUSDCFork.t.sol",
+          "ref": "testCanonicalUSDCBuyerBlacklistRollsBackExpiredRefundUntilRecovery",
+          "command": "BASE_MAINNET_FORK_RPC_URL=<reviewed-rpc> forge test --match-path contracts/test/CanonicalUSDCFork.t.sol --match-test '^testCanonicalUSDCBuyerBlacklistRollsBackExpiredRefundUntilRecovery$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpsettlement/postgres_integration_test.go",
+          "ref": "TestPostgresStoreRetriesExactRevertedTransferOnlyDuringFreshAssetRecovery",
+          "command": "FLOWOPS_TEST_DATABASE_URL=<local-postgres> go test -race ./internal/ascpsettlement -run '^TestPostgresStoreRetriesExactRevertedTransferOnlyDuringFreshAssetRecovery$'"
+        },
+        {
+          "kind": "go_test",
+          "path": "internal/ascpsettlement/postgres_integration_test.go",
+          "ref": "TestPostgresStoreRetriesExactRevertedLockOnlyDuringFreshAssetRecovery",
+          "command": "FLOWOPS_TEST_DATABASE_URL=<local-postgres> go test -race ./internal/ascpsettlement -run '^TestPostgresStoreRetriesExactRevertedLockOnlyDuringFreshAssetRecovery$'"
+        },
+        {
+          "kind": "evidence",
+          "path": "docs/evidence/AC26_CANONICAL_USDC_FORK_2026-08-26.md",
+          "artifacts": [
+            "evidence-report",
+            "manifest-hash"
+          ]
+        }
+      ],
       "requiredArtifacts": [
         "executable-evidence",
         "evidence-report",
         "manifest-hash"
       ],
-      "gap": "Local asset-health coverage exists, but no pinned Base fork forces canonical USDC pause and blacklist failures through lock, release, and refund while proving reservation and ledger reconciliation."
+      "gap": "Pinned canonical-USDC fork and PostgreSQL recovery evidence now cover local behavior; release-stage signed evidence, managed production infrastructure, and an authorized external mainnet ceremony remain outstanding."
     },
     {
       "id": "AC-27",

@@ -78,6 +78,11 @@ func readRecoveryCounts(ctx context.Context, query recoveryCountQuery, chainID u
 		FROM ascp_payment_operations o
 		WHERE o.chain_id=$1 AND o.asset=$2 AND (
 		  o.state IN ('AUTH_SIGNED','LOCK_SUBMITTED','LOCKED_SAFE','REORGED_BACK','PENDING_CHAIN_RECOVERY','QUARANTINED')
+		  OR EXISTS (
+		    SELECT 1 FROM ascp_payment_attempts pending_attempt
+		    WHERE pending_attempt.operation_id=o.operation_id
+		      AND pending_attempt.state IN ('SUBMITTED','CONFIRMED_SAFE')
+		  )
 		  OR (o.state='LOCKED_FINALIZED' AND (
 		    NOT EXISTS (
 		      SELECT 1 FROM ascp_payment_attempts a

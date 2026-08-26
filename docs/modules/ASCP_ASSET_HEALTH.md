@@ -106,3 +106,35 @@ go test -race ./cmd/ascp-asset-health ./internal/ascpassethealth \
 Unit tests prove state, binding, retry-facing, reconciliation, and negative
 authorization behavior. They do not claim that a real Circle-controlled pause,
 blacklist, provider outage, or production recovery drill has been executed.
+
+## Canonical-USDC fork and retry evidence
+
+`contracts/test/CanonicalUSDCFork.t.sol` pins Base mainnet block `50,482,467`
+and uses canonical USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`.
+Circle pauser and blacklister role impersonation occurs only inside the local
+Foundry VM. The RPC supplies historical reads; no transaction is signed or
+broadcast. The fork proves atomic rollback and recovery for paused funding,
+blacklisted-buyer funding, blacklisted-payout release, and blacklisted-buyer
+refund. Failed release does not consume the verdict nonce.
+
+A finalized reverted receipt moves the off-chain operation to
+`PENDING_CHAIN_RECOVERY` without consuming or restoring its reservation and
+without posting a false terminal ledger entry. A retry is admitted only while
+asset health is `RECOVERING`, a clean independent observation is no more than
+one minute old and belongs to the current health epoch, the prior attempt is
+durably `REVERTED`, and the registered action plus delivery/evidence hashes are
+unchanged. Registration accepts a new transaction hash; independent receipt
+reconciliation still has to prove the exact stored call, parties, amount, and
+outcome. The old receipt remains append-only. A canonical finalized retry then
+posts exactly one release/refund entry and moves the reservation to
+`CONSUMED_ON_RELEASE` or `RESTORED_ON_REFUND`.
+
+Run the opt-in fork and database proofs with:
+
+```sh
+BASE_MAINNET_FORK_RPC_URL="$REVIEWED_BASE_ARCHIVE_RPC" make test-ascp-canonical-usdc-fork
+FLOWOPS_TEST_DATABASE_URL="$LOCAL_POSTGRES_URL" make test-ascp-asset-recovery-accounting
+```
+
+Passing these local proofs is not evidence of a Circle-operated production
+pause/blacklist ceremony or authorization to broadcast on Base mainnet.
