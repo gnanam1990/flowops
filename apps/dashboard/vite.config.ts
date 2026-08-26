@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import hostingConfig from "./.openai/hosting.json" with { type: "json" };
 import { isLoopbackHostname } from "./app/local-auth-boundary.ts";
+import { localRuntimeBindings } from "./build/local-runtime-bindings.mjs";
 import { sites } from "./build/sites-vite-plugin.ts";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -15,7 +16,11 @@ const { d1, r2 } = hostingConfig;
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 export default defineConfig(async ({ mode }) => {
-  const resolvedEnv = loadEnv(mode, DASHBOARD_DIRECTORY, ["FLOWOPS_LOCAL_AUTH_ENABLED"]);
+  const resolvedEnv = loadEnv(mode, DASHBOARD_DIRECTORY, [
+    "FLOWOPS_CONTROL_API_URL",
+    "FLOWOPS_LOCAL_AUTH_ENABLED",
+  ]);
+  const localBindings = localRuntimeBindings(resolvedEnv);
   const localAuthValue = resolvedEnv.FLOWOPS_LOCAL_AUTH_ENABLED ?? "false";
   const localAuthRequested = localAuthValue === "true";
 
@@ -34,10 +39,9 @@ export default defineConfig(async ({ mode }) => {
     main: "./worker/index.ts",
     compatibility_flags: ["nodejs_compat"],
     // Shell variables and ignored `.env*` values are not automatically Worker
-    // bindings in vinext dev. Forward only this non-secret, loopback-gated flag.
-    vars: {
-      FLOWOPS_LOCAL_AUTH_ENABLED: localAuthValue,
-    },
+    // bindings in vinext dev. Forward only the non-secret local API URL and the
+    // loopback-gated auth flag; Sites exchange credentials remain excluded.
+    vars: localBindings,
     d1_databases: d1
       ? [
           {
