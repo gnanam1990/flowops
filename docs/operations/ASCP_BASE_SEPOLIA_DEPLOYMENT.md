@@ -1,7 +1,11 @@
 # ASCP Base Sepolia deployment
 
-Status: deployment package implemented; no ASCP Sepolia deployment, Safe action,
-funding, approval, or mainnet action is authorized by this document.
+Status: the ASCP v4 graph was deployed and source verified on Base Sepolia from
+commit `fdcfce6b7f23fb8989e6cd38f0132c3f9021b36d`. The canonical machine-readable
+record is `deployments/base-sepolia-ascp-v4.json`. The graph remains
+write-inert: the Safe module is disabled, no escrow is allowlisted, no directory
+root is published, and no funds or token approvals were provided. This testnet
+evidence does not authorize any additional Safe, funding, or mainnet action.
 
 `contracts/script/DeployASCPBaseSepolia.s.sol` deploys the complete ASCP v4
 contract graph against Circle test USDC on Base Sepolia:
@@ -118,3 +122,25 @@ approval at action time.
 
 Base Sepolia evidence never authorizes a Base mainnet deployment or real-money
 pilot.
+
+The committed record is checked offline with:
+
+```sh
+make test-ascp-sepolia-evidence
+```
+
+The offline checker validates the record's schema, cross-links, per-contract
+nonce order, source commit, compiler settings, and per-transaction fee totals.
+It does not treat recorded transaction hashes as chain truth. Re-observe the
+transactions, receipts, canonical blocks, creation-input hashes, runtime code,
+constructor-bound state, Safe membership/module status, zero balances and
+allowances, and exact Sourcify matches through two independent public RPC
+providers with:
+
+```sh
+make verify-ascp-sepolia-deployment
+```
+
+That command is deliberately network-dependent and is not part of the
+deterministic CI gate. It is read-only and fails closed on provider disagreement
+or if the graph is no longer write-inert.

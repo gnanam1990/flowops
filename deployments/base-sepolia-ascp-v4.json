@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "ascp-v4-base-sepolia-2026-08-26",
+  "network": "base-sepolia",
+  "chainId": 84532,
+  "status": "deployed-source-verified-write-inert",
+  "sourceCommit": "fdcfce6b7f23fb8989e6cd38f0132c3f9021b36d",
+  "deploymentPlanDigest": "0xa914c9c00e252ba3596031f755961cac253da083cda6b7799ef1a28480f5a599",
+  "organizationDomain": "0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93",
+  "typedDataManifestSha256": "0x87eee19267c1684f91e10454a8f1a26880a2434e65f5609791c54b803154bff5",
+  "governanceFromBlock": 45974069,
+  "deployer": {
+    "address": "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+    "startingNonce": 6,
+    "endingNonce": 10
+  },
+  "safe": {
+    "address": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+    "owners": [
+      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+      "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+      "0xe88872f94013e4584bceafb5d5f87da291d086d2"
+    ],
+    "threshold": 2,
+    "spendModuleEnabled": false
+  },
+  "authorities": {
+    "governor": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+    "directoryPublisher": "0xb6e55668efb27a1571dbe14a9e388eed8a654fac",
+    "directoryPauser": "0xec8757c4dc1184f3ece812295d5ac5b570ab0ce0",
+    "registryAdmin": "0x0d9973d582b694e8ce101bd17e5768c35bacbe60",
+    "spendAuthorizer": "0x90f4c2af31bcbf3f1e0a800bd606fc00bc0a446b"
+  },
+  "asset": {
+    "address": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+    "symbol": "USDC",
+    "decimals": 6,
+    "runtimeCodeHash": "0xedc5281a85c0efecd49999a1ef668390c59b88702f2d4a07029d7f5d63059d6c"
+  },
+  "contracts": [
+    {
+      "name": "service_directory",
+      "artifact": "contracts/src/ServiceDirectory.sol:ServiceDirectory",
+      "address": "0x36ac2f2baaea674b0645aa58c5d47a70b17479c9",
+      "deploymentTx": "0x20cce95202b72281c07798eb3eda48980a60e18e44ceed08a89d6f8f5fbe1d53",
+      "deploymentBlock": 45974069,
+      "deploymentTimestamp": "2026-08-26T03:53:46Z",
+      "creationNonce": 6,
+      "receiptStatus": true,
+      "gasUsed": 3002725,
+      "l2ExecutionFeeWei": "18016350000000",
+      "l1DataFeeWei": "438348238463",
+      "actualTotalFeeWei": "18454698238463",
+      "creationInputHash": "0x4c37981634e8254f1deea1e052a4f574b209adf3496875ac5cc28312d1f16244",
+      "runtimeCodeBytes": 13292,
+      "runtimeCodeHash": "0xbd3f8227cd808b24f1b0fdd2d47f6b5902d16ed76b46d935a44f6d84c8af940c",
+      "constructorArguments": {
+        "governor": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+        "directoryPublisher": "0xb6e55668efb27a1571dbe14a9e388eed8a654fac",
+        "directoryPauser": "0xec8757c4dc1184f3ece812295d5ac5b570ab0ce0",
+        "organizationDomain": "0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93"
+      },
+      "sourceVerification": {
+        "verified": true,
+        "provider": "sourcify",
+        "status": "exact_match",
+        "jobId": "aaac24c5-0385-4441-93aa-df78894c0ea5",
+        "sourcifyUrl": "https://sourcify.dev/server/v2/contract/84532/0x36ac2f2baaea674b0645aa58c5d47a70b17479c9?fields=all",
+        "blockscoutUrl": "https://base-sepolia.blockscout.com/address/0x36ac2f2baaea674b0645aa58c5d47a70b17479c9?tab=contract"
+      }
+    },
+    {
+      "name": "agent_registry",
+      "artifact": "contracts/src/AgentRegistry.sol:AgentRegistry",
+      "address": "0x55167a6b1b1e48f805faed9e277c21f3be1c0c19",
+      "deploymentTx": "0xd960b3eabcdea7def6e3090eaa4611d495d27a0054eeb622b6067b00507d0658",
+      "deploymentBlock": 45974261,
+      "deploymentTimestamp": "2026-08-26T04:00:10Z",
+      "creationNonce": 7,
+      "receiptStatus": true,
+      "gasUsed": 1819961,
+      "l2ExecutionFeeWei": "10919766000000",
+      "l1DataFeeWei": "308127821535",
+      "actualTotalFeeWei": "11227893821535",
+      "creationInputHash": "0x0a8e1fb7a1fd849ddb3739e1899fd1a852e4a86e0a5ba6c805ce46c7c80cc057",
+      "runtimeCodeBytes": 7962,
+      "runtimeCodeHash": "0x49f56b2ac37969f66be2f124ed9b4ec68dc3643661af9ac8c76be90d31008b91",
+      "constructorArguments": {
+        "governor": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+        "registryAdmin": "0x0d9973d582b694e8ce101bd17e5768c35bacbe60",
+        "organizationDomain": "0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93"
+      },
+      "sourceVerification": {
+        "verified": true,
+        "provider": "sourcify",
+        "status": "exact_match",
+        "jobId": "537deb91-3d9d-4fa5-b036-b402f420f243",
+        "sourcifyUrl": "https://sourcify.dev/server/v2/contract/84532/0x55167a6b1b1e48f805faed9e277c21f3be1c0c19?fields=all",
+        "blockscoutUrl": "https://base-sepolia.blockscout.com/address/0x55167a6b1b1e48f805faed9e277c21f3be1c0c19?tab=contract"
+      }
+    },
+    {
+      "name": "ascp_call_escrow",
+      "artifact": "contracts/src/ASCPCallEscrow.sol:ASCPCallEscrow",
+      "address": "0x4122414fe2398ea2504eb6e35208f3b8d67e711d",
+      "deploymentTx": "0xc731bd358bd1a81d9935fc932f4c4a3eea4dff07b1b54226b08396e24611ed22",
+      "deploymentBlock": 45974518,
+      "deploymentTimestamp": "2026-08-26T04:08:44Z",
+      "creationNonce": 8,
+      "receiptStatus": true,
+      "gasUsed": 3155831,
+      "l2ExecutionFeeWei": "18934986000000",
+      "l1DataFeeWei": "408327053774",
+      "actualTotalFeeWei": "19343313053774",
+      "creationInputHash": "0xbbc865f9aef5fc30361d10f1c7df0c9727dfda82f437f2514dc31a0a194b70c7",
+      "runtimeCodeBytes": 14191,
+      "runtimeCodeHash": "0x0bf34c89d599a4bbbb94fb793e0c83efa50575f39e9cd342db5a4db5a863b531",
+      "constructorArguments": {
+        "usdc": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+        "serviceDirectory": "0x36ac2f2baaea674b0645aa58c5d47a70b17479c9",
+        "safe": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+        "governor": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57"
+      },
+      "sourceVerification": {
+        "verified": true,
+        "provider": "sourcify",
+        "status": "exact_match",
+        "jobId": "b932ccb8-bc7d-4e3a-9459-ce1e257e5c65",
+        "sourcifyUrl": "https://sourcify.dev/server/v2/contract/84532/0x4122414fe2398ea2504eb6e35208f3b8d67e711d?fields=all",
+        "blockscoutUrl": "https://base-sepolia.blockscout.com/address/0x4122414fe2398ea2504eb6e35208f3b8d67e711d?tab=contract"
+      }
+    },
+    {
+      "name": "ascp_spend_module",
+      "artifact": "contracts/src/ASCPSpendModule.sol:ASCPSpendModule",
+      "address": "0xac81e7abf6114209ad1357dabf1ae606b793f7b4",
+      "deploymentTx": "0xcd434a9f5b9b7fcc6e0c2083de27b879e56894c777d39b49cfcef56255bbc75b",
+      "deploymentBlock": 45974646,
+      "deploymentTimestamp": "2026-08-26T04:13:00Z",
+      "creationNonce": 9,
+      "receiptStatus": true,
+      "gasUsed": 3045316,
+      "l2ExecutionFeeWei": "18271896000000",
+      "l1DataFeeWei": "524200463911",
+      "actualTotalFeeWei": "18796096463911",
+      "creationInputHash": "0xbda3801911734c51e801efd106b96948bdf92a39dea07ec35642f6e5a5f50385",
+      "runtimeCodeBytes": 13188,
+      "runtimeCodeHash": "0x53551ea45da9906f7d04a45a0e81d07869dd0b586bd826ba46c95b5a7f7d2a59",
+      "constructorArguments": {
+        "safe": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+        "token": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+        "spendAuthorizer": "0x90f4c2af31bcbf3f1e0a800bd606fc00bc0a446b",
+        "caps": {
+          "perTransaction": "1000000",
+          "perDay": "10000000",
+          "allowanceCeiling": "10000000"
+        }
+      },
+      "sourceVerification": {
+        "verified": true,
+        "provider": "sourcify",
+        "status": "exact_match",
+        "jobId": "924f3e49-1e03-43b3-b838-9f8d213c69b7",
+        "sourcifyUrl": "https://sourcify.dev/server/v2/contract/84532/0xac81e7abf6114209ad1357dabf1ae606b793f7b4?fields=all",
+        "blockscoutUrl": "https://base-sepolia.blockscout.com/address/0xac81e7abf6114209ad1357dabf1ae606b793f7b4?tab=contract"
+      }
+    }
+  ],
+  "compiler": {
+    "version": "v0.8.26+commit.8a97fa7a",
+    "optimizerEnabled": true,
+    "optimizerRuns": 200,
+    "evmVersion": "cancun",
+    "bytecodeHash": "ipfs"
+  },
+  "fees": {
+    "configuredGasLimit": 17250000,
+    "approvedGasCeiling": 18000000,
+    "actualGasUsed": 11023833,
+    "l2ExecutionFeeWei": "66142998000000",
+    "l1DataFeeWei": "1679003577683",
+    "actualTotalFeeWei": "67822001577683",
+    "approvedMaximumSpendWei": "1000000000000000"
+  },
+  "initialState": {
+    "directoryVersion": 0,
+    "directoryRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "agentCount": 0,
+    "escrowTotalLocked": "0",
+    "spendExecutedPrincipal": "0",
+    "escrowAllowlistCodeHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "callEscrowEmergencyPaused": false,
+    "spendModuleEmergencyPaused": false,
+    "allContractNativeBalancesWei": "0",
+    "allContractUsdcBalances": "0",
+    "safeToSpendModuleUsdcAllowance": "0",
+    "safeToCallEscrowUsdcAllowance": "0"
+  },
+  "verification": {
+    "verifiedAt": "2026-08-26T04:26:36Z",
+    "providersAgreed": true,
+    "rpcEvidence": [
+      {
+        "provider": "Base public RPC",
+        "url": "https://sepolia.base.org",
+        "observedHead": 45975054
+      },
+      {
+        "provider": "PublicNode",
+        "url": "https://base-sepolia-rpc.publicnode.com",
+        "observedHead": 45975054
+      }
+    ]
+  },
+  "runtimeEnabled": false,
+  "fundingEnabled": false,
+  "mainnetApproved": false,
+  "notes": "Base Sepolia source-verified evidence only. The ASCP graph is deployed but write-inert; Safe module enablement, escrow allowlisting, directory publication, token approval, funding, verifier activation, and Base mainnet deployment remain separately prohibited."
+}
