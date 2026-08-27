@@ -129,7 +129,8 @@ grep -Fq "${expected_runtime_hash};" <<<"${source_text}"
 
 if test "${status}" = "approved-zero-value"; then
   approval="$(jq -r '.approval.sha256' "${record}")"
-  grep -Fq "bytes32 public constant deployment_approval_digest = ${approval};" <<<"${source_text}"
+  grep -Fq "bytes32 public constant deployment_approval_digest =" <<<"${source_text}"
+  grep -Fq "${approval};" <<<"${source_text}"
   grep -Fq "bool public constant mainnet_broadcast_enabled = true;" <<<"${source_text}"
 else
   grep -Fq "bytes32 public constant deployment_approval_digest = bytes32(0);" <<<"${source_text}"

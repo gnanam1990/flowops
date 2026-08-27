@@ -42,11 +42,13 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         deployment = new DeployFlowOpsIntentAnchorBaseMainnet();
     }
 
-    function test_committedPreparationPinsObservedDeploymentButCannotBroadcast() public view {
+    function test_committedPromotionPinsExactApprovedDeployment() public view {
         assertEq(deployment.BASE_MAINNET_CHAIN_ID(), 8_453);
         assertEq(deployment.DESIGNATED_DEPLOYER(), 0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B);
         assertEq(deployment.SOURCE_COMMIT(), hex"ea21fbaaa8c8cc3aecca17e910146911703507da");
-        assertEq(deployment.DEPLOYMENT_APPROVAL_DIGEST(), bytes32(0));
+        assertEq(
+            deployment.DEPLOYMENT_APPROVAL_DIGEST(), 0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b
+        );
         assertEq(deployment.EXPECTED_DEPLOYER_NONCE(), 0);
         assertEq(deployment.EXPECTED_CONTRACT_ADDRESS(), 0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA);
         assertEq(
@@ -58,7 +60,7 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         assertEq(deployment.MAX_GAS_LIMIT(), 650_000);
         assertEq(deployment.MAX_FEE_PER_GAS_WEI(), 20_000_000);
         assertEq(deployment.MAX_GAS_SPEND_WEI(), 13_000_000_000_000);
-        assertFalse(deployment.MAINNET_BROADCAST_ENABLED());
+        assertTrue(deployment.MAINNET_BROADCAST_ENABLED());
     }
 
     function test_runRejectsWrongChainBeforeAnyReleaseGate() public {
@@ -67,10 +69,14 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         deployment.run();
     }
 
-    function test_runRejectsMissingExplicitApprovalOnMainnet() public {
+    function test_approvedRunDeploysExactZeroFundContract() public {
         vm.chainId(8_453);
-        vm.expectRevert(DeployFlowOpsIntentAnchorBaseMainnet.DeploymentApprovalNotRecorded.selector);
-        deployment.run();
+        FlowOpsIntentAnchor anchor = deployment.run();
+
+        assertEq(address(anchor), 0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA);
+        assertEq(address(anchor).codehash, keccak256(type(FlowOpsIntentAnchor).runtimeCode));
+        assertFalse(anchor.acceptsFunds());
+        assertFalse(anchor.executesPayments());
     }
 
     function test_releaseGateRejectsEveryMissingOrDisabledBinding() public {
