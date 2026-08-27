@@ -95,7 +95,8 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
     --arg gas "${maximum_gas}" \
     --arg fee "${maximum_fee}" \
     --arg priority "${maximum_priority}" \
-    --arg spend "${maximum_spend}" '
+    --arg spend "${maximum_spend}" \
+    --arg status "${status}" '
       .action == "deploy-contract"
       and .browserWalletPrompt == true
       and .chainId == 8453
@@ -117,7 +118,33 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
       and .sourceCommit == $source
       and .transactionValueWei == "0"
       and .version == 1
+      and (
+        if $status == "approval-requested" then
+          .ceremonyAttempt == 2
+          and .previousApprovalDigest == "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b"
+          and .previousAttemptOutcome == "failed-no-broadcast-wallet-chain-mismatch"
+          and .requiredWalletChainId == 8453
+        else true
+        end
+      )
     ' <<<"${approval_statement}" >/dev/null
+fi
+
+if test "${status}" = "approval-requested"; then
+  jq -e '
+    .previousAttempts | length == 1
+    and .[0].ceremonyAttempt == 1
+    and .[0].approval.sha256 == "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b"
+    and .[0].deploymentEvidence.approvalConsumed == true
+    and .[0].deploymentEvidence.connectedWalletChainId == 1
+    and .[0].deploymentEvidence.expectedChainId == 8453
+    and .[0].deploymentEvidence.failure == "wallet-chain-mismatch"
+    and .[0].deploymentEvidence.transactionHash == null
+    and .[0].deploymentEvidence.receipt == null
+    and .[0].deploymentEvidence.postAttemptLatestNonce == "0"
+    and .[0].deploymentEvidence.postAttemptPendingNonce == "0"
+    and .[0].deploymentEvidence.postAttemptPredictedAddressCode == "0x"
+  ' "${record}" >/dev/null
 fi
 
 source_text="$(tr '[:upper:]' '[:lower:]' <"${deployment_script}")"

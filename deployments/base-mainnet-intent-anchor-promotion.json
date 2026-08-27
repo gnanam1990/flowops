@@ -3,7 +3,7 @@
   "kind": "flowops-intent-anchor-mainnet-promotion",
   "network": "base-mainnet",
   "chainId": 8453,
-  "status": "attempt-failed-no-broadcast",
+  "status": "approval-requested",
   "sourceCommit": "ea21fbaaa8c8cc3aecca17e910146911703507da",
   "deployer": "0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B",
   "expectedDeployerNonce": "0",
@@ -12,9 +12,9 @@
   "runtimeCodeKeccak256": "0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151",
   "runtimeCodeSha256": "0x0f3cfa13e6e029ab7ce2c4d3afa478ab1a4034e8e4fc91e456df1127ca91bdc8",
   "observation": {
-    "observedAt": "2026-08-27T16:18:51Z",
-    "finalizedBlock": 50528620,
-    "finalizedBlockHash": "0x19c4e8e9ae2e667c2200e7e5abd6f10b9ba7df572e3e7deca7a1c154891b9b79",
+    "observedAt": "2026-08-27T17:20:27Z",
+    "finalizedBlock": 50530159,
+    "finalizedBlockHash": "0xe0ce7e479e9a5e802abb080946e395586396a0318c76a83cdbc7ff6f591ae2f8",
     "providerAgreement": true,
     "latestNonce": "0",
     "pendingNonce": "0",
@@ -30,26 +30,36 @@
     "transactionValueWei": "0"
   },
   "approval": {
-    "canonicalStatement": "{\"action\":\"deploy-contract\",\"browserWalletPrompt\":true,\"chainId\":8453,\"contract\":\"FlowOpsIntentAnchor\",\"deployer\":\"0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B\",\"executesPayments\":false,\"expectedAddress\":\"0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA\",\"expectedNonce\":\"0\",\"fundingEnabled\":false,\"initcodeKeccak256\":\"0xefb111e5a3fd1eb31422a41d57a811f28d215e72b6f0cdf04d385fc83c06a863\",\"maxFeePerGasWei\":\"20000000\",\"maxGasLimit\":\"650000\",\"maxGasSpendWei\":\"13000000000000\",\"maxPriorityFeePerGasWei\":\"1000000\",\"network\":\"base-mainnet\",\"noTokenApproval\":true,\"runtimeCodeKeccak256\":\"0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151\",\"scope\":\"one-zero-value-contract-deployment\",\"sourceCommit\":\"ea21fbaaa8c8cc3aecca17e910146911703507da\",\"transactionValueWei\":\"0\",\"version\":1}",
-    "sha256": "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b",
-    "approvedAt": "2026-08-27T16:50:57Z",
+    "canonicalStatement": "{\"action\":\"deploy-contract\",\"browserWalletPrompt\":true,\"ceremonyAttempt\":2,\"chainId\":8453,\"contract\":\"FlowOpsIntentAnchor\",\"deployer\":\"0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B\",\"executesPayments\":false,\"expectedAddress\":\"0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA\",\"expectedNonce\":\"0\",\"fundingEnabled\":false,\"initcodeKeccak256\":\"0xefb111e5a3fd1eb31422a41d57a811f28d215e72b6f0cdf04d385fc83c06a863\",\"maxFeePerGasWei\":\"20000000\",\"maxGasLimit\":\"650000\",\"maxGasSpendWei\":\"13000000000000\",\"maxPriorityFeePerGasWei\":\"1000000\",\"network\":\"base-mainnet\",\"noTokenApproval\":true,\"previousApprovalDigest\":\"0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b\",\"previousAttemptOutcome\":\"failed-no-broadcast-wallet-chain-mismatch\",\"requiredWalletChainId\":8453,\"runtimeCodeKeccak256\":\"0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151\",\"scope\":\"one-zero-value-contract-deployment\",\"sourceCommit\":\"ea21fbaaa8c8cc3aecca17e910146911703507da\",\"transactionValueWei\":\"0\",\"version\":1}",
+    "sha256": "0x8b4e320ead07ef22bafe4b0e7640d30f5877ed5946fb686135c6292150f5ef07",
+    "approvedAt": null,
     "scope": "one-zero-value-contract-deployment-no-token-approval-no-funding"
   },
-  "deploymentEvidence": {
-    "attemptedAt": "2026-08-27T16:58:42Z",
-    "approvalConsumed": true,
-    "connectedWallet": "0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B",
-    "connectedWalletChainId": 1,
-    "expectedChainId": 8453,
-    "failure": "wallet-chain-mismatch",
-    "transactionHash": null,
-    "receipt": null,
-    "postAttemptLatestNonce": "0",
-    "postAttemptPendingNonce": "0",
-    "postAttemptDeployerBalanceWei": "149971227122042",
-    "postAttemptPredictedAddressCode": "0x",
-    "providerAgreement": true
-  },
+  "previousAttempts": [
+    {
+      "ceremonyAttempt": 1,
+      "approval": {
+        "sha256": "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b",
+        "approvedAt": "2026-08-27T16:50:57Z"
+      },
+      "deploymentEvidence": {
+        "attemptedAt": "2026-08-27T16:58:42Z",
+        "approvalConsumed": true,
+        "connectedWallet": "0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B",
+        "connectedWalletChainId": 1,
+        "expectedChainId": 8453,
+        "failure": "wallet-chain-mismatch",
+        "transactionHash": null,
+        "receipt": null,
+        "postAttemptLatestNonce": "0",
+        "postAttemptPendingNonce": "0",
+        "postAttemptDeployerBalanceWei": "149971227122042",
+        "postAttemptPredictedAddressCode": "0x",
+        "providerAgreement": true
+      }
+    }
+  ],
+  "deploymentEvidence": null,
   "sourceVerification": null,
   "fundingEnabled": false,
   "executesPayments": false

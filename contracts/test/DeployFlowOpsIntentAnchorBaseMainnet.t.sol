@@ -42,13 +42,11 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         deployment = new DeployFlowOpsIntentAnchorBaseMainnet();
     }
 
-    function test_committedFailedAttemptPinsApprovalButDisablesBroadcast() public view {
+    function test_attemptTwoCandidateClearsConsumedApprovalAndDisablesBroadcast() public view {
         assertEq(deployment.BASE_MAINNET_CHAIN_ID(), 8_453);
         assertEq(deployment.DESIGNATED_DEPLOYER(), 0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B);
         assertEq(deployment.SOURCE_COMMIT(), hex"ea21fbaaa8c8cc3aecca17e910146911703507da");
-        assertEq(
-            deployment.DEPLOYMENT_APPROVAL_DIGEST(), 0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b
-        );
+        assertEq(deployment.DEPLOYMENT_APPROVAL_DIGEST(), bytes32(0));
         assertEq(deployment.EXPECTED_DEPLOYER_NONCE(), 0);
         assertEq(deployment.EXPECTED_CONTRACT_ADDRESS(), 0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA);
         assertEq(
@@ -69,9 +67,9 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         deployment.run();
     }
 
-    function test_failedAttemptCannotRetryFromCommittedScript() public {
+    function test_attemptTwoCandidateCannotReachWalletPrompt() public {
         vm.chainId(8_453);
-        vm.expectRevert(DeployFlowOpsIntentAnchorBaseMainnet.MainnetBroadcastDisabled.selector);
+        vm.expectRevert(DeployFlowOpsIntentAnchorBaseMainnet.DeploymentApprovalNotRecorded.selector);
         deployment.run();
     }
 
