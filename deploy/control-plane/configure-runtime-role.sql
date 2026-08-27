@@ -32,7 +32,7 @@ GRANT UPDATE (state, remaining_attempts, consumed_operation_id, consumed_at)
     ON ascp_adaptation_grants TO :"runtime_role";
 GRANT SELECT, INSERT ON ascp_proposal_workflows, ascp_workflow_actions,
     ascp_workflow_events, ascp_workflow_outbox, ascp_workflow_receipt_ownership TO :"runtime_role";
-GRANT UPDATE (state, approved_by, approver_role, approver_step_up_at, approver_step_up_until, approved_at,
+GRANT UPDATE (chain_action, state, approved_by, approver_role, approver_step_up_at, approver_step_up_until, approved_at,
     cancelled_by, cancelled_at, expired_at, submission_transaction_hash, submitted_at, confirmed_at,
     completion_receipt, completion_digest, completed_at, terminal_reason, terminal_at)
     ON ascp_proposal_workflows TO :"runtime_role";
