@@ -11,7 +11,11 @@ jq -e '
   and .kind == "flowops-intent-anchor-mainnet-promotion"
   and .network == "base-mainnet"
   and .chainId == 8453
-  and (.status == "prepared-awaiting-funding-and-approval" or .status == "approved-zero-value")
+  and (
+    .status == "prepared-awaiting-funding-and-approval"
+    or .status == "approval-requested"
+    or .status == "approved-zero-value"
+  )
   and (.sourceCommit | test("^[0-9a-f]{40}$"))
   and (.deployer | test("^0x[0-9a-fA-F]{40}$"))
   and (.expectedDeployerNonce | test("^(0|[1-9][0-9]*)$"))
@@ -36,6 +40,10 @@ jq -e '
       .approval.canonicalStatement == null
       and .approval.sha256 == null
       and .approval.approvedAt == null
+    elif .status == "approval-requested" then
+      (.approval.canonicalStatement | type == "string" and length > 0)
+      and (.approval.sha256 | test("^0x[0-9a-f]{64}$"))
+      and .approval.approvedAt == null
     else
       (.approval.canonicalStatement | type == "string" and length > 0)
       and (.approval.sha256 | test("^0x[0-9a-f]{64}$"))
@@ -55,6 +63,7 @@ maximum_gas="$(jq -r '.gasCeilings.maxGasLimit' "${record}")"
 maximum_fee="$(jq -r '.gasCeilings.maxFeePerGasWei' "${record}")"
 maximum_priority="$(jq -r '.gasCeilings.maxPriorityFeePerGasWei' "${record}")"
 maximum_spend="$(jq -r '.gasCeilings.maxGasSpendWei' "${record}")"
+status="$(jq -r '.status' "${record}")"
 
 git cat-file -e "${source_commit}^{commit}"
 git merge-base --is-ancestor "${source_commit}" HEAD
@@ -71,6 +80,45 @@ test "${maximum_fee}" -le 20000000
 test "${maximum_priority}" -le "${maximum_fee}"
 test "$((maximum_gas * maximum_fee))" -le "${maximum_spend}"
 
+if test "${status}" != "prepared-awaiting-funding-and-approval"; then
+  approval_statement="$(jq -r '.approval.canonicalStatement' "${record}")"
+  approval_digest="$(jq -r '.approval.sha256' "${record}")"
+  test "$(printf '%s' "${approval_statement}" | shasum -a 256 | awk '{print "0x"$1}')" = "${approval_digest}"
+  jq -e \
+    --arg deployer "${deployer}" \
+    --arg nonce "${nonce}" \
+    --arg address "${expected_address}" \
+    --arg source "${source_commit}" \
+    --arg initcode "${expected_initcode_hash}" \
+    --arg runtime "${expected_runtime_hash}" \
+    --arg gas "${maximum_gas}" \
+    --arg fee "${maximum_fee}" \
+    --arg priority "${maximum_priority}" \
+    --arg spend "${maximum_spend}" '
+      .action == "deploy-contract"
+      and .browserWalletPrompt == true
+      and .chainId == 8453
+      and .contract == "FlowOpsIntentAnchor"
+      and .deployer == $deployer
+      and .executesPayments == false
+      and .expectedAddress == $address
+      and .expectedNonce == $nonce
+      and .fundingEnabled == false
+      and .initcodeKeccak256 == $initcode
+      and .maxFeePerGasWei == $fee
+      and .maxGasLimit == $gas
+      and .maxGasSpendWei == $spend
+      and .maxPriorityFeePerGasWei == $priority
+      and .network == "base-mainnet"
+      and .noTokenApproval == true
+      and .runtimeCodeKeccak256 == $runtime
+      and .scope == "one-zero-value-contract-deployment"
+      and .sourceCommit == $source
+      and .transactionValueWei == "0"
+      and .version == 1
+    ' <<<"${approval_statement}" >/dev/null
+fi
+
 source_text="$(tr '[:upper:]' '[:lower:]' <"${deployment_script}")"
 grep -Fq "address public constant designated_deployer = $(tr '[:upper:]' '[:lower:]' <<<"${deployer}");" <<<"${source_text}"
 grep -Fq "bytes20 public constant source_commit = hex\"${source_commit}\";" <<<"${source_text}"
@@ -79,7 +127,7 @@ grep -Fq "address public constant expected_contract_address = $(tr '[:upper:]' '
 grep -Fq "${expected_initcode_hash};" <<<"${source_text}"
 grep -Fq "${expected_runtime_hash};" <<<"${source_text}"
 
-if test "$(jq -r '.status' "${record}")" = "approved-zero-value"; then
+if test "${status}" = "approved-zero-value"; then
   approval="$(jq -r '.approval.sha256' "${record}")"
   grep -Fq "bytes32 public constant deployment_approval_digest = ${approval};" <<<"${source_text}"
   grep -Fq "bool public constant mainnet_broadcast_enabled = true;" <<<"${source_text}"
