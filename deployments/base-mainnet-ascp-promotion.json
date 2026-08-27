@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "status": "draft-unapproved",
+  "deploymentAuthorized": false,
+  "fundingAuthorized": false,
+  "sourceCommit": null,
+  "deployer": {
+    "address": "0x3c1daa7a6193848320e9477cbcfb7f512c0fd74b",
+    "expectedNonce": 1,
+    "mustNotDeploySafe": true
+  },
+  "safe": {
+    "address": null,
+    "owners": [
+      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+      "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+      "0xe88872f94013e4584bceafb5d5f87da291d086d2"
+    ],
+    "threshold": 2,
+    "deploymentTransaction": null,
+    "spendModuleEnabled": false
+  },
+  "authorities": {
+    "directoryPublisher": "0xb6e55668efb27a1571dbe14a9e388eed8a654fac",
+    "directoryPauser": "0xec8757c4dc1184f3ece812295d5ac5b570ab0ce0",
+    "registryAdmin": "0x0d9973d582b694e8ce101bd17e5768c35bacbe60",
+    "spendAuthorizer": "0x90f4c2af31bcbf3f1e0a800bd606fc00bc0a446b"
+  },
+  "organizationDomain": "0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93",
+  "asset": {
+    "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "symbol": "USDC",
+    "decimals": 6,
+    "runtimeCodeHash": "0xa6705a10bb756b5dea144591118be77d7af0c3eee3bf2dfe2583dcb0364fefab"
+  },
+  "predictedContracts": [
+    {
+      "name": "service_directory",
+      "creationNonce": 1,
+      "address": "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1"
+    },
+    {
+      "name": "agent_registry",
+      "creationNonce": 2,
+      "address": "0x15332e8c8e230e8a1c05095196dac42ba8cc6906"
+    },
+    {
+      "name": "ascp_call_escrow",
+      "creationNonce": 3,
+      "address": "0x214cbbb2190075ba43fa6518560d37c09720e0c4"
+    },
+    {
+      "name": "ascp_spend_module",
+      "creationNonce": 4,
+      "address": "0x942b83421c3ac4e1a04753e5e0208fd56cad649e"
+    }
+  ],
+  "pilot": {
+    "maximumPerActionAtomic": "1000000",
+    "maximumDailyAtomic": "10000000",
+    "maximumAllowanceAtomic": "10000000",
+    "fundingEnabled": false
+  },
+  "activation": {
+    "moduleEnabled": false,
+    "escrowAllowlisted": false,
+    "directoryPublished": false,
+    "verifierActivated": false,
+    "usdcApproved": false,
+    "funded": false
+  },
+  "approvals": {
+    "safeDeploymentApproved": false,
+    "contractDeploymentApproved": false,
+    "activationApproved": false,
+    "fundingApproved": false
+  },
+  "unresolved": [
+    "safe-address-and-deployment-receipt",
+    "safe-owner-control-proof",
+    "ascp-independent-contract-review",
+    "two-independent-production-rpc-admissions",
+    "signed-runtime-release-manifest",
+    "fresh-zero-fund-broadcast-approval"
+  ],
+  "notes": "Unapproved zero-fund staging record. It reuses the established Base Sepolia owner and authority addresses but does not claim that those keys are production-controlled. The ASCP deployer must not deploy the Safe because that would change its pinned nonce and all four predicted addresses. No deployment, activation, approval, transfer, or funding is authorized by this record."
+}
