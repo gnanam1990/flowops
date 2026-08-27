@@ -12,13 +12,14 @@ import {FlowOpsIntentAnchor} from "../src/FlowOpsIntentAnchor.sol";
 contract DeployFlowOpsIntentAnchorBaseMainnet is Script {
     uint256 public constant BASE_MAINNET_CHAIN_ID = 8_453;
 
-    address public constant DESIGNATED_DEPLOYER = address(0);
-    bytes20 public constant SOURCE_COMMIT = bytes20(0);
+    address public constant DESIGNATED_DEPLOYER = 0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B;
+    bytes20 public constant SOURCE_COMMIT = hex"ea21fbaaa8c8cc3aecca17e910146911703507da";
     bytes32 public constant DEPLOYMENT_APPROVAL_DIGEST = bytes32(0);
     uint64 public constant EXPECTED_DEPLOYER_NONCE = 0;
-    address public constant EXPECTED_CONTRACT_ADDRESS = address(0);
-    bytes32 public constant EXPECTED_INITCODE_HASH = bytes32(0);
-    bytes32 public constant EXPECTED_RUNTIME_CODE_HASH = bytes32(0);
+    address public constant EXPECTED_CONTRACT_ADDRESS = 0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA;
+    bytes32 public constant EXPECTED_INITCODE_HASH = 0xefb111e5a3fd1eb31422a41d57a811f28d215e72b6f0cdf04d385fc83c06a863;
+    bytes32 public constant EXPECTED_RUNTIME_CODE_HASH =
+        0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151;
     uint256 public constant MAX_GAS_LIMIT = 650_000;
     uint256 public constant MAX_FEE_PER_GAS_WEI = 20_000_000;
     uint256 public constant MAX_GAS_SPEND_WEI = MAX_GAS_LIMIT * MAX_FEE_PER_GAS_WEI;

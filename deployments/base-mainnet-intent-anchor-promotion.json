@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "flowops-intent-anchor-mainnet-promotion",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "status": "prepared-awaiting-funding-and-approval",
+  "sourceCommit": "ea21fbaaa8c8cc3aecca17e910146911703507da",
+  "deployer": "0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B",
+  "expectedDeployerNonce": "0",
+  "expectedContractAddress": "0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA",
+  "initcodeKeccak256": "0xefb111e5a3fd1eb31422a41d57a811f28d215e72b6f0cdf04d385fc83c06a863",
+  "runtimeCodeKeccak256": "0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151",
+  "runtimeCodeSha256": "0x0f3cfa13e6e029ab7ce2c4d3afa478ab1a4034e8e4fc91e456df1127ca91bdc8",
+  "observation": {
+    "observedAt": "2026-08-27T16:18:51Z",
+    "finalizedBlock": 50528620,
+    "finalizedBlockHash": "0x19c4e8e9ae2e667c2200e7e5abd6f10b9ba7df572e3e7deca7a1c154891b9b79",
+    "providerAgreement": true,
+    "latestNonce": "0",
+    "pendingNonce": "0",
+    "deployerBalanceWei": "0",
+    "predictedAddressCode": "0x",
+    "estimatedDeploymentGas": "332200"
+  },
+  "gasCeilings": {
+    "maxGasLimit": "650000",
+    "maxFeePerGasWei": "20000000",
+    "maxGasSpendWei": "13000000000000",
+    "transactionValueWei": "0"
+  },
+  "approval": {
+    "canonicalStatement": null,
+    "sha256": null,
+    "approvedAt": null,
+    "scope": "one-zero-value-contract-deployment-no-token-approval-no-funding"
+  },
+  "deploymentEvidence": null,
+  "sourceVerification": null,
+  "fundingEnabled": false,
+  "executesPayments": false
+}

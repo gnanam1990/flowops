@@ -1,6 +1,6 @@
 # FlowOps intent anchor on Base mainnet
 
-Status: **implementation complete; deployment deliberately blocked**.
+Status: **implementation committed; deployment prepared and deliberately blocked**.
 
 This runbook deploys the limited `FlowOpsIntentAnchor` integration. It does not
 deploy CallEscrow or the ASCP payment contracts, approve USDC, move funds, or
@@ -22,11 +22,11 @@ address.
 
 ## Preparation gate
 
-`contracts/script/DeployFlowOpsIntentAnchorBaseMainnet.s.sol` currently pins
-zero values for the deployer, reviewed source commit, approval digest, predicted
-contract address, initcode hash, and runtime hash. `MAINNET_BROADCAST_ENABLED`
-is false. These values make the script refuse on Base mainnet before it can
-reach a wallet prompt.
+`contracts/script/DeployFlowOpsIntentAnchorBaseMainnet.s.sol` pins the selected
+deployer, reviewed source commit, observed nonce, predicted contract address,
+initcode hash, and runtime hash. The approval digest remains zero and
+`MAINNET_BROADCAST_ENABLED` remains false. These values make the script refuse
+on Base mainnet before it can reach a wallet prompt.
 
 Run the focused implementation checks:
 

@@ -42,14 +42,19 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         deployment = new DeployFlowOpsIntentAnchorBaseMainnet();
     }
 
-    function test_committedPreparationCannotBroadcast() public view {
+    function test_committedPreparationPinsObservedDeploymentButCannotBroadcast() public view {
         assertEq(deployment.BASE_MAINNET_CHAIN_ID(), 8_453);
-        assertEq(deployment.DESIGNATED_DEPLOYER(), address(0));
-        assertEq(deployment.SOURCE_COMMIT(), bytes20(0));
+        assertEq(deployment.DESIGNATED_DEPLOYER(), 0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B);
+        assertEq(deployment.SOURCE_COMMIT(), hex"ea21fbaaa8c8cc3aecca17e910146911703507da");
         assertEq(deployment.DEPLOYMENT_APPROVAL_DIGEST(), bytes32(0));
-        assertEq(deployment.EXPECTED_CONTRACT_ADDRESS(), address(0));
-        assertEq(deployment.EXPECTED_INITCODE_HASH(), bytes32(0));
-        assertEq(deployment.EXPECTED_RUNTIME_CODE_HASH(), bytes32(0));
+        assertEq(deployment.EXPECTED_DEPLOYER_NONCE(), 0);
+        assertEq(deployment.EXPECTED_CONTRACT_ADDRESS(), 0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA);
+        assertEq(
+            deployment.EXPECTED_INITCODE_HASH(), 0xefb111e5a3fd1eb31422a41d57a811f28d215e72b6f0cdf04d385fc83c06a863
+        );
+        assertEq(
+            deployment.EXPECTED_RUNTIME_CODE_HASH(), 0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151
+        );
         assertEq(deployment.MAX_GAS_LIMIT(), 650_000);
         assertEq(deployment.MAX_FEE_PER_GAS_WEI(), 20_000_000);
         assertEq(deployment.MAX_GAS_SPEND_WEI(), 13_000_000_000_000);
@@ -62,9 +67,9 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         deployment.run();
     }
 
-    function test_runRejectsUnassignedPreparationOnMainnet() public {
+    function test_runRejectsMissingExplicitApprovalOnMainnet() public {
         vm.chainId(8_453);
-        vm.expectRevert(DeployFlowOpsIntentAnchorBaseMainnet.MainnetDeployerNotDesignated.selector);
+        vm.expectRevert(DeployFlowOpsIntentAnchorBaseMainnet.DeploymentApprovalNotRecorded.selector);
         deployment.run();
     }
 
