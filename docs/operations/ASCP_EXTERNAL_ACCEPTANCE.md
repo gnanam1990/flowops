@@ -83,16 +83,36 @@ independently checking the artifacts.
 
 ## Current external prerequisites
 
-The deployed Safe currently has the ASCP spend module enabled and the exact
-escrow runtime allowlisted, but it has zero native balance and zero test USDC.
-No spend/refund criterion can be run until a separately reviewed capped testnet
-funding and allowance ceremony succeeds.
+As of 2026-08-27, the deployed Safe has the ASCP spend module enabled, the
+exact escrow runtime allowlisted, `20.000000` Base Sepolia test USDC, and
+`0.0001` Base Sepolia test ETH. Both escrow and module allowances remain zero;
+funding alone does not authorize a spend. A separately reviewed capped
+allowance ceremony is still required before a spend/refund criterion runs.
 
-The existing Railway production control plane and PostgreSQL services are live,
-but the configured runtime database URL does not declare
-`sslmode=verify-full`. The managed PostgreSQL verifier therefore fails before
-connecting. A production-equivalent run also requires the latest reviewed
-source image and the complete ASCP directory, registry, escrow, spend-module,
-governance-observer, signer, verifier, keeper, WORM, and recovery configuration;
-the currently deployed service must not be treated as that environment merely
-because its health loop is running.
+The isolated Railway acceptance control plane and PostgreSQL service are live.
+The runtime uses `sslmode=verify-full`, TLS 1.3, the least-privilege
+`flowops_runtime` role, and passed the managed PostgreSQL readiness inventory.
+That environment still contains only the control plane and PostgreSQL. A
+production-equivalent run additionally requires independently supervised
+directory/registry operators, seller, signer/HSM, verifier, keeper/gas payer,
+governance observer, two WORM replicas, recovery service, and controlled fault
+infrastructure. A healthy control-plane loop is not evidence that those
+dependencies exist.
+
+## Local rehearsal
+
+The same defect classes can be exercised locally without claiming external
+acceptance. Configure an isolated PostgreSQL database and run:
+
+```sh
+FLOWOPS_TEST_DATABASE_URL='<isolated PostgreSQL URL>' \
+  make ascp-local-acceptance-rehearsal
+```
+
+`FLOWOPS_LOCAL_ACCEPTANCE_OUTPUT_DIR` may name an absolute private output
+directory. The runner executes fresh race-enabled PostgreSQL integration and
+scenario suites, the Solidity state machines, the external assertion inventory,
+and read-only two-provider Base Sepolia activation observations. It emits a
+hash-bound `report.json` classified `LOCAL_REHEARSAL_ONLY`; every one of the 14
+rows remains `STILL_REQUIRED`. The report cannot be supplied to the external
+verifier, cannot collect owner signatures, and cannot promote the manifest.
