@@ -213,9 +213,9 @@ test("renders a fail-closed public control room without illustrative organizatio
 	assert.match(html, /Public health evidence is unavailable/);
   assert.match(html, /Organization controls locked/);
   assert.match(html, /Economic activity/);
-	assert.match(html, /Mainnet payment deployment is not active/);
+	assert.match(html, /Mainnet intent anchor is not active/);
 	assert.match(html, /Source verified<\/dt><dd>Unavailable/);
-  assert.match(html, /Production contracts remain structurally blocked/);
+  assert.match(html, /No functional mainnet intent contract is being represented as live/);
   assert.match(html, /USDC deposits/);
   assert.match(html, /Do not send ETH or tokens/);
   assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
@@ -329,33 +329,57 @@ test("provides explicit loopback-only local sign-in and sign-out without grantin
   assert.equal(enrollment.headers.get("location"), "/api/local-auth/signin?return_to=%2Fenrollment");
 });
 
-test("shows a configured proposal address only as experimental and never as production", async () => {
-  const address = "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250";
+test("shows the verified intent anchor as primary and keeps the proposal anchor as legacy evidence", async () => {
+  const address = "0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA";
+  const legacyAddress = "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250";
   const response = await render({
-    env: { FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: address },
+    env: {
+      FLOWOPS_MAINNET_INTENT_ANCHOR_ADDRESS: address,
+      FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: legacyAddress,
+    },
   });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Experimental evidence anchor only/);
+  assert.match(html, /Functional intent anchor live/);
   assert.match(html, new RegExp(address));
   assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${address}\\?tab=contract`));
-  assert.match(html, /View address on Base Blockscout/);
-  assert.match(html, /not a factory, vault, escrow, audited release, or production payment contract/i);
+  assert.match(html, /View verified source on Base Blockscout/);
+  assert.match(html, /immutable, controller-scoped intent records/i);
+  assert.match(html, /Legacy proposal evidence:/);
+  assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${legacyAddress}\\?tab=contract`));
   assert.match(html, /Production ready/);
   assert.match(html, /Source verified/);
-  assert.match(html, /Source verified<\/dt><dd>Unavailable/);
-  assert.doesNotMatch(html, /View verified source/);
+  assert.match(html, /Source verified<\/dt><dd class="status-verified"><a[^>]+>Yes ↗<\/a>/);
   assert.match(html, /Vault creation/);
   assert.match(html, /USDC deposits/);
   assert.match(html, /Do not send ETH or tokens/);
   assert.doesNotMatch(html, /Production ready<\/dt><dd>Yes/);
+  assert.doesNotMatch(html, /Experimental evidence anchor only/);
 
   const invalid = await render({
-    env: { FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: "0xnot-a-mainnet-address" },
+    env: {
+      FLOWOPS_MAINNET_INTENT_ANCHOR_ADDRESS: "0xnot-a-mainnet-address",
+      FLOWOPS_PROPOSAL_ANCHOR_ADDRESS: legacyAddress,
+    },
   });
   const invalidHtml = await invalid.text();
-  assert.match(invalidHtml, /Mainnet payment deployment is not active/);
+  assert.match(invalidHtml, /Mainnet intent anchor is not active/);
   assert.doesNotMatch(invalidHtml, /0xnot-a-mainnet-address/);
+  assert.match(invalidHtml, /Legacy proposal evidence:/);
+  assert.match(invalidHtml, new RegExp(`https://base\\.blockscout\\.com/address/${legacyAddress}\\?tab=contract`));
+  assert.match(invalidHtml, /Source verified<\/dt><dd>Unavailable/);
+});
+
+test("does not claim source verification for an unpinned mainnet address", async () => {
+  const address = "0x3333333333333333333333333333333333333333";
+  const response = await render({
+    env: { FLOWOPS_MAINNET_INTENT_ANCHOR_ADDRESS: address },
+  });
+  const html = await response.text();
+  assert.match(html, /Functional intent anchor live/);
+  assert.match(html, new RegExp(address));
+  assert.match(html, /Source verified<\/dt><dd>Unavailable/);
+  assert.doesNotMatch(html, /status-verified/);
 });
 
 test("renders validated live public health without exposing organization records", async (t) => {

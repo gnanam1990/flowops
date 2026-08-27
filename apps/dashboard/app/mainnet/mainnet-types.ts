@@ -4,4 +4,6 @@ export type MainnetIntentAnchorDeployment = {
   chainId: 8453;
   address: string | null;
   explorerHref: string | null;
+  sourceVerification: "unavailable" | "verified";
+  sourceVerificationHref: string | null;
 };

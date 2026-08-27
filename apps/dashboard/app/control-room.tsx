@@ -9,6 +9,7 @@ import type {
   DashboardSnapshot,
   Risk,
 } from "./dashboard-data";
+import type { MainnetIntentAnchorDeployment } from "./mainnet/mainnet-types";
 import type { ProposalAnchorDeployment } from "./proposal-anchor";
 
 type Section =
@@ -21,6 +22,7 @@ type Section =
 
 type ControlRoomProps = {
   snapshot: DashboardSnapshot;
+  mainnetIntentAnchor: MainnetIntentAnchorDeployment;
   proposalAnchor: ProposalAnchorDeployment;
   viewer: { name: string; email: string; authenticated: boolean };
   accountHref: string | null;
@@ -35,7 +37,7 @@ const navItems: { id: Section; label: string; mark: string }[] = [
   { id: "developers", label: "Developers", mark: "↗" },
 ];
 
-export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: ControlRoomProps) {
+export function ControlRoom({ snapshot, mainnetIntentAnchor, proposalAnchor, viewer, accountHref }: ControlRoomProps) {
   const [section, setSection] = useState<Section>("overview");
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -219,7 +221,9 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
             </div>
           ) : null}
 
-          {section === "overview" ? <ProposalAnchorNotice deployment={proposalAnchor} /> : null}
+          {section === "overview" ? (
+            <MainnetSafetyNotice deployment={mainnetIntentAnchor} legacyProposal={proposalAnchor} />
+          ) : null}
 
           {section === "overview" ? (
             <Overview
@@ -292,31 +296,52 @@ export function ControlRoom({ snapshot, proposalAnchor, viewer, accountHref }: C
   );
 }
 
-function ProposalAnchorNotice({ deployment }: { deployment: ProposalAnchorDeployment }) {
-  const deployed = deployment.status === "experimental-unaudited";
+function MainnetSafetyNotice({
+  deployment,
+  legacyProposal,
+}: {
+  deployment: MainnetIntentAnchorDeployment;
+  legacyProposal: ProposalAnchorDeployment;
+}) {
+  const deployed = deployment.status === "limited-mainnet-live" && deployment.address !== null;
+  const sourceVerified = deployment.sourceVerification === "verified" && deployment.sourceVerificationHref !== null;
   return (
-    <section className="proposal-anchor-notice" aria-label="Base mainnet proposal deployment status">
+    <section className="proposal-anchor-notice" aria-label="Base mainnet intent anchor deployment status">
       <div className="proposal-anchor-copy">
-        <span>BASE MAINNET · SAFETY BOUNDARY</span>
-        <h2>{deployed ? "Experimental evidence anchor only" : "Mainnet payment deployment is not active"}</h2>
+        <span>BASE MAINNET · LIMITED INTEGRATION</span>
+        <h2>{deployed ? "Functional intent anchor live" : "Mainnet intent anchor is not active"}</h2>
         <p>
           {deployed
-            ? "Evidence-only deployment. It is not a factory, vault, escrow, audited release, or production payment contract."
-            : "Production contracts remain structurally blocked. No factory, vault, escrow, or payment contract is being represented as live."}
+            ? "Verified evidence-only contract for immutable, controller-scoped intent records. It cannot move funds, hold assets, approve tokens, or execute payments."
+            : "No functional mainnet intent contract is being represented as live. Payment, vault, escrow, and deposit capabilities remain disabled."}
         </p>
         {deployment.address && deployment.explorerHref ? (
           <a href={deployment.explorerHref} target="_blank" rel="noreferrer">
             <code>{deployment.address}</code>
-            <span>View address on Base Blockscout ↗</span>
+            <span>View verified source on Base Blockscout ↗</span>
           </a>
         ) : null}
-        <a href="/mainnet">
-          <span>Open functional mainnet intent workspace ↗</span>
-        </a>
+        {deployed ? (
+          <a href="/mainnet">
+            <span>Open functional mainnet intent workspace ↗</span>
+          </a>
+        ) : null}
+        {legacyProposal.address && legacyProposal.explorerHref ? (
+          <a className="proposal-anchor-legacy" href={legacyProposal.explorerHref} target="_blank" rel="noreferrer">
+            <span>Legacy proposal evidence: {legacyProposal.address} ↗</span>
+          </a>
+        ) : null}
       </div>
       <dl className="proposal-anchor-controls">
         <div><dt>Production ready</dt><dd>No</dd></div>
-		<div><dt>Source verified</dt><dd>Unavailable</dd></div>
+        <div>
+          <dt>Source verified</dt>
+          <dd className={sourceVerified ? "status-verified" : undefined}>
+            {sourceVerified ? (
+              <a href={deployment.sourceVerificationHref ?? undefined} target="_blank" rel="noreferrer">Yes ↗</a>
+            ) : "Unavailable"}
+          </dd>
+        </div>
         <div><dt>Vault creation</dt><dd>Disabled</dd></div>
         <div><dt>USDC deposits</dt><dd>Disabled</dd></div>
         <div><dt>Asset warning</dt><dd>Do not send ETH or tokens</dd></div>

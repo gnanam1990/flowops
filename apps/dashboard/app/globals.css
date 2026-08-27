@@ -181,11 +181,14 @@ body { background: var(--canvas); }
 .proposal-anchor-copy h2 { margin: 5px 0 4px; font-size: 15px; }
 .proposal-anchor-copy p { font-size: 10px; line-height: 1.45; }
 .proposal-anchor-copy a { margin-top: 8px; }
+.proposal-anchor-copy a.proposal-anchor-legacy { color: var(--muted); }
 .proposal-anchor-controls { grid-template-columns: repeat(5,minmax(0,1fr)); border: 0; border-radius: 0; background: transparent; }
 .proposal-anchor-controls div { padding: 8px 10px; border-left: 1px solid var(--line); background: transparent; }
 .proposal-anchor-controls div:last-child { grid-column: auto; }
 .proposal-anchor-controls dt { font-size: 7px; }
 .proposal-anchor-controls dd { margin-top: 4px; font-size: 8px; }
+.proposal-anchor-controls dd.status-verified,
+.proposal-anchor-controls dd.status-verified a { color: var(--green); text-decoration: none; }
 
 .command-header {
   grid-template-columns: minmax(0,1fr) 260px;
