@@ -16,6 +16,8 @@ jq -e '
     or .status == "approval-requested"
     or .status == "approved-zero-value"
     or .status == "attempt-failed-no-broadcast"
+    or .status == "deployed-awaiting-finality-and-source-verification"
+    or .status == "deployed-verified"
   )
   and (.sourceCommit | test("^[0-9a-f]{40}$"))
   and (.deployer | test("^0x[0-9a-fA-F]{40}$"))
@@ -120,7 +122,9 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
       and .version == 1
       and (
         if $status == "approval-requested" or $status == "approved-zero-value"
-          or $status == "attempt-failed-no-broadcast" then
+          or $status == "attempt-failed-no-broadcast"
+          or $status == "deployed-awaiting-finality-and-source-verification"
+          or $status == "deployed-verified" then
           .ceremonyAttempt == 3
           and .previousApprovalDigest == "0x8b4e320ead07ef22bafe4b0e7640d30f5877ed5946fb686135c6292150f5ef07"
           and .previousAttemptOutcome == "failed-no-broadcast-wallet-chain-mismatch"
@@ -139,7 +143,9 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
 fi
 
 if test "${status}" = "approval-requested" || test "${status}" = "approved-zero-value" \
-  || test "${status}" = "attempt-failed-no-broadcast"; then
+  || test "${status}" = "attempt-failed-no-broadcast" \
+  || test "${status}" = "deployed-awaiting-finality-and-source-verification" \
+  || test "${status}" = "deployed-verified"; then
   jq -e '
     .previousAttempts | length == 2
     and .[0].ceremonyAttempt == 1
@@ -164,6 +170,36 @@ if test "${status}" = "approval-requested" || test "${status}" = "approved-zero-
     and .[1].deploymentEvidence.postAttemptLatestNonce == "0"
     and .[1].deploymentEvidence.postAttemptPendingNonce == "0"
     and .[1].deploymentEvidence.postAttemptPredictedAddressCode == "0x"
+  ' "${record}" >/dev/null
+fi
+
+if test "${status}" = "deployed-awaiting-finality-and-source-verification" \
+  || test "${status}" = "deployed-verified"; then
+  jq -e '
+    .deploymentEvidence.transactionHash == "0x62e4b292d3e02a515390d574a20a550c4331ba6fd877bfcdb699d678e71c8d24"
+    and .deploymentEvidence.receiptStatus == "0x1"
+    and .deploymentEvidence.blockNumber == 50531762
+    and .deploymentEvidence.blockHash == "0x2d251b9c304e48df78e3ce6acf0295f63a801cd6609e9b41b4d83815c77dffa6"
+    and .deploymentEvidence.blockTimestamp == "2026-08-27T17:47:51Z"
+    and .deploymentEvidence.deployer == .deployer
+    and .deploymentEvidence.deployerNonce == 0
+    and .deploymentEvidence.contractAddress == .expectedContractAddress
+    and .deploymentEvidence.transactionValueWei == "0"
+    and .deploymentEvidence.gasLimit == 394111
+    and .deploymentEvidence.gasUsed == 328426
+    and .deploymentEvidence.maxFeePerGasWei == .gasCeilings.maxFeePerGasWei
+    and .deploymentEvidence.maxPriorityFeePerGasWei == .gasCeilings.maxPriorityFeePerGasWei
+    and .deploymentEvidence.effectiveGasPriceWei == "6000000"
+    and .deploymentEvidence.totalPaidWei == "1970556000000"
+    and .deploymentEvidence.creationInputHash == .initcodeKeccak256
+    and .deploymentEvidence.runtimeCodeHash == .runtimeCodeKeccak256
+    and .deploymentEvidence.runtimeCodeSha256 == .runtimeCodeSha256
+    and (.deploymentEvidence.observers | sort == ["base.drpc.org", "mainnet.base.org"])
+    and .deploymentEvidence.contractReads.baseMainnetChainId == 8453
+    and .deploymentEvidence.contractReads.kind == "0x7505f4374d8412c378c634523e83068844ffa970d7071f09a84c912a54ed76d9"
+    and .deploymentEvidence.contractReads.deploymentStatus == "LIMITED_MAINNET_INTENT_EVIDENCE_NO_FUNDS"
+    and .deploymentEvidence.contractReads.acceptsFunds == false
+    and .deploymentEvidence.contractReads.executesPayments == false
   ' "${record}" >/dev/null
 fi
 
@@ -197,6 +233,12 @@ if test "${status}" = "approved-zero-value"; then
   grep -Fq "${approval};" <<<"${source_text}"
   grep -Fq "bool public constant mainnet_broadcast_enabled = true;" <<<"${source_text}"
 elif test "${status}" = "attempt-failed-no-broadcast"; then
+  approval="$(jq -r '.approval.sha256' "${record}")"
+  grep -Fq "bytes32 public constant deployment_approval_digest =" <<<"${source_text}"
+  grep -Fq "${approval};" <<<"${source_text}"
+  grep -Fq "bool public constant mainnet_broadcast_enabled = false;" <<<"${source_text}"
+elif test "${status}" = "deployed-awaiting-finality-and-source-verification" \
+  || test "${status}" = "deployed-verified"; then
   approval="$(jq -r '.approval.sha256' "${record}")"
   grep -Fq "bytes32 public constant deployment_approval_digest =" <<<"${source_text}"
   grep -Fq "${approval};" <<<"${source_text}"

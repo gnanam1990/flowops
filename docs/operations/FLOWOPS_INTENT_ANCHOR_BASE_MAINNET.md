@@ -1,7 +1,7 @@
 # FlowOps intent anchor on Base mainnet
 
-Status: **attempt 3 approved after a successful transaction-free browser-wallet
-preflight on Base chain ID 8453; one exact zero-value broadcast is enabled**.
+Status: **deployed successfully on Base mainnet; awaiting finalized-tag and
+source-verification evidence before the dashboard is enabled**.
 
 This runbook deploys the limited `FlowOpsIntentAnchor` integration. It does not
 deploy CallEscrow or the ASCP payment contracts, approve USDC, move funds, or
@@ -26,7 +26,7 @@ address.
 `contracts/script/DeployFlowOpsIntentAnchorBaseMainnet.s.sol` pins the selected
 deployer, reviewed source commit, observed nonce, predicted contract address,
 initcode hash, and runtime hash. The approval digest remains zero and
-`MAINNET_BROADCAST_ENABLED` is true only in the exact attempt-3 approval commit.
+`MAINNET_BROADCAST_ENABLED` is false after the successful one-time broadcast.
 The approval statement binds both retired digests plus the successful wallet
 preflight account, chain, and observation time. The supported broadcast wrapper
 repeats that no-transaction preflight before it creates the one-use attempt
