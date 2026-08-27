@@ -34,6 +34,12 @@ Run the focused implementation checks:
 make test-mainnet-intent-anchor
 ```
 
+The only supported broadcast path is
+`deploy/intent-anchor/deploy-base-mainnet-browser.sh`. It independently checks
+the committed promotion record, both RPC nonces, predicted-address vacancy,
+simulation gas, clean GitHub `main`, and the one-use approval digest before it
+opens a browser-wallet signing prompt.
+
 ## Promotion commit
 
 After the implementation commit is clean and reviewed:

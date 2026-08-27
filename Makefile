@@ -101,6 +101,7 @@ test-proposal-anchor:
 	forge test --match-path 'contracts/test/*ProposalAnchor*.t.sol'
 
 test-mainnet-intent-anchor:
+	deploy/intent-anchor/check-base-mainnet-intent-anchor-promotion.sh
 	forge test --match-path 'contracts/test/*FlowOpsIntentAnchor*.t.sol'
 	@actual="$$(forge inspect contracts/src/FlowOpsIntentAnchor.sol:FlowOpsIntentAnchor deployedBytecode | sed 's/^0x//' | xxd -r -p | shasum -a 256 | awk '{print $$1}')"; expected="$$(node --input-type=module -e "import('./apps/dashboard/app/mainnet/intent-codec.js').then((m) => console.log(m.EXPECTED_INTENT_ANCHOR_RUNTIME_SHA256.slice(2)))")"; test "$$actual" = "$$expected"
 	npm run lint --prefix apps/dashboard
