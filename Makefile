@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check acceptance-manifest-check test-ascp-external-acceptance verify-ascp-external-acceptance test-ascp-local-acceptance-rehearsal ascp-local-acceptance-rehearsal deployment-evidence-check test-deployment-evidence ascp-sepolia-evidence-check test-ascp-sepolia-evidence verify-ascp-sepolia-deployment ascp-sepolia-activation-evidence-check test-ascp-sepolia-activation-evidence verify-ascp-sepolia-activation test-ascp-directory-release test-ascp-directory-presign test-ascp-directory-relay test-ascp-directory-transaction-preview test-ascp-canonical-usdc-fork test-ascp-asset-recovery-accounting verify-ascp-sepolia-directory-v1-readiness funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor verify-ascp-sepolia-asset dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-ascp-sepolia-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
+.PHONY: test check fmt-check solidity-fmt-check acceptance-manifest-check test-ascp-external-acceptance verify-ascp-external-acceptance test-ascp-local-acceptance-rehearsal ascp-local-acceptance-rehearsal deployment-evidence-check test-deployment-evidence ascp-sepolia-evidence-check test-ascp-sepolia-evidence verify-ascp-sepolia-deployment ascp-sepolia-activation-evidence-check test-ascp-sepolia-activation-evidence verify-ascp-sepolia-activation test-ascp-directory-release test-ascp-directory-presign test-ascp-directory-relay test-ascp-directory-transaction-preview test-ascp-canonical-usdc-fork test-ascp-asset-recovery-accounting verify-ascp-sepolia-directory-v1-readiness funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor test-mainnet-intent-anchor verify-ascp-sepolia-asset dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-ascp-sepolia-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -100,6 +100,12 @@ test-proposal-anchor:
 	deploy/proposal-anchor/test-base-mainnet-proposal-anchor.sh
 	forge test --match-path 'contracts/test/*ProposalAnchor*.t.sol'
 
+test-mainnet-intent-anchor:
+	forge test --match-path 'contracts/test/*FlowOpsIntentAnchor*.t.sol'
+	@actual="$$(forge inspect contracts/src/FlowOpsIntentAnchor.sol:FlowOpsIntentAnchor deployedBytecode | sed 's/^0x//' | xxd -r -p | shasum -a 256 | awk '{print $$1}')"; expected="$$(node --input-type=module -e "import('./apps/dashboard/app/mainnet/intent-codec.js').then((m) => console.log(m.EXPECTED_INTENT_ANCHOR_RUNTIME_SHA256.slice(2)))")"; test "$$actual" = "$$expected"
+	npm run lint --prefix apps/dashboard
+	npm test --prefix apps/dashboard
+
 test-mainnet-deployer-verification:
 	deploy/call-escrow/test-base-mainnet-deployer-verification.sh
 
@@ -117,7 +123,7 @@ dashboard-check: dashboard-deps
 	npm run lint --prefix apps/dashboard
 	npm test --prefix apps/dashboard
 
-check: fmt-check solidity-fmt-check acceptance-manifest-check test-ascp-external-acceptance test-deployment-evidence test-ascp-sepolia-evidence test-ascp-sepolia-activation-evidence test-mainnet-readiness test-proposal-anchor test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit smoke-rpc-admission smoke-postgres-readiness dashboard-check
+check: fmt-check solidity-fmt-check acceptance-manifest-check test-ascp-external-acceptance test-deployment-evidence test-ascp-sepolia-evidence test-ascp-sepolia-activation-evidence test-mainnet-readiness test-proposal-anchor test-mainnet-intent-anchor test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit smoke-rpc-admission smoke-postgres-readiness dashboard-check
 	go vet $(GO_PACKAGES)
 	go test -race $(GO_PACKAGES)
 	forge build --sizes

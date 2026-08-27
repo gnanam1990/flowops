@@ -18,6 +18,8 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 export default defineConfig(async ({ mode }) => {
   const resolvedEnv = loadEnv(mode, DASHBOARD_DIRECTORY, [
     "FLOWOPS_CONTROL_API_URL",
+    "FLOWOPS_PROPOSAL_ANCHOR_ADDRESS",
+    "FLOWOPS_MAINNET_INTENT_ANCHOR_ADDRESS",
     "FLOWOPS_LOCAL_AUTH_ENABLED",
   ]);
   const localBindings = localRuntimeBindings(resolvedEnv);
@@ -39,8 +41,9 @@ export default defineConfig(async ({ mode }) => {
     main: "./worker/index.ts",
     compatibility_flags: ["nodejs_compat"],
     // Shell variables and ignored `.env*` values are not automatically Worker
-    // bindings in vinext dev. Forward only the non-secret local API URL and the
-    // loopback-gated auth flag; Sites exchange credentials remain excluded.
+    // bindings in vinext dev. Forward only the non-secret local API URL,
+    // public contract addresses, and the loopback-gated auth flag; Sites
+    // exchange credentials remain excluded.
     vars: localBindings,
     d1_databases: d1
       ? [

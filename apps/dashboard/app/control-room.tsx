@@ -310,6 +310,9 @@ function ProposalAnchorNotice({ deployment }: { deployment: ProposalAnchorDeploy
             <span>View address on Base Blockscout ↗</span>
           </a>
         ) : null}
+        <a href="/mainnet">
+          <span>Open functional mainnet intent workspace ↗</span>
+        </a>
       </div>
       <dl className="proposal-anchor-controls">
         <div><dt>Production ready</dt><dd>No</dd></div>

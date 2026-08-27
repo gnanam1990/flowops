@@ -62,6 +62,11 @@ starter copy or fabricated preview success states.
   no vault creation, and not production. A configured address never implies
   source verification; that status remains unavailable until the dashboard
   loads separately authenticated deployment evidence.
+- `FLOWOPS_MAINNET_INTENT_ANCHOR_ADDRESS` must stay unset until the limited
+  `FlowOpsIntentAnchor` receipt, runtime hash, and exact source verification are
+  committed. When configured, `/mainnet` enables a wallet-connected zero-value
+  intent-evidence write and independent record read. It never enables a token
+  approval, deposit, or payment.
 - Runtime dependencies must pass the high-severity audit gate. The vinext build
   tool currently brings a development-only `image-size` advisory; FlowOps does
   not accept untrusted image input and production dependencies audit clean.

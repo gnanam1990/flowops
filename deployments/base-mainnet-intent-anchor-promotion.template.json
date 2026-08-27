@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "flowops-intent-anchor-mainnet-promotion",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "status": "blocked-unassigned",
+  "sourceCommit": null,
+  "deployer": null,
+  "expectedDeployerNonce": null,
+  "expectedContractAddress": null,
+  "initcodeKeccak256": null,
+  "runtimeCodeKeccak256": null,
+  "gasCeilings": {
+    "maxGasLimit": 650000,
+    "maxFeePerGasWei": "20000000",
+    "maxGasSpendWei": "13000000000000",
+    "transactionValueWei": "0"
+  },
+  "approval": {
+    "canonicalStatement": null,
+    "sha256": null,
+    "approvedAt": null,
+    "scope": "one-zero-value-contract-deployment-no-token-approval-no-funding"
+  },
+  "deploymentEvidence": null,
+  "sourceVerification": null,
+  "fundingEnabled": false,
+  "executesPayments": false
+}

@@ -246,6 +246,38 @@ test("renders a Base Batches reviewer brief with only verifiable product evidenc
   assert.doesNotMatch(html, /current active users|paying customers|transaction volume/i);
 });
 
+test("renders the functional Base mainnet intent workspace fail-closed until deployment", async () => {
+  const pending = await render({ path: "/mainnet" });
+  assert.equal(pending.status, 200);
+  const pendingHtml = await pending.text();
+  assert.match(pendingHtml, /<title>FlowOps — Base mainnet intent workspace<\/title>/i);
+  assert.match(pendingHtml, /FUNCTIONAL MAINNET INTEGRATION/);
+  assert.match(pendingHtml, /Make an agent’s spending intent independently verifiable/);
+  assert.match(pendingHtml, /Mainnet contract deployment pending/);
+  assert.match(pendingHtml, /NO BROADCAST · NO FUNDS/);
+  assert.match(pendingHtml, /Anchor on Base mainnet/);
+  assert.match(pendingHtml, /Anchor on Base mainnet<\/button>/);
+  assert.match(pendingHtml, /This contract cannot transfer tokens or execute payments/);
+  assert.doesNotMatch(pendingHtml, /Mainnet contract deployment pending[\s\S]*limited-mainnet-live/);
+
+  const address = "0x3333333333333333333333333333333333333333";
+  const configured = await render({
+    path: "/mainnet",
+    env: { FLOWOPS_MAINNET_INTENT_ANCHOR_ADDRESS: address },
+  });
+  assert.equal(configured.status, 200);
+  const configuredHtml = await configured.text();
+  assert.match(configuredHtml, new RegExp(address));
+  assert.match(configuredHtml, new RegExp(`https://base\\.blockscout\\.com/address/${address}\\?tab=contract`));
+  assert.doesNotMatch(configuredHtml, /Mainnet contract deployment pending/);
+
+  const invalid = await render({
+    path: "/mainnet",
+    env: { FLOWOPS_MAINNET_INTENT_ANCHOR_ADDRESS: "0xnot-an-address" },
+  });
+  assert.match(await invalid.text(), /Mainnet contract deployment pending/);
+});
+
 test("uses Sites auth only on hosted origins and never exposes its reserved route as a broken local link", async () => {
   const response = await render({ origin: "https://flowops.example" });
   assert.equal(response.status, 200);
