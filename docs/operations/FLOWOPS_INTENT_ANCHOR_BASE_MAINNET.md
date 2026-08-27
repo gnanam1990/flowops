@@ -1,7 +1,7 @@
 # FlowOps intent anchor on Base mainnet
 
-Status: **attempt 2 approval requested after the first wallet attempt failed
-before broadcast; the committed script remains broadcast-disabled**.
+Status: **attempt 2 approved after the first wallet attempt failed before
+broadcast; one exact zero-value browser-wallet broadcast is enabled**.
 
 This runbook deploys the limited `FlowOpsIntentAnchor` integration. It does not
 deploy CallEscrow or the ASCP payment contracts, approve USDC, move funds, or
@@ -26,11 +26,10 @@ address.
 `contracts/script/DeployFlowOpsIntentAnchorBaseMainnet.s.sol` pins the selected
 deployer, reviewed source commit, observed nonce, predicted contract address,
 initcode hash, and runtime hash. The approval digest remains zero and
-`MAINNET_BROADCAST_ENABLED` remains false. The consumed attempt-1 approval has
-also been cleared from the script. These values make the script refuse on Base
-mainnet before it can reach a wallet prompt. The attempt-2 approval statement
-binds the consumed digest and its no-broadcast wallet-chain-mismatch outcome so
-the failed approval cannot be silently reused.
+`MAINNET_BROADCAST_ENABLED` is true only in the exact attempt-2 approval commit.
+The script pins the fresh approval digest, and the canonical statement binds
+the consumed attempt-1 digest and its no-broadcast wallet-chain-mismatch
+outcome so the failed approval cannot be silently reused.
 
 Run the focused implementation checks:
 

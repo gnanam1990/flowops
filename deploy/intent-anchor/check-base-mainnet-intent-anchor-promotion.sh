@@ -119,7 +119,7 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
       and .transactionValueWei == "0"
       and .version == 1
       and (
-        if $status == "approval-requested" then
+        if $status == "approval-requested" or $status == "approved-zero-value" then
           .ceremonyAttempt == 2
           and .previousApprovalDigest == "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b"
           and .previousAttemptOutcome == "failed-no-broadcast-wallet-chain-mismatch"
@@ -130,7 +130,7 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
     ' <<<"${approval_statement}" >/dev/null
 fi
 
-if test "${status}" = "approval-requested"; then
+if test "${status}" = "approval-requested" || test "${status}" = "approved-zero-value"; then
   jq -e '
     .previousAttempts | length == 1
     and .[0].ceremonyAttempt == 1
