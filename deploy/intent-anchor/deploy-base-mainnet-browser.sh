@@ -55,6 +55,20 @@ jq -s -e --argjson maximum "${maximum_gas}" '
 require_chain_state "${BASE_MAINNET_RPC_URL_PRIMARY}"
 require_chain_state "${BASE_MAINNET_RPC_URL_SECONDARY}"
 
+preflight_log="$(mktemp -t flowops-intent-anchor-wallet-preflight)"
+trap 'rm -f "${preflight_log}"' EXIT
+FOUNDRY_ETH_RPC_URL="${BASE_MAINNET_RPC_URL_PRIMARY}" forge script \
+  contracts/script/CheckFlowOpsBaseMainnetBrowserWallet.s.sol:CheckFlowOpsBaseMainnetBrowserWallet \
+  --browser \
+  --sender "${deployer}" \
+  --broadcast 2>&1 | tee "${preflight_log}"
+grep -Fq "Wallet connected: ${deployer}" "${preflight_log}"
+grep -Fq 'Chain ID: 8453' "${preflight_log}"
+grep -Fq 'Warning: No transactions to broadcast.' "${preflight_log}"
+
+require_chain_state "${BASE_MAINNET_RPC_URL_PRIMARY}"
+require_chain_state "${BASE_MAINNET_RPC_URL_SECONDARY}"
+
 attempt_dir="$(git rev-parse --git-path flowops-intent-anchor-mainnet-ceremony)"
 attempt_file="${attempt_dir}/${FLOWOPS_EXPLICIT_INTENT_ANCHOR_APPROVAL_SHA256}.attempted"
 mkdir -p "${attempt_dir}"

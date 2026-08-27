@@ -121,10 +121,17 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
       and (
         if $status == "approval-requested" or $status == "approved-zero-value"
           or $status == "attempt-failed-no-broadcast" then
-          .ceremonyAttempt == 2
-          and .previousApprovalDigest == "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b"
+          .ceremonyAttempt == 3
+          and .previousApprovalDigest == "0x8b4e320ead07ef22bafe4b0e7640d30f5877ed5946fb686135c6292150f5ef07"
           and .previousAttemptOutcome == "failed-no-broadcast-wallet-chain-mismatch"
           and .requiredWalletChainId == 8453
+          and .retiredApprovalDigests == [
+            "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b",
+            "0x8b4e320ead07ef22bafe4b0e7640d30f5877ed5946fb686135c6292150f5ef07"
+          ]
+          and .walletPreflightAccount == $deployer
+          and .walletPreflightChainId == 8453
+          and (.walletPreflightObservedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
         else true
         end
       )
@@ -134,7 +141,7 @@ fi
 if test "${status}" = "approval-requested" || test "${status}" = "approved-zero-value" \
   || test "${status}" = "attempt-failed-no-broadcast"; then
   jq -e '
-    .previousAttempts | length == 1
+    .previousAttempts | length == 2
     and .[0].ceremonyAttempt == 1
     and .[0].approval.sha256 == "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b"
     and .[0].deploymentEvidence.approvalConsumed == true
@@ -146,6 +153,17 @@ if test "${status}" = "approval-requested" || test "${status}" = "approved-zero-
     and .[0].deploymentEvidence.postAttemptLatestNonce == "0"
     and .[0].deploymentEvidence.postAttemptPendingNonce == "0"
     and .[0].deploymentEvidence.postAttemptPredictedAddressCode == "0x"
+    and .[1].ceremonyAttempt == 2
+    and .[1].approval.sha256 == "0x8b4e320ead07ef22bafe4b0e7640d30f5877ed5946fb686135c6292150f5ef07"
+    and .[1].deploymentEvidence.approvalConsumed == true
+    and .[1].deploymentEvidence.connectedWalletChainId == 1
+    and .[1].deploymentEvidence.expectedChainId == 8453
+    and .[1].deploymentEvidence.failure == "wallet-chain-mismatch"
+    and .[1].deploymentEvidence.transactionHash == null
+    and .[1].deploymentEvidence.receipt == null
+    and .[1].deploymentEvidence.postAttemptLatestNonce == "0"
+    and .[1].deploymentEvidence.postAttemptPendingNonce == "0"
+    and .[1].deploymentEvidence.postAttemptPredictedAddressCode == "0x"
   ' "${record}" >/dev/null
 fi
 

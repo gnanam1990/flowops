@@ -14,8 +14,7 @@ contract DeployFlowOpsIntentAnchorBaseMainnet is Script {
 
     address public constant DESIGNATED_DEPLOYER = 0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B;
     bytes20 public constant SOURCE_COMMIT = hex"ea21fbaaa8c8cc3aecca17e910146911703507da";
-    bytes32 public constant DEPLOYMENT_APPROVAL_DIGEST =
-        0x8b4e320ead07ef22bafe4b0e7640d30f5877ed5946fb686135c6292150f5ef07;
+    bytes32 public constant DEPLOYMENT_APPROVAL_DIGEST = bytes32(0);
     uint64 public constant EXPECTED_DEPLOYER_NONCE = 0;
     address public constant EXPECTED_CONTRACT_ADDRESS = 0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA;
     bytes32 public constant EXPECTED_INITCODE_HASH = 0xefb111e5a3fd1eb31422a41d57a811f28d215e72b6f0cdf04d385fc83c06a863;

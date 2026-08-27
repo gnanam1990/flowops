@@ -1,7 +1,7 @@
 # FlowOps intent anchor on Base mainnet
 
-Status: **attempt 2 also failed before broadcast because the browser wallet
-reported Ethereum chain ID 1; the deployment is blocked again**.
+Status: **attempt 3 approval requested after a successful transaction-free
+browser-wallet preflight on Base chain ID 8453**.
 
 This runbook deploys the limited `FlowOpsIntentAnchor` integration. It does not
 deploy CallEscrow or the ASCP payment contracts, approve USDC, move funds, or
@@ -26,10 +26,11 @@ address.
 `contracts/script/DeployFlowOpsIntentAnchorBaseMainnet.s.sol` pins the selected
 deployer, reviewed source commit, observed nonce, predicted contract address,
 initcode hash, and runtime hash. The approval digest remains zero and
-`MAINNET_BROADCAST_ENABLED` is false. The script preserves the consumed
-attempt-2 approval digest as evidence, and the canonical statement binds the
-consumed attempt-1 digest and its no-broadcast wallet-chain-mismatch outcome.
-Neither failed approval can be silently reused.
+`MAINNET_BROADCAST_ENABLED` is false and the deployment approval digest is zero.
+The attempt-3 approval statement binds both retired digests plus the successful
+wallet preflight account, chain, and observation time. The supported broadcast
+wrapper repeats that no-transaction preflight before it creates the one-use
+attempt marker, so a wrong wallet chain cannot consume another approval.
 
 Run the focused implementation checks:
 
