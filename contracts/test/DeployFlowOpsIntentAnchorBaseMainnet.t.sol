@@ -42,11 +42,13 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         deployment = new DeployFlowOpsIntentAnchorBaseMainnet();
     }
 
-    function test_attemptThreeCandidateClearsConsumedApprovalAndDisablesBroadcast() public view {
+    function test_attemptThreeApprovalPinsFreshDigestAndEnablesOneBroadcast() public view {
         assertEq(deployment.BASE_MAINNET_CHAIN_ID(), 8_453);
         assertEq(deployment.DESIGNATED_DEPLOYER(), 0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B);
         assertEq(deployment.SOURCE_COMMIT(), hex"ea21fbaaa8c8cc3aecca17e910146911703507da");
-        assertEq(deployment.DEPLOYMENT_APPROVAL_DIGEST(), bytes32(0));
+        assertEq(
+            deployment.DEPLOYMENT_APPROVAL_DIGEST(), 0x20ea55570d31230094be2e4217e9b070694a2e888408d2c044970fd3d9d699d5
+        );
         assertEq(deployment.EXPECTED_DEPLOYER_NONCE(), 0);
         assertEq(deployment.EXPECTED_CONTRACT_ADDRESS(), 0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA);
         assertEq(
@@ -58,18 +60,12 @@ contract DeployFlowOpsIntentAnchorBaseMainnetTest is Test {
         assertEq(deployment.MAX_GAS_LIMIT(), 650_000);
         assertEq(deployment.MAX_FEE_PER_GAS_WEI(), 20_000_000);
         assertEq(deployment.MAX_GAS_SPEND_WEI(), 13_000_000_000_000);
-        assertFalse(deployment.MAINNET_BROADCAST_ENABLED());
+        assertTrue(deployment.MAINNET_BROADCAST_ENABLED());
     }
 
     function test_runRejectsWrongChainBeforeAnyReleaseGate() public {
         vm.chainId(84_532);
         vm.expectRevert(abi.encodeWithSelector(DeployFlowOpsIntentAnchorBaseMainnet.WrongChain.selector, 8_453, 84_532));
-        deployment.run();
-    }
-
-    function test_attemptThreeCandidateCannotReachWalletPrompt() public {
-        vm.chainId(8_453);
-        vm.expectRevert(DeployFlowOpsIntentAnchorBaseMainnet.DeploymentApprovalNotRecorded.selector);
         deployment.run();
     }
 

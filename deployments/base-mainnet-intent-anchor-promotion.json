@@ -3,7 +3,7 @@
   "kind": "flowops-intent-anchor-mainnet-promotion",
   "network": "base-mainnet",
   "chainId": 8453,
-  "status": "approval-requested",
+  "status": "approved-zero-value",
   "sourceCommit": "ea21fbaaa8c8cc3aecca17e910146911703507da",
   "deployer": "0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B",
   "expectedDeployerNonce": "0",
@@ -39,7 +39,7 @@
   "approval": {
     "canonicalStatement": "{\"action\":\"deploy-contract\",\"browserWalletPrompt\":true,\"ceremonyAttempt\":3,\"chainId\":8453,\"contract\":\"FlowOpsIntentAnchor\",\"deployer\":\"0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B\",\"executesPayments\":false,\"expectedAddress\":\"0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA\",\"expectedNonce\":\"0\",\"fundingEnabled\":false,\"initcodeKeccak256\":\"0xefb111e5a3fd1eb31422a41d57a811f28d215e72b6f0cdf04d385fc83c06a863\",\"maxFeePerGasWei\":\"20000000\",\"maxGasLimit\":\"650000\",\"maxGasSpendWei\":\"13000000000000\",\"maxPriorityFeePerGasWei\":\"1000000\",\"network\":\"base-mainnet\",\"noTokenApproval\":true,\"previousApprovalDigest\":\"0x8b4e320ead07ef22bafe4b0e7640d30f5877ed5946fb686135c6292150f5ef07\",\"previousAttemptOutcome\":\"failed-no-broadcast-wallet-chain-mismatch\",\"requiredWalletChainId\":8453,\"retiredApprovalDigests\":[\"0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b\",\"0x8b4e320ead07ef22bafe4b0e7640d30f5877ed5946fb686135c6292150f5ef07\"],\"runtimeCodeKeccak256\":\"0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151\",\"scope\":\"one-zero-value-contract-deployment\",\"sourceCommit\":\"ea21fbaaa8c8cc3aecca17e910146911703507da\",\"transactionValueWei\":\"0\",\"version\":1,\"walletPreflightAccount\":\"0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B\",\"walletPreflightChainId\":8453,\"walletPreflightObservedAt\":\"2026-08-27T17:35:53Z\"}",
     "sha256": "0x20ea55570d31230094be2e4217e9b070694a2e888408d2c044970fd3d9d699d5",
-    "approvedAt": null,
+    "approvedAt": "2026-08-27T17:40:57Z",
     "scope": "one-zero-value-contract-deployment-no-token-approval-no-funding"
   },
   "previousAttempts": [
