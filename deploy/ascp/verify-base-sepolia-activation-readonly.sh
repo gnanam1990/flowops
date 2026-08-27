@@ -8,7 +8,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 record="${FLOWOPS_ASCP_SEPOLIA_ACTIVATION_RECORD:-${repo_root}/deployments/base-sepolia-ascp-activation-v1.json}"
 deployment_record="${repo_root}/deployments/base-sepolia-ascp-v4.json"
 primary_rpc="${BASE_SEPOLIA_RPC_URL_PRIMARY:-https://sepolia.base.org}"
-secondary_rpc="${BASE_SEPOLIA_RPC_URL_SECONDARY:-https://base-sepolia-rpc.publicnode.com}"
+secondary_rpc="${BASE_SEPOLIA_RPC_URL_SECONDARY:-https://base-sepolia.drpc.org}"
 
 cd "${repo_root}"
 FLOWOPS_ASCP_SEPOLIA_ACTIVATION_RECORD="${record}" deploy/ascp/check-base-sepolia-activation-evidence.sh >/dev/null
@@ -26,6 +26,7 @@ directory="$(jq -er '.contracts.serviceDirectory' "${record}")"
 registry="$(jq -er '.contracts.agentRegistry' "${record}")"
 asset="$(jq -er '.contracts.asset' "${record}")"
 transaction="$(jq -er '.execution.transactionHash' "${record}")"
+activation_block="$(jq -er '.execution.blockNumber' "${record}")"
 safe_tx_hash="$(jq -er '.safe.safeTxHash' "${record}")"
 safe_service_url="$(jq -er '.verification.safeTransactionServiceUrl' "${record}")"
 safe_tx_to="$(jq -er '.safeTransaction.to' "${record}")"
@@ -53,6 +54,14 @@ call_address() {
   local signature="$3"
   shift 3
   cast call --rpc-url "${rpc_url}" "${target}" "${signature}" "$@" | tr '[:upper:]' '[:lower:]'
+}
+
+call_address_at_activation() {
+  local rpc_url="$1"
+  local target="$2"
+  local signature="$3"
+  shift 3
+  cast call --block "${activation_block}" --rpc-url "${rpc_url}" "${target}" "${signature}" "$@" | tr '[:upper:]' '[:lower:]'
 }
 
 observe_provider() {
@@ -132,7 +141,7 @@ observe_provider() {
       and any(.logs[]; (.address | ascii_downcase) == $module and .topics[0] == $workflowTopic and .topics[1] == $workflowId and .topics[2] == $workflowPayloadHash and .topics[3] == $selectorTopic)
     ' <<<"${receipt_json}" >/dev/null
 
-  computed_safe_tx_hash="$(cast call --rpc-url "${rpc_url}" "${safe}" \
+  computed_safe_tx_hash="$(cast call --block "${activation_block}" --rpc-url "${rpc_url}" "${safe}" \
     'getTransactionHash(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,uint256)(bytes32)' \
     "${safe_tx_to}" \
     "$(jq -er '.safeTransaction.value' "${record}")" \
@@ -147,32 +156,32 @@ observe_provider() {
   test "${computed_safe_tx_hash}" = "${safe_tx_hash}"
 
   expected_owners="$(jq -r '.safe.owners | sort | join(",")' "${deployment_record}")"
-  owners="$(cast call --rpc-url "${rpc_url}" "${safe}" 'getOwners()(address[])' --json | jq -er '.[0] | map(ascii_downcase) | sort | join(",")')"
-  threshold="$(call_address "${rpc_url}" "${safe}" 'getThreshold()(uint256)')"
+  owners="$(cast call --block "${activation_block}" --rpc-url "${rpc_url}" "${safe}" 'getOwners()(address[])' --json | jq -er '.[0] | map(ascii_downcase) | sort | join(",")')"
+  threshold="$(call_address_at_activation "${rpc_url}" "${safe}" 'getThreshold()(uint256)')"
   test "${owners}" = "${expected_owners}"
   test "${threshold}" = "$(jq -er '.safe.threshold' "${record}")"
-  test "$(call_address "${rpc_url}" "${safe}" 'nonce()(uint256)')" = "$(jq -er '.postState.safeNonce' "${record}")"
-  test "$(call_address "${rpc_url}" "${safe}" 'isModuleEnabled(address)(bool)' "${module}")" = 'true'
+  test "$(call_address_at_activation "${rpc_url}" "${safe}" 'nonce()(uint256)')" = "$(jq -er '.postState.safeNonce' "${record}")"
+  test "$(call_address_at_activation "${rpc_url}" "${safe}" 'isModuleEnabled(address)(bool)' "${module}")" = 'true'
 
-  code="$(cast code --rpc-url "${rpc_url}" "${escrow}")"
+  code="$(cast code --block "${activation_block}" --rpc-url "${rpc_url}" "${escrow}")"
   test "${code}" != '0x'
   test "$(printf '%s' "${code}" | cast keccak)" = "${expected_code_hash}"
-  test "$(call_address "${rpc_url}" "${module}" 'escrowAllowlist(address)(bytes32)' "${escrow}")" = "${expected_code_hash}"
-  test "$(call_address "${rpc_url}" "${directory}" 'currentVersion()(uint64)')" = '0'
-  test "$(call_address "${rpc_url}" "${directory}" 'currentRoot()(bytes32)')" = "${zero_digest}"
-  test "$(call_address "${rpc_url}" "${registry}" 'agentCount()(uint256)')" = '0'
-  test "$(call_address "${rpc_url}" "${escrow}" 'totalLocked()(uint256)')" = '0'
-  test "$(call_address "${rpc_url}" "${escrow}" 'emergencyPaused()(bool)')" = 'false'
-  test "$(call_address "${rpc_url}" "${module}" 'executedPrincipal()(uint256)')" = '0'
-  test "$(call_address "${rpc_url}" "${module}" 'emergencyPaused()(bool)')" = 'false'
-  test "$(cast balance --rpc-url "${rpc_url}" "${safe}")" = '0'
-  test "$(call_address "${rpc_url}" "${asset}" 'balanceOf(address)(uint256)' "${safe}")" = '0'
+  test "$(call_address_at_activation "${rpc_url}" "${module}" 'escrowAllowlist(address)(bytes32)' "${escrow}")" = "${expected_code_hash}"
+  test "$(call_address_at_activation "${rpc_url}" "${directory}" 'currentVersion()(uint64)')" = '0'
+  test "$(call_address_at_activation "${rpc_url}" "${directory}" 'currentRoot()(bytes32)')" = "${zero_digest}"
+  test "$(call_address_at_activation "${rpc_url}" "${registry}" 'agentCount()(uint256)')" = '0'
+  test "$(call_address_at_activation "${rpc_url}" "${escrow}" 'totalLocked()(uint256)')" = '0'
+  test "$(call_address_at_activation "${rpc_url}" "${escrow}" 'emergencyPaused()(bool)')" = 'false'
+  test "$(call_address_at_activation "${rpc_url}" "${module}" 'executedPrincipal()(uint256)')" = '0'
+  test "$(call_address_at_activation "${rpc_url}" "${module}" 'emergencyPaused()(bool)')" = 'false'
+  test "$(cast balance --block "${activation_block}" --rpc-url "${rpc_url}" "${safe}")" = '0'
+  test "$(call_address_at_activation "${rpc_url}" "${asset}" 'balanceOf(address)(uint256)' "${safe}")" = '0'
   for address in "${directory}" "${registry}" "${escrow}" "${module}"; do
-    test "$(cast balance --rpc-url "${rpc_url}" "${address}")" = '0'
-    test "$(call_address "${rpc_url}" "${asset}" 'balanceOf(address)(uint256)' "${address}")" = '0'
+    test "$(cast balance --block "${activation_block}" --rpc-url "${rpc_url}" "${address}")" = '0'
+    test "$(call_address_at_activation "${rpc_url}" "${asset}" 'balanceOf(address)(uint256)' "${address}")" = '0'
   done
-  test "$(call_address "${rpc_url}" "${asset}" 'allowance(address,address)(uint256)' "${safe}" "${module}")" = '0'
-  test "$(call_address "${rpc_url}" "${asset}" 'allowance(address,address)(uint256)' "${safe}" "${escrow}")" = '0'
+  test "$(call_address_at_activation "${rpc_url}" "${asset}" 'allowance(address,address)(uint256)' "${safe}" "${module}")" = '0'
+  test "$(call_address_at_activation "${rpc_url}" "${asset}" 'allowance(address,address)(uint256)' "${safe}" "${escrow}")" = '0'
 
   printf '%s:%s:%s:%s:%s:%s\n' \
     "${observed_hash}" "${observed_block_hash}" "${safe_tx_hash}" "${module_topic}" "${expected_code_hash}" "${head}"
@@ -194,7 +203,7 @@ rm -f "${primary_observation}.canonical" "${secondary_observation}.canonical"
 # A successful Safe event proves threshold authorization but does not identify
 # the individual confirming owners. Bind that separately to Safe's indexed
 # transaction record, including the exact payload and execution transaction.
-safe_service_json="$(curl --fail --silent --show-error --location "${safe_service_url}")"
+safe_service_json="$(curl --fail --silent --show-error --location --max-time 15 --retry 2 "${safe_service_url}")"
 expected_confirming_owners="$(jq -r '.safe.confirmedOwners | sort | join(",")' "${record}")"
 observed_confirming_owners="$(jq -er '[.confirmations[].owner | ascii_downcase] | sort | join(",")' <<<"${safe_service_json}")"
 jq -e \

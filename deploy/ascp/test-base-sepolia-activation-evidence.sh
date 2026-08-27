@@ -9,6 +9,13 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 
 FLOWOPS_ASCP_SEPOLIA_ACTIVATION_RECORD="${canonical_record}" "${validator}" >/dev/null
 
+# The network verifier must observe funding-disabled post-state at the pinned
+# activation block. Later legitimate funding must not rewrite history.
+grep -Fq 'activation_block="$(jq -er '\''.execution.blockNumber'\'' "${record}")"' \
+  "${repo_root}/deploy/ascp/verify-base-sepolia-activation-readonly.sh"
+grep -Fq 'cast balance --block "${activation_block}"' \
+  "${repo_root}/deploy/ascp/verify-base-sepolia-activation-readonly.sh"
+
 expect_rejected() {
   local name="$1"
   local mutation="$2"
