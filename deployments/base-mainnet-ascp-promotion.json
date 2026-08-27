@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "network": "base-mainnet",
   "chainId": 8453,
-  "status": "draft-unapproved",
+  "status": "safe-created-contracts-unapproved",
   "deploymentAuthorized": false,
   "fundingAuthorized": false,
   "sourceCommit": null,
@@ -12,14 +12,40 @@
     "mustNotDeploySafe": true
   },
   "safe": {
-    "address": null,
+    "address": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "version": "1.4.1",
+    "implementation": "0x29fcb43b46531bca003ddc8fcb67ffe91900c762",
+    "fallbackHandler": "0xfd0732dc9e303f09fcef3a7388ad10a83459ec99",
+    "guard": "0x0000000000000000000000000000000000000000",
+    "moduleGuard": "0x0000000000000000000000000000000000000000",
+    "runtimeCodeHash": "0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c",
     "owners": [
-      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
       "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
       "0xe88872f94013e4584bceafb5d5f87da291d086d2"
     ],
     "threshold": 2,
-    "deploymentTransaction": null,
+    "deploymentTransaction": "0x3a38c0b165281173fa688f8ca8aad51bad719bce9e00d0157547664affc32185",
+    "deploymentBlock": 50535016,
+    "deploymentBlockHash": "0x711c6806692adf83641431ac833c1df61d7a44ece8f6bb82bbd30009513fdc20",
+    "deploymentStatus": "success",
+    "deploymentFinalized": false,
+    "verification": {
+      "verifiedAt": "2026-08-27T19:39:20Z",
+      "latestBlock": 50535106,
+      "finalizedBlock": 50534557,
+      "rpcUrls": [
+        "https://mainnet.base.org",
+        "https://base.drpc.org"
+      ],
+      "safeTransactionServiceVerified": true,
+      "ownerSetVerified": true,
+      "thresholdVerified": true,
+      "enabledModules": [],
+      "safeNonce": 0,
+      "nativeBalanceWei": "0",
+      "usdcBalanceAtomic": "0"
+    },
     "spendModuleEnabled": false
   },
   "authorities": {
@@ -72,18 +98,18 @@
     "funded": false
   },
   "approvals": {
-    "safeDeploymentApproved": false,
+    "safeDeploymentApproved": true,
     "contractDeploymentApproved": false,
     "activationApproved": false,
     "fundingApproved": false
   },
   "unresolved": [
-    "safe-address-and-deployment-receipt",
+    "safe-deployment-finality",
     "safe-owner-control-proof",
     "ascp-independent-contract-review",
     "two-independent-production-rpc-admissions",
     "signed-runtime-release-manifest",
     "fresh-zero-fund-broadcast-approval"
   ],
-  "notes": "Unapproved zero-fund staging record. It reuses the established Base Sepolia owner and authority addresses but does not claim that those keys are production-controlled. The ASCP deployer must not deploy the Safe because that would change its pinned nonce and all four predicted addresses. No deployment, activation, approval, transfer, or funding is authorized by this record."
+  "notes": "The Base mainnet Safe was created after the exact approval APPROVE BASE MAINNET SAFE CREATION. Its successful receipt, runtime, owners, threshold, nonce, empty module set, and zero balances were independently observed through two RPCs. The receipt was not yet included by the finalized block at the verification snapshot, and control of the other owner keys remains unproved. The ASCP contracts remain unapproved and undeployed. The ASCP deployer must not deploy the Safe because that would change its pinned nonce and all four predicted addresses. No contract deployment, activation, token approval, transfer, or funding is authorized by this record."
 }

@@ -23,7 +23,10 @@ expect_rejected() {
 
 expect_rejected authorize-deployment '.deploymentAuthorized = true'
 expect_rejected authorize-funding '.fundingAuthorized = true'
-expect_rejected invent-safe '.safe.address = "0x1111111111111111111111111111111111111111"'
+expect_rejected substitute-safe '.safe.address = "0x1111111111111111111111111111111111111111"'
+expect_rejected substitute-safe-transaction '.safe.deploymentTransaction = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+expect_rejected invent-safe-finality '.safe.deploymentFinalized = true | .unresolved -= ["safe-deployment-finality"]'
+expect_rejected revoke-safe-approval '.approvals.safeDeploymentApproved = false'
 expect_rejected lower-threshold '.safe.threshold = 1'
 expect_rejected duplicate-owner '.safe.owners[2] = .safe.owners[0]'
 expect_rejected nonce-drift '.deployer.expectedNonce = 2'
@@ -32,4 +35,4 @@ expect_rejected enable-module '.activation.moduleEnabled = true'
 expect_rejected enable-funding '.pilot.fundingEnabled = true'
 expect_rejected waive-review '.unresolved -= ["ascp-independent-contract-review"]'
 
-printf 'Base mainnet ASCP promotion draft rejected every unsafe mutation\n'
+printf 'Base mainnet ASCP Safe evidence and unapproved promotion rejected every unsafe mutation\n'

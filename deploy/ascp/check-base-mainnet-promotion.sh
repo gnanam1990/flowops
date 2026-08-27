@@ -9,7 +9,7 @@ jq -e '
   | .schemaVersion == 1
   and .network == "base-mainnet"
   and .chainId == 8453
-  and .status == "draft-unapproved"
+  and .status == "safe-created-contracts-unapproved"
   and .deploymentAuthorized == false
   and .fundingAuthorized == false
   and .sourceCommit == null
@@ -18,12 +18,35 @@ jq -e '
     expectedNonce: 1,
     mustNotDeploySafe: true
   }
-  and (.safe.address == null)
-  and (.safe.owners | length == 3)
-  and (.safe.owners | length == (unique | length))
-  and (.safe.owners | all(test("^0x[0-9a-f]{40}$")))
+  and .safe.address == "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518"
+  and .safe.version == "1.4.1"
+  and .safe.implementation == "0x29fcb43b46531bca003ddc8fcb67ffe91900c762"
+  and .safe.fallbackHandler == "0xfd0732dc9e303f09fcef3a7388ad10a83459ec99"
+  and .safe.guard == "0x0000000000000000000000000000000000000000"
+  and .safe.moduleGuard == "0x0000000000000000000000000000000000000000"
+  and .safe.runtimeCodeHash == "0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c"
+  and .safe.owners == [
+    "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+    "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+    "0xe88872f94013e4584bceafb5d5f87da291d086d2"
+  ]
   and .safe.threshold == 2
-  and .safe.deploymentTransaction == null
+  and .safe.deploymentTransaction == "0x3a38c0b165281173fa688f8ca8aad51bad719bce9e00d0157547664affc32185"
+  and .safe.deploymentBlock == 50535016
+  and .safe.deploymentBlockHash == "0x711c6806692adf83641431ac833c1df61d7a44ece8f6bb82bbd30009513fdc20"
+  and .safe.deploymentStatus == "success"
+  and .safe.deploymentFinalized == false
+  and (.safe.verification.verifiedAt | test("^2026-08-27T19:39:20Z$"))
+  and .safe.verification.latestBlock == 50535106
+  and .safe.verification.finalizedBlock == 50534557
+  and .safe.verification.rpcUrls == ["https://mainnet.base.org", "https://base.drpc.org"]
+  and .safe.verification.safeTransactionServiceVerified == true
+  and .safe.verification.ownerSetVerified == true
+  and .safe.verification.thresholdVerified == true
+  and .safe.verification.enabledModules == []
+  and .safe.verification.safeNonce == 0
+  and .safe.verification.nativeBalanceWei == "0"
+  and .safe.verification.usdcBalanceAtomic == "0"
   and .safe.spendModuleEnabled == false
   and (.authorities | keys | sort == ["directoryPauser", "directoryPublisher", "registryAdmin", "spendAuthorizer"])
   and ([.authorities[]] | all(test("^0x[0-9a-f]{40}$")))
@@ -52,11 +75,16 @@ jq -e '
     fundingEnabled: false
   }
   and (.activation | all(. == false))
-  and (.approvals | all(. == false))
+  and .approvals == {
+    safeDeploymentApproved: true,
+    contractDeploymentApproved: false,
+    activationApproved: false,
+    fundingApproved: false
+  }
   and (.unresolved | sort == [
     "ascp-independent-contract-review",
     "fresh-zero-fund-broadcast-approval",
-    "safe-address-and-deployment-receipt",
+    "safe-deployment-finality",
     "safe-owner-control-proof",
     "signed-runtime-release-manifest",
     "two-independent-production-rpc-admissions"
@@ -69,4 +97,4 @@ grep -Fq 'uint256 public constant expected_deployer_nonce = 0;' <<<"${source_tex
 grep -Fq 'address public constant production_safe = address(0);' <<<"${source_text}"
 grep -Fq 'bool public constant mainnet_broadcast_enabled = false;' <<<"${source_text}"
 
-printf 'validated unapproved Base mainnet ASCP promotion draft; no deployment or funding authorized\n'
+printf 'validated created Base mainnet Safe and unapproved ASCP contracts; no deployment or funding authorized\n'
