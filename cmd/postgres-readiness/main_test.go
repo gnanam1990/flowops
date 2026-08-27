@@ -17,7 +17,7 @@ import (
 
 func TestRunRejectsMissingInputsWithoutOpeningDatabase(t *testing.T) {
 	t.Setenv("FLOWOPS_DATABASE_URL", "")
-	for _, args := range [][]string{nil, {"unknown"}, {"sql"}, {"provider-evidence"}} {
+	for _, args := range [][]string{nil, {"unknown"}, {"sql"}, {"install-root-ca"}, {"provider-evidence"}} {
 		if err := run(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 			t.Fatalf("args %v were accepted", args)
 		}

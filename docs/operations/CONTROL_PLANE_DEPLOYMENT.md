@@ -50,7 +50,8 @@ The API service requires:
 
 | Variable | Requirement |
 |---|---|
-| `FLOWOPS_DATABASE_URL` | PostgreSQL URL supplied by the managed database |
+| `FLOWOPS_DATABASE_URL` | PostgreSQL URL supplied by the managed database; production-equivalent deployments require `sslmode=verify-full` and, for a private CA, `sslrootcert=/etc/ssl/certs/flowops-database-root-ca.pem` |
+| `FLOWOPS_DATABASE_ROOT_CA_B64` | Optional canonical base64 of exactly one currently valid PEM CA certificate. Required when the `verify-full` endpoint uses a private CA; startup installs it before dropping privileges |
 | `FLOWOPS_ENVELOPE_KEY_ID` | Versioned identifier for the capability-signing key |
 | `FLOWOPS_ENVELOPE_PRIVATE_KEY_B64` | Canonical 64-byte Ed25519 private key, base64 |
 | `FLOWOPS_SITE_SESSION_KEY_B64` | Exactly 32 random bytes, base64 |

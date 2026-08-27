@@ -38,6 +38,7 @@ RUN apk add --no-cache ca-certificates su-exec && \
 COPY --from=build /out/control-plane-api /out/flowops-admin /out/flowops-operator /out/ascp-leadership /out/ascp-seller-worker /out/ascp-event-recovery /out/ascp-verifier /out/ascp-keeper /out/ascp-governance-relayer /out/ascp-bearer-worker /out/ascp-signer-runtime /out/ascp-ring6-runtime /out/ascp-asset-health /out/ascp-capacity-audit /out/postgres-readiness /flowops/
 COPY deploy/control-plane/entrypoint.sh /flowops/entrypoint.sh
 RUN chmod 0555 /flowops/control-plane-api /flowops/flowops-admin /flowops/flowops-operator /flowops/ascp-leadership /flowops/ascp-seller-worker /flowops/ascp-event-recovery /flowops/ascp-verifier /flowops/ascp-keeper /flowops/ascp-governance-relayer /flowops/ascp-bearer-worker /flowops/ascp-signer-runtime /flowops/ascp-ring6-runtime /flowops/ascp-asset-health /flowops/ascp-capacity-audit /flowops/postgres-readiness /flowops/entrypoint.sh
+RUN chown root:root /flowops && chmod 0555 /flowops
 
 EXPOSE 8080 8082
 ENTRYPOINT ["/flowops/entrypoint.sh"]

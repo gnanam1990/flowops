@@ -47,4 +47,8 @@ fi
 install -d -m 0700 -o flowops -g flowops "$journal_dir"
 export FLOWOPS_RECONCILIATION_JOURNAL="$journal_path"
 
+if [ -n "${FLOWOPS_DATABASE_ROOT_CA_B64:-}" ]; then
+    /flowops/postgres-readiness install-root-ca
+fi
+
 exec su-exec flowops:flowops /flowops/control-plane-api

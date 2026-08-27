@@ -26,11 +26,20 @@ func main() {
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, _ io.Writer) error {
 	if len(args) != 1 {
-		return errors.New("usage: postgres-readiness sql | provider-evidence-sign | provider-evidence")
+		return errors.New("usage: postgres-readiness sql | install-root-ca | provider-evidence-sign | provider-evidence")
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	switch args[0] {
+	case "install-root-ca":
+		digest, err := dbreadiness.InstallRootCA(dbreadiness.DatabaseRootCAPath, os.Getenv("FLOWOPS_DATABASE_ROOT_CA_B64"), time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		return encoder.Encode(struct {
+			Path              string `json:"path"`
+			CertificateSHA256 string `json:"certificateSha256"`
+		}{Path: dbreadiness.DatabaseRootCAPath, CertificateSHA256: digest})
 	case "sql":
 		rawURL := strings.TrimSpace(os.Getenv("FLOWOPS_DATABASE_URL"))
 		if err := dbreadiness.ValidateRuntimeURL(rawURL); err != nil {
@@ -99,7 +108,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, _ io.Write
 		}
 		return encoder.Encode(signed)
 	default:
-		return errors.New("usage: postgres-readiness sql | provider-evidence-sign | provider-evidence")
+		return errors.New("usage: postgres-readiness sql | install-root-ca | provider-evidence-sign | provider-evidence")
 	}
 }
 
