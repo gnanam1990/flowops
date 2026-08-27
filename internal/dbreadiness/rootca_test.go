@@ -41,6 +41,14 @@ func TestInstallRootCAWritesOneImmutableTrustFile(t *testing.T) {
 	}
 }
 
+func TestInstallRootCAAcceptsCAWithoutOptionalKeyUsageExtension(t *testing.T) {
+	now := time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC)
+	encoded := testRootCAWithKeyUsage(t, now, true, 0)
+	if _, err := InstallRootCA(filepath.Join(rootCATempDir(t), "database-root-ca.pem"), encoded, now); err != nil {
+		t.Fatalf("CA without an optional key-usage extension was rejected: %v", err)
+	}
+}
+
 func TestInstallRootCARejectsInvalidEncodingCertificateAndLifetime(t *testing.T) {
 	now := time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC)
 	valid := testRootCA(t, now, true)
@@ -102,6 +110,14 @@ func TestInstallRootCARejectsHardLinkedDestinationBeforeTruncation(t *testing.T)
 }
 
 func testRootCA(t *testing.T, validityAnchor time.Time, isCA bool) string {
+	usage := x509.KeyUsageDigitalSignature
+	if isCA {
+		usage |= x509.KeyUsageCertSign
+	}
+	return testRootCAWithKeyUsage(t, validityAnchor, isCA, usage)
+}
+
+func testRootCAWithKeyUsage(t *testing.T, validityAnchor time.Time, isCA bool, usage x509.KeyUsage) string {
 	t.Helper()
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -110,10 +126,7 @@ func testRootCA(t *testing.T, validityAnchor time.Time, isCA bool) string {
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "FlowOps test root"},
 		NotBefore: validityAnchor.Add(-time.Hour), NotAfter: validityAnchor.Add(24 * time.Hour),
-		BasicConstraintsValid: true, IsCA: isCA, KeyUsage: x509.KeyUsageDigitalSignature,
-	}
-	if isCA {
-		template.KeyUsage |= x509.KeyUsageCertSign
+		BasicConstraintsValid: true, IsCA: isCA, KeyUsage: usage,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, publicKey, privateKey)
 	if err != nil {

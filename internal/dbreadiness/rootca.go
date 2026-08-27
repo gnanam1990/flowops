@@ -39,7 +39,8 @@ func InstallRootCA(path, encoded string, now time.Time) (string, error) {
 	}
 	certificate, err := x509.ParseCertificate(block.Bytes)
 	if err != nil || !certificate.BasicConstraintsValid || !certificate.IsCA ||
-		certificate.KeyUsage&x509.KeyUsageCertSign == 0 || now.Before(certificate.NotBefore) || !now.Before(certificate.NotAfter) {
+		(certificate.KeyUsage != 0 && certificate.KeyUsage&x509.KeyUsageCertSign == 0) ||
+		now.Before(certificate.NotBefore) || !now.Before(certificate.NotAfter) {
 		return "", errors.New("database root CA certificate is invalid, expired, or not authorized to sign certificates")
 	}
 	canonical := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})
