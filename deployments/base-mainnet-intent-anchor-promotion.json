@@ -3,7 +3,7 @@
   "kind": "flowops-intent-anchor-mainnet-promotion",
   "network": "base-mainnet",
   "chainId": 8453,
-  "status": "approved-zero-value",
+  "status": "attempt-failed-no-broadcast",
   "sourceCommit": "ea21fbaaa8c8cc3aecca17e910146911703507da",
   "deployer": "0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B",
   "expectedDeployerNonce": "0",
@@ -35,7 +35,21 @@
     "approvedAt": "2026-08-27T16:50:57Z",
     "scope": "one-zero-value-contract-deployment-no-token-approval-no-funding"
   },
-  "deploymentEvidence": null,
+  "deploymentEvidence": {
+    "attemptedAt": "2026-08-27T16:58:42Z",
+    "approvalConsumed": true,
+    "connectedWallet": "0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B",
+    "connectedWalletChainId": 1,
+    "expectedChainId": 8453,
+    "failure": "wallet-chain-mismatch",
+    "transactionHash": null,
+    "receipt": null,
+    "postAttemptLatestNonce": "0",
+    "postAttemptPendingNonce": "0",
+    "postAttemptDeployerBalanceWei": "149971227122042",
+    "postAttemptPredictedAddressCode": "0x",
+    "providerAgreement": true
+  },
   "sourceVerification": null,
   "fundingEnabled": false,
   "executesPayments": false

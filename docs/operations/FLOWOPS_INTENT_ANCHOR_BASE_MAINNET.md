@@ -1,6 +1,7 @@
 # FlowOps intent anchor on Base mainnet
 
-Status: **implementation committed; deployment prepared and deliberately blocked**.
+Status: **implementation committed; first wallet attempt failed before broadcast
+and the deployment is deliberately blocked pending a fresh approval**.
 
 This runbook deploys the limited `FlowOpsIntentAnchor` integration. It does not
 deploy CallEscrow or the ASCP payment contracts, approve USDC, move funds, or

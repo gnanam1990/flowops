@@ -15,6 +15,7 @@ jq -e '
     .status == "prepared-awaiting-funding-and-approval"
     or .status == "approval-requested"
     or .status == "approved-zero-value"
+    or .status == "attempt-failed-no-broadcast"
   )
   and (.sourceCommit | test("^[0-9a-f]{40}$"))
   and (.deployer | test("^0x[0-9a-fA-F]{40}$"))
@@ -132,6 +133,11 @@ if test "${status}" = "approved-zero-value"; then
   grep -Fq "bytes32 public constant deployment_approval_digest =" <<<"${source_text}"
   grep -Fq "${approval};" <<<"${source_text}"
   grep -Fq "bool public constant mainnet_broadcast_enabled = true;" <<<"${source_text}"
+elif test "${status}" = "attempt-failed-no-broadcast"; then
+  approval="$(jq -r '.approval.sha256' "${record}")"
+  grep -Fq "bytes32 public constant deployment_approval_digest =" <<<"${source_text}"
+  grep -Fq "${approval};" <<<"${source_text}"
+  grep -Fq "bool public constant mainnet_broadcast_enabled = false;" <<<"${source_text}"
 else
   grep -Fq "bytes32 public constant deployment_approval_digest = bytes32(0);" <<<"${source_text}"
   grep -Fq "bool public constant mainnet_broadcast_enabled = false;" <<<"${source_text}"

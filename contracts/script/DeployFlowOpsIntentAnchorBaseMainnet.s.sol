@@ -24,7 +24,7 @@ contract DeployFlowOpsIntentAnchorBaseMainnet is Script {
     uint256 public constant MAX_GAS_LIMIT = 650_000;
     uint256 public constant MAX_FEE_PER_GAS_WEI = 20_000_000;
     uint256 public constant MAX_GAS_SPEND_WEI = MAX_GAS_LIMIT * MAX_FEE_PER_GAS_WEI;
-    bool public constant MAINNET_BROADCAST_ENABLED = true;
+    bool public constant MAINNET_BROADCAST_ENABLED = false;
 
     error WrongChain(uint256 expected, uint256 actual);
     error MainnetDeployerNotDesignated();
