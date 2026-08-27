@@ -119,7 +119,8 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
       and .transactionValueWei == "0"
       and .version == 1
       and (
-        if $status == "approval-requested" or $status == "approved-zero-value" then
+        if $status == "approval-requested" or $status == "approved-zero-value"
+          or $status == "attempt-failed-no-broadcast" then
           .ceremonyAttempt == 2
           and .previousApprovalDigest == "0x50791fe87170a29c24b19571325a6c8596a115170145866b0c61d8a2ce14521b"
           and .previousAttemptOutcome == "failed-no-broadcast-wallet-chain-mismatch"
@@ -130,7 +131,8 @@ if test "${status}" != "prepared-awaiting-funding-and-approval"; then
     ' <<<"${approval_statement}" >/dev/null
 fi
 
-if test "${status}" = "approval-requested" || test "${status}" = "approved-zero-value"; then
+if test "${status}" = "approval-requested" || test "${status}" = "approved-zero-value" \
+  || test "${status}" = "attempt-failed-no-broadcast"; then
   jq -e '
     .previousAttempts | length == 1
     and .[0].ceremonyAttempt == 1
@@ -144,6 +146,22 @@ if test "${status}" = "approval-requested" || test "${status}" = "approved-zero-
     and .[0].deploymentEvidence.postAttemptLatestNonce == "0"
     and .[0].deploymentEvidence.postAttemptPendingNonce == "0"
     and .[0].deploymentEvidence.postAttemptPredictedAddressCode == "0x"
+  ' "${record}" >/dev/null
+fi
+
+if test "${status}" = "attempt-failed-no-broadcast"; then
+  jq -e '
+    .deploymentEvidence.approvalConsumed == true
+    and .deploymentEvidence.connectedWallet == .deployer
+    and .deploymentEvidence.connectedWalletChainId == 1
+    and .deploymentEvidence.expectedChainId == 8453
+    and .deploymentEvidence.failure == "wallet-chain-mismatch"
+    and .deploymentEvidence.transactionHash == null
+    and .deploymentEvidence.receipt == null
+    and .deploymentEvidence.postAttemptLatestNonce == .expectedDeployerNonce
+    and .deploymentEvidence.postAttemptPendingNonce == .expectedDeployerNonce
+    and .deploymentEvidence.postAttemptPredictedAddressCode == "0x"
+    and .deploymentEvidence.providerAgreement == true
   ' "${record}" >/dev/null
 fi
 
