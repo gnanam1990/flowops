@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "profileId": "base-sepolia-ascp-external-v1",
+  "network": "base-sepolia",
+  "chainId": 84532,
+  "sourceCommit": "7b994e038a0514c7f2a3a34d1692a0516052297a",
+  "deployment": {
+    "path": "deployments/base-sepolia-ascp-v4.json",
+    "sha256": "bc0fd9f12aca3203fb82181bba720a9748e97d5a187cb73a41d425bd1b296758"
+  },
+  "requiredCriteria": [
+    "AC-1",
+    "AC-2",
+    "AC-5",
+    "AC-12",
+    "AC-19",
+    "AC-24",
+    "AC-31",
+    "AC-33",
+    "AC-37",
+    "AC-46",
+    "AC-47",
+    "AC-53",
+    "AC-68",
+    "AC-84"
+  ],
+  "safe": {
+    "address": "0xf6ac2af2c441ff8886b250233a7adfc206ab0b57",
+    "owners": [
+      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+      "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+      "0xe88872f94013e4584bceafb5d5f87da291d086d2"
+    ],
+    "threshold": 2
+  },
+  "minimumProviders": 2,
+  "maximumEvidenceAgeSeconds": 604800
+}

@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check acceptance-manifest-check deployment-evidence-check test-deployment-evidence ascp-sepolia-evidence-check test-ascp-sepolia-evidence verify-ascp-sepolia-deployment ascp-sepolia-activation-evidence-check test-ascp-sepolia-activation-evidence verify-ascp-sepolia-activation test-ascp-directory-release test-ascp-directory-presign test-ascp-directory-relay test-ascp-directory-transaction-preview test-ascp-canonical-usdc-fork test-ascp-asset-recovery-accounting verify-ascp-sepolia-directory-v1-readiness funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor verify-ascp-sepolia-asset dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-ascp-sepolia-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
+.PHONY: test check fmt-check solidity-fmt-check acceptance-manifest-check test-ascp-external-acceptance verify-ascp-external-acceptance deployment-evidence-check test-deployment-evidence ascp-sepolia-evidence-check test-ascp-sepolia-evidence verify-ascp-sepolia-deployment ascp-sepolia-activation-evidence-check test-ascp-sepolia-activation-evidence verify-ascp-sepolia-activation test-ascp-directory-release test-ascp-directory-presign test-ascp-directory-relay test-ascp-directory-transaction-preview test-ascp-canonical-usdc-fork test-ascp-asset-recovery-accounting verify-ascp-sepolia-directory-v1-readiness funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor verify-ascp-sepolia-asset dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-ascp-sepolia-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -17,6 +17,15 @@ solidity-fmt-check:
 acceptance-manifest-check:
 	go test -race ./internal/acceptance ./cmd/acceptance-report
 	go run ./cmd/acceptance-report
+
+test-ascp-external-acceptance:
+	go test -race ./internal/acceptanceexternal ./cmd/ascp-external-acceptance
+	go run ./cmd/ascp-external-acceptance requirements >/dev/null
+
+verify-ascp-external-acceptance:
+	@test -n "$${FLOWOPS_EXTERNAL_ACCEPTANCE_BUNDLE:-}" || (echo "FLOWOPS_EXTERNAL_ACCEPTANCE_BUNDLE is required" >&2; exit 1)
+	@test -n "$${FLOWOPS_EXTERNAL_ACCEPTANCE_EVIDENCE_ROOT:-}" || (echo "FLOWOPS_EXTERNAL_ACCEPTANCE_EVIDENCE_ROOT is required" >&2; exit 1)
+	go run ./cmd/ascp-external-acceptance verify "$${FLOWOPS_EXTERNAL_ACCEPTANCE_BUNDLE}" deployments/base-sepolia-ascp-external-acceptance-profile-v1.json "$${FLOWOPS_EXTERNAL_ACCEPTANCE_EVIDENCE_ROOT}"
 
 deployment-evidence-check:
 	deploy/call-escrow/check-base-sepolia-evidence.sh
@@ -101,7 +110,7 @@ dashboard-check: dashboard-deps
 	npm run lint --prefix apps/dashboard
 	npm test --prefix apps/dashboard
 
-check: fmt-check solidity-fmt-check acceptance-manifest-check test-deployment-evidence test-ascp-sepolia-evidence test-ascp-sepolia-activation-evidence test-mainnet-readiness test-proposal-anchor test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit smoke-rpc-admission smoke-postgres-readiness dashboard-check
+check: fmt-check solidity-fmt-check acceptance-manifest-check test-ascp-external-acceptance test-deployment-evidence test-ascp-sepolia-evidence test-ascp-sepolia-activation-evidence test-mainnet-readiness test-proposal-anchor test-mainnet-deployer-verification test-security-review-package test-mainnet-final-audit smoke-rpc-admission smoke-postgres-readiness dashboard-check
 	go vet $(GO_PACKAGES)
 	go test -race $(GO_PACKAGES)
 	forge build --sizes
