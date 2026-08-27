@@ -3,7 +3,7 @@
   "profileId": "base-sepolia-ascp-external-v1",
   "network": "base-sepolia",
   "chainId": 84532,
-  "sourceCommit": "7b994e038a0514c7f2a3a34d1692a0516052297a",
+  "sourceCommit": "8360cd7ac8c5ab8e23241a9b00bf5aaddddb16cb",
   "deployment": {
     "path": "deployments/base-sepolia-ascp-v4.json",
     "sha256": "bc0fd9f12aca3203fb82181bba720a9748e97d5a187cb73a41d425bd1b296758"
