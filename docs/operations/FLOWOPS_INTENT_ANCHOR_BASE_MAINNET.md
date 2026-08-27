@@ -1,7 +1,7 @@
 # FlowOps intent anchor on Base mainnet
 
-Status: **deployed successfully on Base mainnet; awaiting finalized-tag and
-source-verification evidence before the dashboard is enabled**.
+Status: **deployed, finalized through two independent providers, and fully
+source-verified on Base Blockscout**.
 
 This runbook deploys the limited `FlowOpsIntentAnchor` integration. It does not
 deploy CallEscrow or the ASCP payment contracts, approve USDC, move funds, or

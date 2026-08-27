@@ -3,7 +3,7 @@
   "kind": "flowops-intent-anchor-mainnet-promotion",
   "network": "base-mainnet",
   "chainId": 8453,
-  "status": "deployed-awaiting-finality-and-source-verification",
+  "status": "deployed-verified",
   "sourceCommit": "ea21fbaaa8c8cc3aecca17e910146911703507da",
   "deployer": "0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B",
   "expectedDeployerNonce": "0",
@@ -113,9 +113,26 @@
       "base.drpc.org"
     ],
     "finality": {
-      "status": "pending",
-      "observedFinalizedBlock": 50531293,
-      "observedFinalizedBlockHash": "0xb5210e44fc5a89f26039d424ef58066f316a38e275aa56a2b83e8137447bad3a"
+      "status": "finalized",
+      "verifiedAt": "2026-08-27T18:26:03Z",
+      "observations": [
+        {
+          "provider": "mainnet.base.org",
+          "finalizedBlock": 50532453,
+          "finalizedBlockHash": "0xd61ceebe87378f07e70e356caff91b21d050827e3394e31cef1d151d30b09c9a",
+          "deploymentBlockHash": "0x2d251b9c304e48df78e3ce6acf0295f63a801cd6609e9b41b4d83815c77dffa6",
+          "receiptStatus": "0x1",
+          "runtimeCodeHash": "0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151"
+        },
+        {
+          "provider": "base.drpc.org",
+          "finalizedBlock": 50532255,
+          "finalizedBlockHash": "0x40c10a4ae9cc8799ed3706a3bf7eb21f6e287be24bdc5e6238c9141ff67ee9f0",
+          "deploymentBlockHash": "0x2d251b9c304e48df78e3ce6acf0295f63a801cd6609e9b41b4d83815c77dffa6",
+          "receiptStatus": "0x1",
+          "runtimeCodeHash": "0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151"
+        }
+      ]
     },
     "contractReads": {
       "baseMainnetChainId": 8453,
@@ -125,7 +142,17 @@
       "executesPayments": false
     }
   },
-  "sourceVerification": null,
+  "sourceVerification": {
+    "provider": "base-blockscout",
+    "url": "https://base.blockscout.com/address/0xd109ec995d8fc1ffd2fd66f367288b3bc3ec8aaa",
+    "status": "fully-verified",
+    "contractName": "FlowOpsIntentAnchor",
+    "compilerVersion": "v0.8.26+commit.8a97fa7a",
+    "optimizationEnabled": true,
+    "optimizationRuns": 200,
+    "evmVersion": "cancun",
+    "verifiedAt": "2026-08-27T17:51:13.578785Z"
+  },
   "fundingEnabled": false,
   "executesPayments": false
 }

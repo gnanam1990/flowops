@@ -203,6 +203,31 @@ if test "${status}" = "deployed-awaiting-finality-and-source-verification" \
   ' "${record}" >/dev/null
 fi
 
+if test "${status}" = "deployed-verified"; then
+  jq -e '
+    .deploymentEvidence.finality.status == "finalized"
+    and .deploymentEvidence.finality.verifiedAt == "2026-08-27T18:26:03Z"
+    and (.deploymentEvidence.finality.observations | length == 2)
+    and (.deploymentEvidence.finality.observations | map(.provider) | sort == ["base.drpc.org", "mainnet.base.org"])
+    and all(.deploymentEvidence.finality.observations[];
+      .finalizedBlock >= 50531762
+      and (.finalizedBlockHash | test("^0x[0-9a-f]{64}$"))
+      and .deploymentBlockHash == "0x2d251b9c304e48df78e3ce6acf0295f63a801cd6609e9b41b4d83815c77dffa6"
+      and .receiptStatus == "0x1"
+      and .runtimeCodeHash == "0x832a61ee74a1df09968706b4ffe3aacab23ad8ba463cc5407e8f795c499f4151"
+    )
+    and .sourceVerification.provider == "base-blockscout"
+    and .sourceVerification.url == "https://base.blockscout.com/address/0xd109ec995d8fc1ffd2fd66f367288b3bc3ec8aaa"
+    and .sourceVerification.status == "fully-verified"
+    and .sourceVerification.contractName == "FlowOpsIntentAnchor"
+    and .sourceVerification.compilerVersion == "v0.8.26+commit.8a97fa7a"
+    and .sourceVerification.optimizationEnabled == true
+    and .sourceVerification.optimizationRuns == 200
+    and .sourceVerification.evmVersion == "cancun"
+    and .sourceVerification.verifiedAt == "2026-08-27T17:51:13.578785Z"
+  ' "${record}" >/dev/null
+fi
+
 if test "${status}" = "attempt-failed-no-broadcast"; then
   jq -e '
     .deploymentEvidence.approvalConsumed == true
