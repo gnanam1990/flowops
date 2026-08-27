@@ -8,6 +8,10 @@ Status: structurally implemented and deliberately blocked; no deployment or fund
 2. Designate the hardware deployer, production Safe, Safe owners/threshold, directory publisher, directory pauser, registry admin, spend authorizer, and organization domain in a separate promotion PR.
 3. Replace the zero constants in `contracts/script/DeployASCPBaseMainnet.s.sol` only in that reviewed PR. The committed script must otherwise remain unable to broadcast.
 4. Run the full script on a pinned Base mainnet fork and compare all constructor bindings and creation bytecode.
+   The promoted script must pin the canonical USDC runtime code hash and the
+   deployer's exact starting nonce, validate the production Safe interface and
+   owner threshold, and prove that all four predicted CREATE addresses have no
+   code, nonce, native balance, or USDC balance before broadcast.
 5. Obtain explicit zero-fund broadcast approval. Deploy the four contracts through the hardware-wallet ceremony. Do not enable the Safe module or transfer assets in the deployment transaction.
 6. Verify source and runtime bytecode independently through every admitted paid RPC provider.
 7. Execute and reconcile the separately approved Safe actions that enable the module, allowlist the exact escrow code hash, publish the initial directory root, and activate the verifier. Keep funding disabled.

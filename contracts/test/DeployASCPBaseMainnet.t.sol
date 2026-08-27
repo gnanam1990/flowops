@@ -5,7 +5,54 @@ import {Test} from "forge-std/Test.sol";
 import {DeployASCPBaseMainnet} from "../script/DeployASCPBaseMainnet.s.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
-contract ProductionSafeFixture {}
+contract ProductionSafeFixture {
+    function getOwners() external pure returns (address[] memory owners) {
+        owners = new address[](1);
+        owners[0] = address(0xA11CE);
+    }
+
+    function getThreshold() external pure returns (uint256) {
+        return 1;
+    }
+
+    function isModuleEnabled(address) external pure returns (bool) {
+        return false;
+    }
+
+    function execTransactionFromModule(address, uint256, bytes memory, uint8) external pure returns (bool) {
+        revert("GS104");
+    }
+}
+
+contract InvalidProductionSafeFixture {
+    function getOwners() external pure returns (address[] memory owners) {
+        owners = new address[](1);
+        owners[0] = address(0xA11CE);
+    }
+
+    function getThreshold() external pure returns (uint256) {
+        return 2;
+    }
+
+    function isModuleEnabled(address) external pure returns (bool) {
+        return false;
+    }
+}
+
+contract ViewOnlyProductionSafeFixture {
+    function getOwners() external pure returns (address[] memory owners) {
+        owners = new address[](1);
+        owners[0] = address(0xA11CE);
+    }
+
+    function getThreshold() external pure returns (uint256) {
+        return 1;
+    }
+
+    function isModuleEnabled(address) external pure returns (bool) {
+        return false;
+    }
+}
 
 contract ReadyASCPMainnetDeploymentHarness is DeployASCPBaseMainnet {
     address internal immutable readySafe;
@@ -20,6 +67,10 @@ contract ReadyASCPMainnetDeploymentHarness is DeployASCPBaseMainnet {
 
     function _productionSafe() internal view override returns (address) {
         return readySafe;
+    }
+
+    function _expectedCanonicalUSDCCodeHash() internal view override returns (bytes32) {
+        return BASE_MAINNET_USDC.codehash;
     }
 
     function _directoryPublisher() internal pure override returns (address) {
@@ -65,14 +116,34 @@ contract DeployASCPBaseMainnetTest is Test {
     function test_committedFullASCPPackagePinsCanonicalConfigurationAndStaysBlocked() public view {
         assertEq(deployment.BASE_MAINNET_CHAIN_ID(), 8453);
         assertEq(deployment.BASE_MAINNET_USDC(), 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913);
+        assertEq(
+            deployment.BASE_MAINNET_USDC_RUNTIME_CODE_HASH(),
+            0xa6705a10bb756b5dea144591118be77d7af0c3eee3bf2dfe2583dcb0364fefab
+        );
         assertEq(deployment.INITIAL_PER_TRANSACTION_CAP(), 1_000_000);
         assertEq(deployment.INITIAL_DAILY_CAP(), 10_000_000);
         assertEq(deployment.INITIAL_ALLOWANCE_CEILING(), 10_000_000);
         assertEq(deployment.DESIGNATED_DEPLOYER(), address(0));
+        assertEq(deployment.EXPECTED_DEPLOYER_NONCE(), 0);
         assertEq(deployment.PRODUCTION_SAFE(), address(0));
         assertEq(deployment.EXTERNAL_REVIEW_DIGEST(), bytes32(0));
         assertEq(deployment.RELEASE_PLAN_DIGEST(), bytes32(0));
         assertFalse(deployment.MAINNET_BROADCAST_ENABLED());
+    }
+
+    function test_runRejectsSubstitutedNonemptyCanonicalUSDCCodeBeforeReadingReleaseConfig() public {
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(deployment.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        bytes32 actualCodeHash = deployment.BASE_MAINNET_USDC().codehash;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployASCPBaseMainnet.UnexpectedCanonicalUSDCCodeHash.selector,
+                deployment.BASE_MAINNET_USDC_RUNTIME_CODE_HASH(),
+                actualCodeHash
+            )
+        );
+        deployment.run();
     }
 
     function test_runRejectsWrongChainAndMissingCanonicalUSDC() public {
@@ -222,6 +293,10 @@ contract DeployASCPBaseMainnetTest is Test {
 
         DeployASCPBaseMainnet.Deployment memory deployed = ready.run();
 
+        assertEq(address(deployed.serviceDirectory), vm.computeCreateAddress(address(0xBEEF), 0));
+        assertEq(address(deployed.agentRegistry), vm.computeCreateAddress(address(0xBEEF), 1));
+        assertEq(address(deployed.callEscrow), vm.computeCreateAddress(address(0xBEEF), 2));
+        assertEq(address(deployed.spendModule), vm.computeCreateAddress(address(0xBEEF), 3));
         assertEq(deployed.serviceDirectory.governor(), address(safe));
         assertEq(deployed.agentRegistry.governor(), address(safe));
         assertEq(deployed.callEscrow.safe(), address(safe));
@@ -230,5 +305,77 @@ contract DeployASCPBaseMainnetTest is Test {
         assertEq(deployed.serviceDirectory.currentVersion(), 0);
         assertEq(deployed.callEscrow.totalLocked(), 0);
         assertEq(deployed.spendModule.executedPrincipal(), 0);
+        assertEq(MockUSDC(ready.BASE_MAINNET_USDC()).balanceOf(address(deployed.serviceDirectory)), 0);
+        assertEq(MockUSDC(ready.BASE_MAINNET_USDC()).balanceOf(address(deployed.agentRegistry)), 0);
+        assertEq(MockUSDC(ready.BASE_MAINNET_USDC()).balanceOf(address(deployed.callEscrow)), 0);
+        assertEq(MockUSDC(ready.BASE_MAINNET_USDC()).balanceOf(address(deployed.spendModule)), 0);
+        assertEq(address(deployed.serviceDirectory).balance, 0);
+        assertEq(address(deployed.agentRegistry).balance, 0);
+        assertEq(address(deployed.callEscrow).balance, 0);
+        assertEq(address(deployed.spendModule).balance, 0);
+    }
+
+    function test_promotedHarnessRejectsContractWithoutValidSafeState() public {
+        InvalidProductionSafeFixture invalidSafe = new InvalidProductionSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(invalidSafe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(invalidSafe))
+        );
+        ready.run();
+    }
+
+    function test_promotedHarnessRejectsViewCompatibleContractWithoutSafeModuleExecution() public {
+        ViewOnlyProductionSafeFixture viewOnlySafe = new ViewOnlyProductionSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(viewOnlySafe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(viewOnlySafe))
+        );
+        ready.run();
+    }
+
+    function test_promotedHarnessRejectsStaleDeployerNonceBeforeAnyCreation() public {
+        ProductionSafeFixture safe = new ProductionSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(safe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        vm.setNonce(address(0xBEEF), 1);
+        vm.expectRevert(abi.encodeWithSelector(DeployASCPBaseMainnet.UnexpectedDeployerNonce.selector, 0, 1));
+        ready.run();
+    }
+
+    function testFuzz_promotedHarnessRejectsEveryDirtyPredictedDeploymentAddressBeforeAnyCreation(
+        uint8 selectedOffset,
+        uint8 dirtyState
+    ) public {
+        ProductionSafeFixture safe = new ProductionSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(safe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        selectedOffset = uint8(bound(selectedOffset, 0, 3));
+        dirtyState = uint8(bound(dirtyState, 0, 3));
+        address predicted = vm.computeCreateAddress(address(0xBEEF), selectedOffset);
+        if (dirtyState == 0) {
+            vm.deal(predicted, 1);
+        } else if (dirtyState == 1) {
+            MockUSDC(ready.BASE_MAINNET_USDC()).mint(predicted, 1);
+        } else if (dirtyState == 2) {
+            vm.etch(predicted, hex"00");
+        } else {
+            vm.setNonce(predicted, 1);
+        }
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployASCPBaseMainnet.PredictedDeploymentAddressDirty.selector, predicted)
+        );
+        ready.run();
+        assertEq(vm.getNonce(address(0xBEEF)), 0);
     }
 }

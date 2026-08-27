@@ -8,6 +8,15 @@ import {AgentRegistry} from "../src/AgentRegistry.sol";
 import {ASCPCallEscrow, IServiceDirectory} from "../src/ASCPCallEscrow.sol";
 import {ASCPSpendModule} from "../src/ASCPSpendModule.sol";
 
+interface IMainnetSafeDeploymentTarget {
+    function getOwners() external view returns (address[] memory);
+    function getThreshold() external view returns (uint256);
+    function isModuleEnabled(address module) external view returns (bool);
+    function execTransactionFromModule(address to, uint256 value, bytes memory data, uint8 operation)
+        external
+        returns (bool success);
+}
+
 /// @notice Fail-closed deployment package for the complete ASCP v4 Base
 ///         mainnet contract graph. The committed package cannot broadcast.
 /// @dev Deployment does not enable the Safe module, seed a directory root,
@@ -17,11 +26,14 @@ import {ASCPSpendModule} from "../src/ASCPSpendModule.sol";
 contract DeployASCPBaseMainnet is Script {
     uint256 public constant BASE_MAINNET_CHAIN_ID = 8_453;
     address public constant BASE_MAINNET_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    bytes32 public constant BASE_MAINNET_USDC_RUNTIME_CODE_HASH =
+        0xa6705a10bb756b5dea144591118be77d7af0c3eee3bf2dfe2583dcb0364fefab;
     uint256 public constant INITIAL_PER_TRANSACTION_CAP = 1_000_000;
     uint256 public constant INITIAL_DAILY_CAP = 10_000_000;
     uint256 public constant INITIAL_ALLOWANCE_CEILING = 10_000_000;
 
     address public constant DESIGNATED_DEPLOYER = address(0);
+    uint256 public constant EXPECTED_DEPLOYER_NONCE = 0;
     address public constant PRODUCTION_SAFE = address(0);
     address public constant DIRECTORY_PUBLISHER = address(0);
     address public constant DIRECTORY_PAUSER = address(0);
@@ -41,20 +53,24 @@ contract DeployASCPBaseMainnet is Script {
 
     error WrongChain(uint256 expected, uint256 actual);
     error MissingCanonicalUSDC(address asset);
+    error UnexpectedCanonicalUSDCCodeHash(bytes32 expected, bytes32 actual);
     error MainnetDeployerNotDesignated();
+    error UnexpectedDeployerNonce(uint256 expected, uint256 actual);
     error ProductionSafeNotDesignated();
     error ProductionSafeNotContract(address safe);
+    error ProductionSafeInterfaceInvalid(address safe);
     error AuthorityNotDesignated();
     error AuthoritySeparationInvalid();
     error OrganizationDomainNotDesignated();
     error ExternalReviewNotRecorded();
     error ReleasePlanNotRecorded();
     error MainnetBroadcastDisabled();
+    error PredictedDeploymentAddressDirty(address predicted);
     error DeploymentInvariantFailed();
 
     function run() external returns (Deployment memory deployed) {
         if (block.chainid != BASE_MAINNET_CHAIN_ID) revert WrongChain(BASE_MAINNET_CHAIN_ID, block.chainid);
-        if (BASE_MAINNET_USDC.code.length == 0) revert MissingCanonicalUSDC(BASE_MAINNET_USDC);
+        _requireCanonicalUSDC();
 
         address deployer = _designatedDeployer();
         address safe = _productionSafe();
@@ -75,7 +91,11 @@ contract DeployASCPBaseMainnet is Script {
             _releasePlanDigest(),
             _broadcastEnabled()
         );
-        if (safe.code.length == 0) revert ProductionSafeNotContract(safe);
+        _requireSafe(safe);
+        uint256 expectedNonce = _expectedDeployerNonce();
+        uint256 actualNonce = vm.getNonce(deployer);
+        if (actualNonce != expectedNonce) revert UnexpectedDeployerNonce(expectedNonce, actualNonce);
+        _requireCleanPredictedAddresses(deployer, expectedNonce);
 
         vm.startBroadcast(deployer);
         deployed.serviceDirectory = new ServiceDirectory(safe, publisher, pauser, orgDomain);
@@ -166,6 +186,63 @@ contract DeployASCPBaseMainnet is Script {
         if (!broadcastEnabled) revert MainnetBroadcastDisabled();
     }
 
+    function _requireCanonicalUSDC() internal view virtual {
+        if (BASE_MAINNET_USDC.code.length == 0) revert MissingCanonicalUSDC(BASE_MAINNET_USDC);
+        bytes32 actualCodeHash = BASE_MAINNET_USDC.codehash;
+        bytes32 expectedCodeHash = _expectedCanonicalUSDCCodeHash();
+        if (actualCodeHash != expectedCodeHash) {
+            revert UnexpectedCanonicalUSDCCodeHash(expectedCodeHash, actualCodeHash);
+        }
+    }
+
+    function _requireSafe(address safe) private {
+        if (safe.code.length == 0) revert ProductionSafeNotContract(safe);
+        address[] memory owners;
+        uint256 threshold;
+        bool zeroModuleEnabled;
+        try IMainnetSafeDeploymentTarget(safe).getOwners() returns (address[] memory values) {
+            owners = values;
+        } catch {
+            revert ProductionSafeInterfaceInvalid(safe);
+        }
+        try IMainnetSafeDeploymentTarget(safe).getThreshold() returns (uint256 value) {
+            threshold = value;
+        } catch {
+            revert ProductionSafeInterfaceInvalid(safe);
+        }
+        try IMainnetSafeDeploymentTarget(safe).isModuleEnabled(address(0)) returns (bool enabled) {
+            zeroModuleEnabled = enabled;
+        } catch {
+            revert ProductionSafeInterfaceInvalid(safe);
+        }
+        if (owners.length == 0 || threshold == 0 || threshold > owners.length || zeroModuleEnabled) {
+            revert ProductionSafeInterfaceInvalid(safe);
+        }
+        for (uint256 index = 0; index < owners.length; ++index) {
+            if (owners[index] == address(0)) revert ProductionSafeInterfaceInvalid(safe);
+            for (uint256 prior = 0; prior < index; ++prior) {
+                if (owners[index] == owners[prior]) revert ProductionSafeInterfaceInvalid(safe);
+            }
+        }
+        (bool moduleCallSucceeded, bytes memory moduleCallResult) = safe.call(
+            abi.encodeCall(IMainnetSafeDeploymentTarget.execTransactionFromModule, (address(0), 0, bytes(""), uint8(0)))
+        );
+        if (
+            moduleCallSucceeded
+                || keccak256(moduleCallResult) != keccak256(abi.encodeWithSignature("Error(string)", "GS104"))
+        ) revert ProductionSafeInterfaceInvalid(safe);
+    }
+
+    function _requireCleanPredictedAddresses(address deployer, uint256 startingNonce) private view {
+        for (uint256 offset = 0; offset < 4; ++offset) {
+            address predicted = vm.computeCreateAddress(deployer, startingNonce + offset);
+            if (
+                predicted.code.length != 0 || vm.getNonce(predicted) != 0 || predicted.balance != 0
+                    || IERC20(BASE_MAINNET_USDC).balanceOf(predicted) != 0
+            ) revert PredictedDeploymentAddressDirty(predicted);
+        }
+    }
+
     function _verifyDeployment(
         Deployment memory deployed,
         address safe,
@@ -188,12 +265,30 @@ contract DeployASCPBaseMainnet is Script {
                 || deployed.spendModule.spendAuthorizer() != spendAuthorizer
                 || perTransaction != INITIAL_PER_TRANSACTION_CAP || perDay != INITIAL_DAILY_CAP
                 || allowanceCeiling != INITIAL_ALLOWANCE_CEILING || deployed.spendModule.emergencyPaused()
-                || deployed.callEscrow.emergencyPaused()
+                || deployed.callEscrow.emergencyPaused() || deployed.serviceDirectory.currentVersion() != 0
+                || deployed.serviceDirectory.currentRoot() != bytes32(0) || deployed.agentRegistry.agentCount() != 0
+                || deployed.callEscrow.totalLocked() != 0 || deployed.spendModule.executedPrincipal() != 0
+                || deployed.spendModule.escrowAllowlist(address(deployed.callEscrow)) != bytes32(0)
+                || address(deployed.serviceDirectory).balance != 0 || address(deployed.agentRegistry).balance != 0
+                || address(deployed.callEscrow).balance != 0 || address(deployed.spendModule).balance != 0
+                || IERC20(BASE_MAINNET_USDC).balanceOf(address(deployed.serviceDirectory)) != 0
+                || IERC20(BASE_MAINNET_USDC).balanceOf(address(deployed.agentRegistry)) != 0
+                || IERC20(BASE_MAINNET_USDC).balanceOf(address(deployed.callEscrow)) != 0
+                || IERC20(BASE_MAINNET_USDC).balanceOf(address(deployed.spendModule)) != 0
+                || IMainnetSafeDeploymentTarget(safe).isModuleEnabled(address(deployed.spendModule))
         ) revert DeploymentInvariantFailed();
     }
 
     function _designatedDeployer() internal view virtual returns (address) {
         return DESIGNATED_DEPLOYER;
+    }
+
+    function _expectedDeployerNonce() internal view virtual returns (uint256) {
+        return EXPECTED_DEPLOYER_NONCE;
+    }
+
+    function _expectedCanonicalUSDCCodeHash() internal view virtual returns (bytes32) {
+        return BASE_MAINNET_USDC_RUNTIME_CODE_HASH;
     }
 
     function _productionSafe() internal view virtual returns (address) {
