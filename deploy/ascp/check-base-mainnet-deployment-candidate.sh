@@ -94,6 +94,41 @@ jq -e '
   and ([.contracts[].name] == ["service_directory", "agent_registry", "ascp_call_escrow", "ascp_spend_module"])
   and ([.contracts[].creationNonce] == [1, 2, 3, 4])
   and ([.contracts[].predictedAddress] | length == (unique | length) and all(. | address))
+  and .contracts[0].artifact == "contracts/src/ServiceDirectory.sol:ServiceDirectory"
+  and .contracts[0].constructorSignature == "f(address,address,address,bytes32)"
+  and .contracts[0].constructorArguments == [
+    $record.safe.address,
+    $record.authorities.directoryPublisher,
+    $record.authorities.directoryPauser,
+    $record.organizationDomain
+  ]
+  and .contracts[1].artifact == "contracts/src/AgentRegistry.sol:AgentRegistry"
+  and .contracts[1].constructorSignature == "f(address,address,bytes32)"
+  and .contracts[1].constructorArguments == [
+    $record.safe.address,
+    $record.authorities.registryAdmin,
+    $record.organizationDomain
+  ]
+  and .contracts[2].artifact == "contracts/src/ASCPCallEscrow.sol:ASCPCallEscrow"
+  and .contracts[2].constructorSignature == "f(address,address,address,address)"
+  and .contracts[2].constructorArguments == [
+    $record.asset.address,
+    $record.contracts[0].predictedAddress,
+    $record.safe.address,
+    $record.safe.address
+  ]
+  and .contracts[3].artifact == "contracts/src/ASCPSpendModule.sol:ASCPSpendModule"
+  and .contracts[3].constructorSignature == "f(address,address,address,(uint256,uint256,uint256))"
+  and .contracts[3].constructorArguments == [
+    $record.safe.address,
+    $record.asset.address,
+    $record.authorities.spendAuthorizer,
+    [
+      $record.initialCapsAtomic.perTransaction,
+      $record.initialCapsAtomic.perDay,
+      $record.initialCapsAtomic.allowanceCeiling
+    ]
+  ]
   and (.contracts | all((.creationBytecodeKeccak | digest) and (.constructorArgumentsKeccak | digest) and (.initCodeKeccak | digest) and .initCodeBytes > 0))
   and .requiredInitialState == {
     moduleEnabled: false,
