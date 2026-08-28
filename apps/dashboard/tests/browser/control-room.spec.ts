@@ -4,7 +4,8 @@ test("renders truthful public state and an exact approval confirmation", async (
   await page.goto("/");
   await expect(page.getByRole("banner").getByText("Live public status")).toBeVisible();
   await expect(page.getByRole("main").getByText("Base Sepolia (84532)", { exact: true })).toBeVisible();
-  await expect(page.getByRole("main").getByText("Source verified").locator("..")).toContainText("Unavailable");
+  await expect(page.getByRole("main").getByText("Source verified", { exact: true }).locator("..")).toContainText("4 / 4");
+  await expect(page.getByRole("main").getByText("Runtime", { exact: true }).locator("..")).toContainText("Blocked");
 
   await page.goto("/api/local-auth/signin?return_to=%2F");
   await expect(page.getByRole("banner").getByText("Live control plane")).toBeVisible();

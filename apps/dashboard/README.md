@@ -67,6 +67,13 @@ starter copy or fabricated preview success states.
   committed. When configured, `/mainnet` enables a wallet-connected zero-value
   intent-evidence write and independent record read. It never enables a token
   approval, deposit, or payment.
+- The four finalized Base mainnet ASCP addresses are public deployment evidence,
+  not secrets or operator-supplied runtime state. The dashboard bundles the
+  checked `app/mainnet/ascp-mainnet-deployment.json` projection and labels the
+  graph deployed but inactive until the Safe module, escrow allowlist, runtime
+  release, and funding gates are independently satisfied. Validate it against
+  the canonical repository evidence with
+  `make test-ascp-mainnet-runtime-bindings` from the repository root.
 - Runtime dependencies must pass the high-severity audit gate. The vinext build
   tool currently brings a development-only `image-size` advisory; FlowOps does
   not accept untrusted image input and production dependencies audit clean.

@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "base-mainnet-ascp-experimental-v1",
+  "network": "Base mainnet",
+  "chainId": 8453,
+  "status": "deployed-inactive",
+  "firstDeploymentBlock": 50557746,
+  "finalizedThroughBlock": 50557998,
+  "safe": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+  "asset": {
+    "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "symbol": "USDC",
+    "decimals": 6
+  },
+  "contracts": [
+    {
+      "name": "Service directory",
+      "binding": "FLOWOPS_ASCP_DIRECTORY_CONTRACT",
+      "address": "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1",
+      "blockNumber": 50557746,
+      "runtimeCodeKeccak": "0xb71440130e44a9e77eff6971bcee2e3c12537dd5dd9dcffd2b614161b5fed953",
+      "sourceVerified": true
+    },
+    {
+      "name": "Agent registry",
+      "binding": "FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT",
+      "address": "0x15332e8c8e230e8a1c05095196dac42ba8cc6906",
+      "blockNumber": 50557912,
+      "runtimeCodeKeccak": "0x58e2aa5adaabe5ab0ef5e4b6900d21d54978ff6d183f4a24c0100182bc6d8247",
+      "sourceVerified": true
+    },
+    {
+      "name": "Call escrow",
+      "binding": "FLOWOPS_ASCP_CALL_ESCROW_CONTRACT",
+      "address": "0x214cbbb2190075ba43fa6518560d37c09720e0c4",
+      "blockNumber": 50557918,
+      "runtimeCodeKeccak": "0x829518ab89788763954e964351e23a4bf8b08e5e5ad5d86aaa2ab185b82ac4c9",
+      "sourceVerified": true
+    },
+    {
+      "name": "Safe spend module",
+      "binding": "FLOWOPS_ASCP_SPEND_MODULE_CONTRACT",
+      "address": "0x942b83421c3ac4e1a04753e5e0208fd56cad649e",
+      "blockNumber": 50557923,
+      "runtimeCodeKeccak": "0x49f11b84ac94168f962879f66946732321ecb105af82ba4edf33485e8f7a8355",
+      "sourceVerified": true
+    }
+  ],
+  "activation": {
+    "runtimeEnabled": false,
+    "externalReviewCompleted": false,
+    "safeModuleEnabled": false,
+    "escrowAllowlisted": false,
+    "fundingAuthorized": false,
+    "allContractNativeBalancesWei": "0",
+    "allContractUsdcBalancesAtomic": "0"
+  }
+}

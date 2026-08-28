@@ -9,6 +9,7 @@ import type {
   DashboardSnapshot,
   Risk,
 } from "./dashboard-data";
+import type { ASCPMainnetDeployment } from "./mainnet/ascp-mainnet-deployment";
 import type { MainnetIntentAnchorDeployment } from "./mainnet/mainnet-types";
 import type { ProposalAnchorDeployment } from "./proposal-anchor";
 
@@ -22,6 +23,7 @@ type Section =
 
 type ControlRoomProps = {
   snapshot: DashboardSnapshot;
+  ascpMainnetDeployment: ASCPMainnetDeployment;
   mainnetIntentAnchor: MainnetIntentAnchorDeployment;
   proposalAnchor: ProposalAnchorDeployment;
   viewer: { name: string; email: string; authenticated: boolean };
@@ -37,7 +39,7 @@ const navItems: { id: Section; label: string; mark: string }[] = [
   { id: "developers", label: "Developers", mark: "↗" },
 ];
 
-export function ControlRoom({ snapshot, mainnetIntentAnchor, proposalAnchor, viewer, accountHref }: ControlRoomProps) {
+export function ControlRoom({ snapshot, ascpMainnetDeployment, mainnetIntentAnchor, proposalAnchor, viewer, accountHref }: ControlRoomProps) {
   const [section, setSection] = useState<Section>("overview");
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -222,7 +224,11 @@ export function ControlRoom({ snapshot, mainnetIntentAnchor, proposalAnchor, vie
           ) : null}
 
           {section === "overview" ? (
-            <MainnetSafetyNotice deployment={mainnetIntentAnchor} legacyProposal={proposalAnchor} />
+            <MainnetSafetyNotice
+              ascpDeployment={ascpMainnetDeployment}
+              intentAnchor={mainnetIntentAnchor}
+              legacyProposal={proposalAnchor}
+            />
           ) : null}
 
           {section === "overview" ? (
@@ -297,35 +303,32 @@ export function ControlRoom({ snapshot, mainnetIntentAnchor, proposalAnchor, vie
 }
 
 function MainnetSafetyNotice({
-  deployment,
+  ascpDeployment,
+  intentAnchor,
   legacyProposal,
 }: {
-  deployment: MainnetIntentAnchorDeployment;
+  ascpDeployment: ASCPMainnetDeployment;
+  intentAnchor: MainnetIntentAnchorDeployment;
   legacyProposal: ProposalAnchorDeployment;
 }) {
-  const deployed = deployment.status === "limited-mainnet-live" && deployment.address !== null;
-  const sourceVerified = deployment.sourceVerification === "verified" && deployment.sourceVerificationHref !== null;
+  const sourceVerified = ascpDeployment.contracts.every((contract) => contract.sourceVerified);
   return (
-    <section className="proposal-anchor-notice" aria-label="Base mainnet intent anchor deployment status">
+    <section className="proposal-anchor-notice" aria-label="Base mainnet ASCP deployment status">
       <div className="proposal-anchor-copy">
-        <span>BASE MAINNET · LIMITED INTEGRATION</span>
-        <h2>{deployed ? "Functional intent anchor live" : "Mainnet intent anchor is not active"}</h2>
+        <span>BASE MAINNET · DEPLOYED / INACTIVE</span>
+        <h2>Payment contract graph deployed; activation blocked</h2>
         <p>
-          {deployed
-            ? "Verified evidence-only contract for immutable, controller-scoped intent records. It cannot move funds, hold assets, approve tokens, or execute payments."
-            : "No functional mainnet intent contract is being represented as live. Payment, vault, escrow, and deposit capabilities remain disabled."}
+          All four contracts are finalized and source verified on Base mainnet. The Safe module is disabled, the escrow is not allowlisted, and every contract remains zero-funded; no payment path is represented as operational.
         </p>
-        {deployment.address && deployment.explorerHref ? (
-          <a href={deployment.explorerHref} target="_blank" rel="noreferrer">
-            <code>{deployment.address}</code>
-            <span>View verified source on Base Blockscout ↗</span>
-          </a>
-        ) : null}
-        {deployed ? (
-          <a href="/mainnet">
-            <span>Open functional mainnet intent workspace ↗</span>
-          </a>
-        ) : null}
+        <div className="mainnet-contract-links">
+          {ascpDeployment.contracts.map((contract) => (
+            <a key={contract.binding} href={`https://base.blockscout.com/address/${contract.address}?tab=contract`} target="_blank" rel="noreferrer">
+              <span>{contract.name}</span>
+              <code>{contract.address}</code>
+            </a>
+          ))}
+        </div>
+        {intentAnchor.status === "limited-mainnet-live" ? <a href="/mainnet"><span>Open intent evidence workspace ↗</span></a> : null}
         {legacyProposal.address && legacyProposal.explorerHref ? (
           <a className="proposal-anchor-legacy" href={legacyProposal.explorerHref} target="_blank" rel="noreferrer">
             <span>Legacy proposal evidence: {legacyProposal.address} ↗</span>
@@ -333,18 +336,16 @@ function MainnetSafetyNotice({
         ) : null}
       </div>
       <dl className="proposal-anchor-controls">
-        <div><dt>Production ready</dt><dd>No</dd></div>
+        <div><dt>Contract graph</dt><dd className="status-verified">Deployed</dd></div>
         <div>
           <dt>Source verified</dt>
           <dd className={sourceVerified ? "status-verified" : undefined}>
-            {sourceVerified ? (
-              <a href={deployment.sourceVerificationHref ?? undefined} target="_blank" rel="noreferrer">Yes ↗</a>
-            ) : "Unavailable"}
+            {sourceVerified ? "4 / 4" : "Incomplete"}
           </dd>
         </div>
-        <div><dt>Vault creation</dt><dd>Disabled</dd></div>
-        <div><dt>USDC deposits</dt><dd>Disabled</dd></div>
-        <div><dt>Asset warning</dt><dd>Do not send ETH or tokens</dd></div>
+        <div><dt>Runtime</dt><dd>Blocked</dd></div>
+        <div><dt>Funds</dt><dd>Zero</dd></div>
+        <div><dt>Activation</dt><dd>Module disabled · escrow not allowlisted</dd></div>
       </dl>
     </section>
   );
