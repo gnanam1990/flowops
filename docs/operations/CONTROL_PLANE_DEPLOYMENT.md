@@ -83,6 +83,7 @@ The API service requires:
 | `FLOWOPS_METRICS_KEY_B64` | Exactly 32 random bytes, base64 and distinct from every other capability; required on Base mainnet and accepted only for `/metrics` |
 | `FLOWOPS_SIGNER_RECEIPT_KEYS_JSON` | Optional strict customer signer public-key registry; omit for the no-funds deployment |
 | `FLOWOPS_ASCP_DIRECTORY_CONTRACT` | Optional canonical lowercase ServiceDirectory address. When unset, durable agent intake remains mounted but returns a fail-closed 503 |
+| `FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT` | Optional canonical lowercase AgentRegistry address; Base mainnet requires it as part of the complete signed deployment tuple |
 | `FLOWOPS_ASCP_DIRECTORY_MAX_AGE` | Maximum age of the quorum observation used at intake; default `1m`, hard maximum `5m` |
 | `FLOWOPS_ASCP_MAX_ACTIVE_OPERATIONS` | Canonical global in-flight operation limit, default `1000`; must match the migration-owned capacity counter |
 | `FLOWOPS_ASCP_CALL_ESCROW_CONTRACT` | Optional canonical reviewed ASCPCallEscrow address; requires the complete governance-observer tuple |
@@ -96,6 +97,13 @@ The API service requires:
 | `FLOWOPS_ASCP_ADAPTATION_HSM_TIMEOUT` | Optional HSM stage timeout, default `3s`, range `1s` through `10s` |
 | `FLOWOPS_PILOT_MAX_PER_ACTION_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `1000000` |
 | `FLOWOPS_PILOT_MAX_OUTSTANDING_ATOMIC` | Required canonical positive integer; initial Base mainnet profile is `10000000` |
+
+The finalized, public Base mainnet address tuple is recorded in
+`deploy/control-plane/base-mainnet-ascp-deployed-inactive.env.example`. It is a
+binding profile, not a runnable production environment: deliberately missing
+release admission, authority rules, settlement, RPC, and secret values keep
+startup fail-closed. Run `make test-ascp-mainnet-runtime-bindings` before using
+the tuple in any deployment secret manager.
 
 The API exposes three deliberately different operational surfaces. `GET
 /livez` proves only that the HTTP process can answer. `GET /readyz` performs a

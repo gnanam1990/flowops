@@ -1,14 +1,27 @@
 # ASCP Base mainnet release
 
-Status: structurally implemented and deliberately blocked; no deployment or funding is authorized.
+Status: four contracts deployed and finalized as an owner-authorized, unaudited,
+zero-fund graph; runtime activation and funding remain blocked.
 
 ## Current preparation state
 
-The production Safe is finalized on Base mainnet, but the ASCP contract graph
-is not approved or deployed. The exact preparation-only candidate is recorded
-at `deployments/base-mainnet-ascp-deployment-candidate-v1.json`; its SHA-256 is
-stored separately in
-`deployments/base-mainnet-ascp-deployment-candidate-v1.sha256`.
+The production Safe and four ASCP contracts are finalized on Base mainnet. The
+canonical post-deployment evidence is
+`deployments/base-mainnet-ascp-experimental-v1.json`. It records an explicitly
+unaudited deployment: all sources are verified, but the Safe module is disabled,
+the escrow is not allowlisted, no funding was authorized, and all four contract
+ETH and USDC balances were observed as zero.
+
+The exact public address tuple is mirrored into the deliberately incomplete
+runtime binding profile at
+`deploy/control-plane/base-mainnet-ascp-deployed-inactive.env.example` and the
+dashboard record at
+`apps/dashboard/app/mainnet/ascp-mainnet-deployment.json`. Validate that neither
+surface drifted from the evidence record with:
+
+```sh
+make test-ascp-mainnet-runtime-bindings
+```
 
 The candidate binds the current source baseline, compiler and dependency
 revisions, deployer nonce, finalized 2-of-3 Safe, its exact ordered owner set,
@@ -25,28 +38,27 @@ With `BASE_MAINNET_FORK_RPC_URL` set, the same target also deploys the exact
 candidate graph inside a pinned finalized Base mainnet fork and verifies every
 address and zero-fund invariant. It never signs or broadcasts a transaction.
 
-This candidate is deliberately not the release-plan digest or a promotion
-commit. `DeployASCPBaseMainnet.s.sol` still pins the zero deployer, zero nonce,
-zero Safe, zero review digest, zero release-plan digest, and disabled broadcast.
-External review, production RPC admission, owner-control evidence, the reviewed
-promotion commit, signed runtime release manifest, and a fresh zero-fund
-broadcast approval remain mandatory separate gates.
+The production deployment script remains fail-closed and is not retroactively
+promoted by the experimental deployment. External review, production RPC
+admission, exact on-chain activation review, and a signed runtime release
+manifest remain mandatory before the control-plane process may observe this
+tuple as an enabled Base mainnet runtime. Funding and payment authorization are
+later, independent ceremonies.
 
 ## Required sequence
 
-1. Complete external contract review and bind its SHA-256 digest into a reviewed release plan.
-2. Designate the hardware deployer, production Safe, Safe owners/threshold, directory publisher, directory pauser, registry admin, spend authorizer, and organization domain in a separate promotion PR.
-3. Replace the zero constants in `contracts/script/DeployASCPBaseMainnet.s.sol` only in that reviewed PR. The committed script must otherwise remain unable to broadcast.
-4. Run the full script on a pinned Base mainnet fork and compare all constructor bindings and creation bytecode.
-   The promoted script must pin the canonical USDC runtime code hash and the
-   deployer's exact starting nonce, validate the production Safe's reviewed
-   runtime, singleton, owner set, threshold, nonce and empty module list, and
-   prove that all four predicted CREATE addresses have no
-   code, nonce, native balance, or USDC balance before broadcast.
-5. Obtain explicit zero-fund broadcast approval. Deploy the four contracts through the hardware-wallet ceremony. Do not enable the Safe module or transfer assets in the deployment transaction.
-6. Verify source and runtime bytecode independently through every admitted paid RPC provider.
-7. Execute and reconcile the separately approved Safe actions that enable the module, allowlist the exact escrow code hash, publish the initial directory root, and activate the verifier. Keep funding disabled.
-8. Build the release image from the immutable reviewed commit in the trusted
+1. Complete independent review of the exact deployed source commit and bind its
+   SHA-256 digest into a reviewed activation plan. Review must treat the current
+   on-chain addresses and runtime code hashes as immutable inputs.
+2. Complete production RPC admission with two or more independent paid providers.
+3. Re-verify every deployment receipt, constructor binding, runtime code hash,
+   source-verification result, Safe owner/threshold state, module state, escrow
+   allowlist state, and zero balances through the admitted providers.
+4. Review the exact authority rules and the separately proposed Safe actions.
+   Do not enable the module, allowlist the escrow, publish a directory root, or
+   activate a verifier merely to make the dashboard or runtime appear live.
+5. Keep the zero-fund binding profile incomplete until steps 1–4 are evidenced.
+6. Build the release image from the immutable reviewed commit in the trusted
    build pipeline, push it to the private registry, and pin its immutable image
    digest. Extract `/flowops/control-plane-api` from that exact image and obtain
    its canonical artifact digest:
@@ -55,7 +67,7 @@ broadcast approval remain mandatory separate gates.
    go run ./cmd/release-manifest artifact-digest /secure/control-plane-api
    ```
 
-9. Fill the schema-v2 `deployments/base-mainnet-ascp-release.template.json` with canonical
+7. Fill the schema-v2 `deployments/base-mainnet-ascp-release.template.json` with canonical
    evidence, including the CLI-produced `controlPlaneArtifactSha256`. Sign it offline:
 
    ```sh
@@ -64,20 +76,20 @@ broadcast approval remain mandatory separate gates.
      > /secure/signed-release.json
    ```
 
-10. Verify the signed file using only the production public key:
+8. Verify the signed file using only the production public key:
 
    ```sh
    FLOWOPS_BASE_MAINNET_RELEASE_PUBLIC_KEY_B64=... \
      go run ./cmd/release-manifest verify /secure/signed-release.json
    ```
 
-11. Deploy the exact registry image digest used in step 8. The mainnet build must include
+9. Deploy the exact registry image digest used in step 6. The mainnet build must include
     `--build-arg FLOWOPS_SOURCE_COMMIT=<the exact 40-character reviewed commit>`
     because startup requires the baked claim to equal signed `sourceCommit`. That
     caller-controlled value is not sufficient artifact provenance and cannot
     replace the signed executable digest.
-12. Configure the runtime with the exact manifest and matching ASCP and observer tuples. Base mainnet startup hashes the running executable inode and requires it to equal signed `controlPlaneArtifactSha256`; it also requires the baked build commit to equal signed `sourceCommit`, rejects any quorum, confirmation, reorg, freshness, timeout, interval, or recovery setting that differs from the signed profile, then checks every contract and canonical USDC through the complete paid-RPC set before opening PostgreSQL or serving traffic.
-13. Run a zero-fund soak. Funding requires a second signed manifest carrying the separately reviewed funded-pilot evidence digest and another explicit human approval.
+10. Configure the runtime with the exact manifest and matching ASCP and observer tuples. Base mainnet startup hashes the running executable inode and requires it to equal signed `controlPlaneArtifactSha256`; it also requires the baked build commit to equal signed `sourceCommit`, rejects any quorum, confirmation, reorg, freshness, timeout, interval, or recovery setting that differs from the signed profile, then checks every contract and canonical USDC through the complete paid-RPC set before opening PostgreSQL or serving traffic.
+11. Run a zero-fund soak. Funding requires a second signed manifest carrying the separately reviewed funded-pilot evidence digest and another explicit human approval.
 
 ## Required runtime variables
 

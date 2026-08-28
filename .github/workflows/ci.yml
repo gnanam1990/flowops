@@ -70,6 +70,8 @@ jobs:
         run: make test-deployment-evidence
       - name: Validate Base mainnet readiness remains blocked
         run: make test-mainnet-readiness
+      - name: Validate Base mainnet runtime and dashboard bindings
+        run: make test-ascp-mainnet-runtime-bindings
       - name: Validate Base mainnet deployer and source ceremony
         run: make test-mainnet-deployer-verification
       - name: Validate external security-review package remains fail-closed

@@ -213,11 +213,11 @@ test("renders a fail-closed public control room without illustrative organizatio
 	assert.match(html, /Public health evidence is unavailable/);
   assert.match(html, /Organization controls locked/);
   assert.match(html, /Economic activity/);
-	assert.match(html, /Mainnet intent anchor is not active/);
-	assert.match(html, /Source verified<\/dt><dd>Unavailable/);
-  assert.match(html, /No functional mainnet intent contract is being represented as live/);
-  assert.match(html, /USDC deposits/);
-  assert.match(html, /Do not send ETH or tokens/);
+	assert.match(html, /Payment contract graph deployed; activation blocked/);
+	assert.match(html, /Source verified<\/dt><dd class="status-verified">4 \/ 4/);
+  assert.match(html, /Safe module is disabled, the escrow is not allowlisted/);
+  assert.match(html, /Runtime<\/dt><dd>Blocked/);
+  assert.match(html, /Funds<\/dt><dd>Zero/);
   assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
 });
 
@@ -329,7 +329,7 @@ test("provides explicit loopback-only local sign-in and sign-out without grantin
   assert.equal(enrollment.headers.get("location"), "/api/local-auth/signin?return_to=%2Fenrollment");
 });
 
-test("shows the verified intent anchor as primary and keeps the proposal anchor as legacy evidence", async () => {
+test("shows the canonical deployed-inactive ASCP graph and keeps anchors as supporting evidence", async () => {
   const address = "0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA";
   const legacyAddress = "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250";
   const response = await render({
@@ -340,21 +340,27 @@ test("shows the verified intent anchor as primary and keeps the proposal anchor 
   });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Functional intent anchor live/);
-  assert.match(html, new RegExp(address));
-  assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${address}\\?tab=contract`));
-  assert.match(html, /View verified source on Base Blockscout/);
-  assert.match(html, /immutable, controller-scoped intent records/i);
+  assert.match(html, /BASE MAINNET · DEPLOYED \/ INACTIVE/);
+  assert.match(html, /Payment contract graph deployed; activation blocked/);
+  for (const contractAddress of [
+    "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1",
+    "0x15332e8c8e230e8a1c05095196dac42ba8cc6906",
+    "0x214cbbb2190075ba43fa6518560d37c09720e0c4",
+    "0x942b83421c3ac4e1a04753e5e0208fd56cad649e",
+  ]) {
+    assert.match(html, new RegExp(contractAddress));
+    assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${contractAddress}\\?tab=contract`));
+  }
+  assert.match(html, /Open intent evidence workspace/);
   assert.match(html, /Legacy proposal evidence:/);
   assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${legacyAddress}\\?tab=contract`));
-  assert.match(html, /Production ready/);
+  assert.match(html, /Contract graph/);
   assert.match(html, /Source verified/);
-  assert.match(html, /Source verified<\/dt><dd class="status-verified"><a[^>]+>Yes ↗<\/a>/);
-  assert.match(html, /Vault creation/);
-  assert.match(html, /USDC deposits/);
-  assert.match(html, /Do not send ETH or tokens/);
-  assert.doesNotMatch(html, /Production ready<\/dt><dd>Yes/);
-  assert.doesNotMatch(html, /Experimental evidence anchor only/);
+  assert.match(html, /Source verified<\/dt><dd class="status-verified">4 \/ 4/);
+  assert.match(html, /Runtime<\/dt><dd>Blocked/);
+  assert.match(html, /Funds<\/dt><dd>Zero/);
+  assert.match(html, /Module disabled · escrow not allowlisted/);
+  assert.doesNotMatch(html, /payment path is operational/i);
 
   const invalid = await render({
     env: {
@@ -363,23 +369,22 @@ test("shows the verified intent anchor as primary and keeps the proposal anchor 
     },
   });
   const invalidHtml = await invalid.text();
-  assert.match(invalidHtml, /Mainnet intent anchor is not active/);
+  assert.match(invalidHtml, /Payment contract graph deployed; activation blocked/);
   assert.doesNotMatch(invalidHtml, /0xnot-a-mainnet-address/);
   assert.match(invalidHtml, /Legacy proposal evidence:/);
   assert.match(invalidHtml, new RegExp(`https://base\\.blockscout\\.com/address/${legacyAddress}\\?tab=contract`));
-  assert.match(invalidHtml, /Source verified<\/dt><dd>Unavailable/);
+  assert.doesNotMatch(invalidHtml, /Open intent evidence workspace/);
 });
 
 test("does not claim source verification for an unpinned mainnet address", async () => {
   const address = "0x3333333333333333333333333333333333333333";
   const response = await render({
+    path: "/mainnet",
     env: { FLOWOPS_MAINNET_INTENT_ANCHOR_ADDRESS: address },
   });
   const html = await response.text();
-  assert.match(html, /Functional intent anchor live/);
   assert.match(html, new RegExp(address));
-  assert.match(html, /Source verified<\/dt><dd>Unavailable/);
-  assert.doesNotMatch(html, /status-verified/);
+  assert.doesNotMatch(html, /View verified source on Base Blockscout/);
 });
 
 test("renders validated live public health without exposing organization records", async (t) => {
