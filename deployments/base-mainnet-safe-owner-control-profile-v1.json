@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "profileId": "base-mainnet-safe-owner-control-v1",
+  "purpose": "FLOWOPS BASE MAINNET SAFE OWNER CONTROL V1",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "sourceCommit": "ae8ebfdfa8d1e6013888134d72610f9ab9032b53",
+  "candidate": {
+    "path": "base-mainnet-ascp-deployment-candidate-v1.json",
+    "sha256": "0x18aa4b01464d2b0f9c485a0ebca3e5c1412a320323a662d93e770cc92ba4f822"
+  },
+  "safe": {
+    "address": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "runtimeCodeHash": "0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c",
+    "implementation": "0x29fcb43b46531bca003ddc8fcb67ffe91900c762",
+    "owners": [
+      "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+      "0xe88872f94013e4584bceafb5d5f87da291d086d2"
+    ],
+    "threshold": 2,
+    "nonce": 0
+  },
+  "maximumAgeSeconds": 3600,
+  "minimumOwnerSignatures": 2
+}

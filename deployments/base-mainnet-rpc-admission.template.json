@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "providers": [
+    {
+      "name": "provider_a",
+      "operator": "unassigned_a",
+      "failureDomain": "unassigned_a",
+      "serviceTier": "unreviewed",
+      "productionEligible": false
+    },
+    {
+      "name": "provider_b",
+      "operator": "unassigned_b",
+      "failureDomain": "unassigned_b",
+      "serviceTier": "unreviewed",
+      "productionEligible": false
+    }
+  ]
+}
