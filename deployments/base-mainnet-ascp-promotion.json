@@ -29,7 +29,23 @@
     "deploymentBlock": 50535016,
     "deploymentBlockHash": "0x711c6806692adf83641431ac833c1df61d7a44ece8f6bb82bbd30009513fdc20",
     "deploymentStatus": "success",
-    "deploymentFinalized": false,
+    "deploymentFinalized": true,
+    "finality": {
+      "verifiedAt": "2026-08-28T03:34:59Z",
+      "deploymentBlock": 50535016,
+      "rpcObservations": [
+        {
+          "url": "https://mainnet.base.org",
+          "latestBlock": 50549390,
+          "finalizedBlock": 50548759
+        },
+        {
+          "url": "https://base-mainnet.public.blastapi.io",
+          "latestBlock": 50549376,
+          "finalizedBlock": 50548759
+        }
+      ]
+    },
     "verification": {
       "verifiedAt": "2026-08-27T19:39:20Z",
       "latestBlock": 50535106,
@@ -104,12 +120,11 @@
     "fundingApproved": false
   },
   "unresolved": [
-    "safe-deployment-finality",
     "safe-owner-control-proof",
     "ascp-independent-contract-review",
     "two-independent-production-rpc-admissions",
     "signed-runtime-release-manifest",
     "fresh-zero-fund-broadcast-approval"
   ],
-  "notes": "The Base mainnet Safe was created after the exact approval APPROVE BASE MAINNET SAFE CREATION. Its successful receipt, runtime, owners, threshold, nonce, empty module set, and zero balances were independently observed through two RPCs. The receipt was not yet included by the finalized block at the verification snapshot, and control of the other owner keys remains unproved. The ASCP contracts remain unapproved and undeployed. The ASCP deployer must not deploy the Safe because that would change its pinned nonce and all four predicted addresses. No contract deployment, activation, token approval, transfer, or funding is authorized by this record."
+  "notes": "The Base mainnet Safe was created after the exact approval APPROVE BASE MAINNET SAFE CREATION. Its successful receipt, runtime, owners, threshold, nonce, empty module set, zero balances, and finality were independently observed through two read-only public RPCs. Those public endpoints are not production RPC admissions. Control of the other owner keys remains unproved. The ASCP contracts remain unapproved and undeployed. The ASCP deployer must not deploy the Safe because that would change its pinned nonce and all four predicted addresses. No contract deployment, activation, token approval, transfer, or funding is authorized by this record."
 }

@@ -2,6 +2,35 @@
 
 Status: structurally implemented and deliberately blocked; no deployment or funding is authorized.
 
+## Current preparation state
+
+The production Safe is finalized on Base mainnet, but the ASCP contract graph
+is not approved or deployed. The exact preparation-only candidate is recorded
+at `deployments/base-mainnet-ascp-deployment-candidate-v1.json`; its SHA-256 is
+stored separately in
+`deployments/base-mainnet-ascp-deployment-candidate-v1.sha256`.
+
+The candidate binds the current source baseline, compiler and dependency
+revisions, deployer nonce, finalized 2-of-3 Safe, authorities, organization
+domain, canonical USDC, four predicted CREATE addresses, constructor arguments,
+creation bytecode, encoded constructor arguments, complete init-code hashes,
+initial caps, and required write-inert post-deployment state. Run:
+
+```sh
+make test-ascp-mainnet-candidate
+```
+
+With `BASE_MAINNET_FORK_RPC_URL` set, the same target also deploys the exact
+candidate graph inside a pinned finalized Base mainnet fork and verifies every
+address and zero-fund invariant. It never signs or broadcasts a transaction.
+
+This candidate is deliberately not the release-plan digest or a promotion
+commit. `DeployASCPBaseMainnet.s.sol` still pins the zero deployer, zero nonce,
+zero Safe, zero review digest, zero release-plan digest, and disabled broadcast.
+External review, production RPC admission, owner-control evidence, the reviewed
+promotion commit, signed runtime release manifest, and a fresh zero-fund
+broadcast approval remain mandatory separate gates.
+
 ## Required sequence
 
 1. Complete external contract review and bind its SHA-256 digest into a reviewed release plan.

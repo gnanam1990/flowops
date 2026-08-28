@@ -6,7 +6,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 record="${FLOWOPS_ASCP_MAINNET_PROMOTION_RECORD:-${repo_root}/deployments/base-mainnet-ascp-promotion.json}"
 primary_rpc="${BASE_MAINNET_RPC_URL_PRIMARY:-https://mainnet.base.org}"
-secondary_rpc="${BASE_MAINNET_RPC_URL_SECONDARY:-https://base.drpc.org}"
+secondary_rpc="${BASE_MAINNET_RPC_URL_SECONDARY:-https://base-mainnet.public.blastapi.io}"
 
 cd "${repo_root}"
 FLOWOPS_ASCP_MAINNET_PROMOTION_RECORD="${record}" deploy/ascp/check-base-mainnet-promotion.sh >/dev/null

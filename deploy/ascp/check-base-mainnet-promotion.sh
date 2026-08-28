@@ -35,7 +35,24 @@ jq -e '
   and .safe.deploymentBlock == 50535016
   and .safe.deploymentBlockHash == "0x711c6806692adf83641431ac833c1df61d7a44ece8f6bb82bbd30009513fdc20"
   and .safe.deploymentStatus == "success"
-  and .safe.deploymentFinalized == false
+  and .safe.deploymentFinalized == true
+  and .safe.finality == {
+    verifiedAt: "2026-08-28T03:34:59Z",
+    deploymentBlock: 50535016,
+    rpcObservations: [
+      {
+        url: "https://mainnet.base.org",
+        latestBlock: 50549390,
+        finalizedBlock: 50548759
+      },
+      {
+        url: "https://base-mainnet.public.blastapi.io",
+        latestBlock: 50549376,
+        finalizedBlock: 50548759
+      }
+    ]
+  }
+  and (.safe.finality.rpcObservations | all(.finalizedBlock >= $record.safe.deploymentBlock))
   and (.safe.verification.verifiedAt | test("^2026-08-27T19:39:20Z$"))
   and .safe.verification.latestBlock == 50535106
   and .safe.verification.finalizedBlock == 50534557
@@ -84,7 +101,6 @@ jq -e '
   and (.unresolved | sort == [
     "ascp-independent-contract-review",
     "fresh-zero-fund-broadcast-approval",
-    "safe-deployment-finality",
     "safe-owner-control-proof",
     "signed-runtime-release-manifest",
     "two-independent-production-rpc-admissions"

@@ -2,7 +2,8 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {DeployASCPBaseMainnet} from "../script/DeployASCPBaseMainnet.s.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {DeployASCPBaseMainnet, IMainnetSafeDeploymentTarget} from "../script/DeployASCPBaseMainnet.s.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 contract ProductionSafeFixture {
@@ -106,7 +107,59 @@ contract ReadyASCPMainnetDeploymentHarness is DeployASCPBaseMainnet {
     }
 }
 
+/// @dev Preparation-only harness for a pinned read-only Base mainnet fork. It
+///      cannot change the committed deployment package or authorize broadcast.
+contract PreparedASCPMainnetCandidateHarness is DeployASCPBaseMainnet {
+    function _designatedDeployer() internal pure override returns (address) {
+        return 0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B;
+    }
+
+    function _expectedDeployerNonce() internal pure override returns (uint256) {
+        return 1;
+    }
+
+    function _productionSafe() internal pure override returns (address) {
+        return 0x13E9Fa8d49Ee3E3b456Db71d111Da9b78fABD518;
+    }
+
+    function _directoryPublisher() internal pure override returns (address) {
+        return 0xb6e55668efB27a1571DBe14A9e388eed8A654fAC;
+    }
+
+    function _directoryPauser() internal pure override returns (address) {
+        return 0xec8757c4DC1184F3ECE812295D5aC5b570aB0Ce0;
+    }
+
+    function _registryAdmin() internal pure override returns (address) {
+        return 0x0D9973D582B694E8Ce101BD17e5768c35BacbE60;
+    }
+
+    function _spendAuthorizer() internal pure override returns (address) {
+        return 0x90F4c2af31bCBf3f1e0A800bd606fc00BC0A446b;
+    }
+
+    function _organizationDomain() internal pure override returns (bytes32) {
+        return 0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93;
+    }
+
+    function _externalReviewDigest() internal pure override returns (bytes32) {
+        return keccak256("PREPARATION_ONLY_EXTERNAL_REVIEW_PLACEHOLDER");
+    }
+
+    function _releasePlanDigest() internal pure override returns (bytes32) {
+        return keccak256("PREPARATION_ONLY_RELEASE_PLAN_PLACEHOLDER");
+    }
+
+    function _broadcastEnabled() internal pure override returns (bool) {
+        return true;
+    }
+}
+
 contract DeployASCPBaseMainnetTest is Test {
+    uint256 internal constant PREPARED_FORK_BLOCK = 50_548_759;
+    address internal constant PREPARED_DEPLOYER = 0x3c1DAA7a6193848320e9477cBcfb7F512c0Fd74B;
+    address internal constant PREPARED_SAFE = 0x13E9Fa8d49Ee3E3b456Db71d111Da9b78fABD518;
+    bytes32 internal constant PREPARED_ORG_DOMAIN = 0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93;
     DeployASCPBaseMainnet internal deployment;
 
     function setUp() public {
@@ -313,6 +366,73 @@ contract DeployASCPBaseMainnetTest is Test {
         assertEq(address(deployed.agentRegistry).balance, 0);
         assertEq(address(deployed.callEscrow).balance, 0);
         assertEq(address(deployed.spendModule).balance, 0);
+    }
+
+    function test_preparedProductionCandidateDeploysExactWriteInertGraphOnPinnedFork() public {
+        string memory rpcURL = vm.envOr("BASE_MAINNET_FORK_RPC_URL", string(""));
+        if (bytes(rpcURL).length == 0) {
+            vm.skip(true, "set BASE_MAINNET_FORK_RPC_URL to run prepared Base mainnet candidate evidence");
+        }
+        vm.createSelectFork(rpcURL, PREPARED_FORK_BLOCK);
+        assertEq(block.chainid, 8453);
+        assertEq(vm.getNonce(PREPARED_DEPLOYER), 1);
+
+        PreparedASCPMainnetCandidateHarness candidate = new PreparedASCPMainnetCandidateHarness();
+        DeployASCPBaseMainnet.Deployment memory deployed = candidate.run();
+
+        assertEq(address(deployed.serviceDirectory), 0x2bc89B98aDA8335FeaB04d5b7B5Af6A63EB95FD1);
+        assertEq(address(deployed.agentRegistry), 0x15332E8C8e230E8A1C05095196DAC42BA8Cc6906);
+        assertEq(address(deployed.callEscrow), 0x214CBBB2190075Ba43fA6518560d37C09720E0C4);
+        assertEq(address(deployed.spendModule), 0x942b83421C3Ac4E1A04753e5e0208FD56CAd649e);
+        assertEq(vm.getNonce(PREPARED_DEPLOYER), 5);
+
+        assertEq(deployed.serviceDirectory.governor(), PREPARED_SAFE);
+        assertEq(deployed.serviceDirectory.directoryPublisher(), 0xb6e55668efB27a1571DBe14A9e388eed8A654fAC);
+        assertEq(deployed.serviceDirectory.pauser(), 0xec8757c4DC1184F3ECE812295D5aC5b570aB0Ce0);
+        assertEq(deployed.serviceDirectory.orgDomain(), PREPARED_ORG_DOMAIN);
+        assertEq(deployed.serviceDirectory.currentVersion(), 0);
+        assertEq(deployed.serviceDirectory.currentRoot(), bytes32(0));
+
+        assertEq(deployed.agentRegistry.governor(), PREPARED_SAFE);
+        assertEq(deployed.agentRegistry.registryAdmin(), 0x0D9973D582B694E8Ce101BD17e5768c35BacbE60);
+        assertEq(deployed.agentRegistry.orgDomain(), PREPARED_ORG_DOMAIN);
+        assertEq(deployed.agentRegistry.agentCount(), 0);
+
+        assertEq(address(deployed.callEscrow.usdc()), candidate.BASE_MAINNET_USDC());
+        assertEq(address(deployed.callEscrow.serviceDirectory()), address(deployed.serviceDirectory));
+        assertEq(deployed.callEscrow.safe(), PREPARED_SAFE);
+        assertEq(deployed.callEscrow.governor(), PREPARED_SAFE);
+        assertEq(deployed.callEscrow.totalLocked(), 0);
+        assertFalse(deployed.callEscrow.emergencyPaused());
+
+        assertEq(deployed.spendModule.safe(), PREPARED_SAFE);
+        assertEq(address(deployed.spendModule.token()), candidate.BASE_MAINNET_USDC());
+        assertEq(deployed.spendModule.spendAuthorizer(), 0x90F4c2af31bCBf3f1e0A800bd606fc00BC0A446b);
+        (uint256 perTransaction, uint256 perDay, uint256 allowanceCeiling) = deployed.spendModule.caps();
+        assertEq(perTransaction, 1_000_000);
+        assertEq(perDay, 10_000_000);
+        assertEq(allowanceCeiling, 10_000_000);
+        assertEq(deployed.spendModule.executedPrincipal(), 0);
+        assertEq(deployed.spendModule.escrowAllowlist(address(deployed.callEscrow)), bytes32(0));
+        assertFalse(deployed.spendModule.emergencyPaused());
+
+        assertFalse(IMainnetSafeDeploymentTarget(PREPARED_SAFE).isModuleEnabled(address(deployed.spendModule)));
+        assertEq(IMainnetSafeDeploymentTarget(PREPARED_SAFE).getThreshold(), 2);
+        assertEq(IMainnetSafeDeploymentTarget(PREPARED_SAFE).getOwners().length, 3);
+        assertEq(IERC20(candidate.BASE_MAINNET_USDC()).balanceOf(PREPARED_SAFE), 0);
+        assertEq(PREPARED_SAFE.balance, 0);
+
+        address[4] memory contracts_ = [
+            address(deployed.serviceDirectory),
+            address(deployed.agentRegistry),
+            address(deployed.callEscrow),
+            address(deployed.spendModule)
+        ];
+        for (uint256 index = 0; index < contracts_.length; ++index) {
+            assertGt(contracts_[index].code.length, 0);
+            assertEq(contracts_[index].balance, 0);
+            assertEq(IERC20(candidate.BASE_MAINNET_USDC()).balanceOf(contracts_[index]), 0);
+        }
     }
 
     function test_promotedHarnessRejectsContractWithoutValidSafeState() public {

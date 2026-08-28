@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "status": "prepared-unapproved",
+  "purpose": "zero-fund-ascp-v4-contract-graph",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "preparedAt": "2026-08-28T03:25:29Z",
+  "sourceBaseline": {
+    "commit": "cd7ec521aa7ccc820fea9cf7cd3396034541203b",
+    "requiresPromotionCommit": true,
+    "deploymentScript": {
+      "path": "contracts/script/DeployASCPBaseMainnet.s.sol",
+      "sha256": "0x063559ff3f630f116c3035d45bdcad63ef7a8ebc98b1e38661a43fdb2b9b109f"
+    },
+    "contractSources": [
+      {
+        "name": "service_directory",
+        "path": "contracts/src/ServiceDirectory.sol",
+        "sha256": "0x96383f78d182e194fe5c4e01ca57f4929503258c6558f3b9f693ed7c630f54bc"
+      },
+      {
+        "name": "agent_registry",
+        "path": "contracts/src/AgentRegistry.sol",
+        "sha256": "0x70e41f43eb8b3e14d9a100b86738dcaa92db6c51ff3ebcd5c55fdd807299bca4"
+      },
+      {
+        "name": "ascp_call_escrow",
+        "path": "contracts/src/ASCPCallEscrow.sol",
+        "sha256": "0xdf62c9de2665a2a481a8344cc2d6eaa17baef49511b5a32188eda4d487c1ae8e"
+      },
+      {
+        "name": "ascp_spend_module",
+        "path": "contracts/src/ASCPSpendModule.sol",
+        "sha256": "0x974dec9237a927258faa232c9e97ba6628ae4d099cbff5208bcd54a72b440efe"
+      }
+    ],
+    "foundryConfiguration": {
+      "path": "foundry.toml",
+      "sha256": "0xe843a712bc7043b7ac16ef357ee29c300ba663a0d971d6f229c1c11b84bd88b0",
+      "solc": "0.8.26",
+      "evmVersion": "cancun",
+      "optimizer": true,
+      "optimizerRuns": 200
+    },
+    "dependencies": {
+      "forgeStdCommit": "77041d2ce690e692d6e03cc812b57d1ddaa4d505",
+      "openzeppelinContractsCommit": "c64a1edb67b6e3f4a15cca8909c9482ad33a02b0"
+    }
+  },
+  "structuralGates": {
+    "committedScriptDeployer": "0x0000000000000000000000000000000000000000",
+    "committedScriptExpectedNonce": 0,
+    "committedScriptSafe": "0x0000000000000000000000000000000000000000",
+    "externalReviewDigest": null,
+    "releasePlanDigest": null,
+    "broadcastEnabled": false,
+    "deploymentAuthorized": false,
+    "fundingAuthorized": false
+  },
+  "deployer": {
+    "address": "0x3c1daa7a6193848320e9477cbcfb7f512c0fd74b",
+    "expectedNonce": 1,
+    "observedLatestNonce": 1,
+    "observedPendingNonce": 1,
+    "observedBalanceWei": "147950415987658"
+  },
+  "safe": {
+    "address": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "owners": [
+      "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+      "0xe88872f94013e4584bceafb5d5f87da291d086d2"
+    ],
+    "threshold": 2,
+    "deploymentTransaction": "0x3a38c0b165281173fa688f8ca8aad51bad719bce9e00d0157547664affc32185",
+    "deploymentBlock": 50535016,
+    "finalized": true,
+    "nonce": 0,
+    "enabledModules": [],
+    "nativeBalanceWei": "0",
+    "usdcBalanceAtomic": "0"
+  },
+  "asset": {
+    "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "symbol": "USDC",
+    "decimals": 6,
+    "runtimeCodeHash": "0xa6705a10bb756b5dea144591118be77d7af0c3eee3bf2dfe2583dcb0364fefab"
+  },
+  "organizationDomain": "0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93",
+  "authorities": {
+    "governor": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "directoryPublisher": "0xb6e55668efb27a1571dbe14a9e388eed8a654fac",
+    "directoryPauser": "0xec8757c4dc1184f3ece812295d5ac5b570ab0ce0",
+    "registryAdmin": "0x0d9973d582b694e8ce101bd17e5768c35bacbe60",
+    "spendAuthorizer": "0x90f4c2af31bcbf3f1e0a800bd606fc00bc0a446b"
+  },
+  "initialCapsAtomic": {
+    "perTransaction": "1000000",
+    "perDay": "10000000",
+    "allowanceCeiling": "10000000"
+  },
+  "contracts": [
+    {
+      "name": "service_directory",
+      "artifact": "contracts/src/ServiceDirectory.sol:ServiceDirectory",
+      "creationNonce": 1,
+      "predictedAddress": "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1",
+      "constructorSignature": "f(address,address,address,bytes32)",
+      "constructorArguments": [
+        "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+        "0xb6e55668efb27a1571dbe14a9e388eed8a654fac",
+        "0xec8757c4dc1184f3ece812295d5ac5b570ab0ce0",
+        "0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93"
+      ],
+      "creationBytecodeKeccak": "0xfe18414eb8fddf368ecf109d666a3e648734f8b513224d754ed36d7c571d677c",
+      "constructorArgumentsKeccak": "0xc637ac119d5993ca6a80b7cfa148c35dd98862153e25acfd7c2570fcd42c74e4",
+      "initCodeKeccak": "0xb5e73df5aa9c7fbc346d164f8f8490dfcf0a83e70458a923668a97df3711553f",
+      "initCodeBytes": 13875
+    },
+    {
+      "name": "agent_registry",
+      "artifact": "contracts/src/AgentRegistry.sol:AgentRegistry",
+      "creationNonce": 2,
+      "predictedAddress": "0x15332e8c8e230e8a1c05095196dac42ba8cc6906",
+      "constructorSignature": "f(address,address,bytes32)",
+      "constructorArguments": [
+        "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+        "0x0d9973d582b694e8ce101bd17e5768c35bacbe60",
+        "0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93"
+      ],
+      "creationBytecodeKeccak": "0xe065d45712960974b3bf758fa1c60be62e0825a5bc88e53723912a3a9d69a665",
+      "constructorArgumentsKeccak": "0x62ce19153c16f42ad53df3a409ad9f001db6dff66c2f508efcb0a8e904179f5a",
+      "initCodeKeccak": "0x478b36312cc0585c43d7c51139e9f39ae63fe2527f634153336a99e7ded4e286",
+      "initCodeBytes": 9304
+    },
+    {
+      "name": "ascp_call_escrow",
+      "artifact": "contracts/src/ASCPCallEscrow.sol:ASCPCallEscrow",
+      "creationNonce": 3,
+      "predictedAddress": "0x214cbbb2190075ba43fa6518560d37c09720e0c4",
+      "constructorSignature": "f(address,address,address,address)",
+      "constructorArguments": [
+        "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1",
+        "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+        "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518"
+      ],
+      "creationBytecodeKeccak": "0xef75661de09baffbf4fbf97e1992205767d2c889f4ca4f5f25623d52ac1edad0",
+      "constructorArgumentsKeccak": "0x37219a8f74a0d6c0af80021f912c63bf668f2b1c02448f0f0758cea9b97a562e",
+      "initCodeKeccak": "0x6da11858f9b19841cc80aacdefd19d8ad616b4a29dfbc3e435a8930517ea5cd2",
+      "initCodeBytes": 14901
+    },
+    {
+      "name": "ascp_spend_module",
+      "artifact": "contracts/src/ASCPSpendModule.sol:ASCPSpendModule",
+      "creationNonce": 4,
+      "predictedAddress": "0x942b83421c3ac4e1a04753e5e0208fd56cad649e",
+      "constructorSignature": "f(address,address,address,(uint256,uint256,uint256))",
+      "constructorArguments": [
+        "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+        "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "0x90f4c2af31bcbf3f1e0a800bd606fc00bc0a446b",
+        [
+          "1000000",
+          "10000000",
+          "10000000"
+        ]
+      ],
+      "creationBytecodeKeccak": "0x65afb819cc4853a06d7a9c10b498078c6b7f35c7dea32170bff9421f808c4cc6",
+      "constructorArgumentsKeccak": "0x4c7c7871e36ae81d32841215c2aff3ea815737a12ca46983c43dbc6073e590c0",
+      "initCodeKeccak": "0x23fc5e93570cecf7511333955be84251280732bd2d69c643885cfc4615e9dc8c",
+      "initCodeBytes": 15005
+    }
+  ],
+  "requiredInitialState": {
+    "moduleEnabled": false,
+    "escrowAllowlisted": false,
+    "directoryVersion": 0,
+    "directoryRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "agentCount": 0,
+    "verifierActivated": false,
+    "usdcApproved": false,
+    "totalLockedAtomic": "0",
+    "executedPrincipalAtomic": "0",
+    "contractNativeBalancesWei": "0",
+    "contractUsdcBalancesAtomic": "0"
+  },
+  "readOnlyEvidence": {
+    "promotionRecord": "deployments/base-mainnet-ascp-promotion.json",
+    "safeVerifier": "deploy/ascp/verify-base-mainnet-safe-readonly.sh",
+    "observedAt": "2026-08-28T03:34:59Z",
+    "publicRpcUrls": [
+      "https://mainnet.base.org",
+      "https://base-mainnet.public.blastapi.io"
+    ],
+    "productionRpcAdmissionComplete": false,
+    "allPredictedAddressesClean": true
+  },
+  "unresolved": [
+    "safe-owner-control-proof",
+    "ascp-independent-contract-review",
+    "two-independent-production-rpc-admissions",
+    "signed-runtime-release-manifest",
+    "fresh-zero-fund-broadcast-approval",
+    "reviewed-promotion-commit"
+  ],
+  "notes": "Preparation artifact only. It binds exact current inputs and reproducible init-code hashes while the committed deployment script remains structurally unable to broadcast. This artifact is not a release-plan digest, external-review artifact, deployment approval, Safe activation approval, token approval, transfer approval, or funding approval."
+}
