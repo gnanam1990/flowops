@@ -182,7 +182,7 @@ test("binds dashboard writes to the same stepped-up member and authoritative app
 	assert.deepEqual(await recoveredASCP.json(), { commandId: "cmd_ascp_1", state: "SUCCEEDED", kind: "ascp.approval.decide", errorCode: "", auditId: "" });
 });
 
-test("renders a fail-closed public control room without illustrative organization data", async () => {
+test("renders a concise fail-closed Base mainnet public page", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
@@ -201,49 +201,24 @@ test("renders a fail-closed public control room without illustrative organizatio
     html,
     /<meta name="twitter:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i,
   );
-  assert.match(html, /Agent spend, under control\./);
-  assert.match(html, /Status unavailable/);
-	assert.match(html, /Base network unavailable/);
-  assert.match(html, /Local sign-in disabled/);
-  assert.match(html, /Enable local sign-in to continue/);
+  assert.match(html, /Agent payments\./);
+  assert.match(html, /Bounded before they move\./);
+  assert.match(html, /BASE MAINNET · PAYMENT CONTROL PLANE/);
+  assert.match(html, /Mainnet runtime not connected/);
   assert.doesNotMatch(html, /href="\/signin-with-chatgpt/);
-  assert.match(html, /Pending chain evidence/);
-  assert.match(html, /Non-custodial/);
-  assert.match(html, /Observer quorum/);
-	assert.match(html, /Public health evidence is unavailable/);
-  assert.match(html, /Organization controls locked/);
-  assert.match(html, /Economic activity/);
-	assert.match(html, /Payment controls activated; funding remains disabled/);
-	assert.match(html, /Source verified<\/dt><dd class="status-verified">4 \/ 4/);
-  assert.match(html, /Safe module is enabled and bound to the exact escrow runtime code hash/);
-  assert.match(html, /Onchain capability<\/dt><dd class="status-verified">Enabled/);
-  assert.match(html, /Funds<\/dt><dd>Zero/);
+  assert.match(html, /Contracts<\/dt><dd>4/);
+  assert.match(html, /Source<\/dt><dd>Verified/);
+  assert.match(html, /Safe module<\/dt><dd>Enabled/);
+  assert.match(html, /Funding<\/dt><dd>Zero/);
+  assert.match(html, /Base mainnet · Chain ID 8453/);
+  assert.doesNotMatch(html, /Sepolia|Pending chain evidence|Organization controls locked|Economic activity|Legacy proposal/i);
   assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
 });
 
-test("renders a Base Batches reviewer brief with only verifiable product evidence", async () => {
+test("retires the obsolete Base reviewer route", async () => {
   const response = await render({ path: "/base" });
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, /<title>FlowOps — Base Batches 004 Reviewer Brief<\/title>/i);
-  assert.match(html, /<meta property="og:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i);
-  assert.match(html, /<meta name="twitter:image" content="http:\/\/localhost(?::3000)?\/og\.png"\s*\/?>/i);
-  assert.match(html, /BASE BATCHES 004/);
-  assert.match(html, /Working MVP · pilot-gated/);
-  assert.match(html, /Payments \+ AI agents/);
-  assert.match(html, /Exact-match source verified on Blockscout/);
-  assert.match(html, /Sixty-seven criteria carry executable local evidence/);
-  assert.match(html, /FLOWOPS_BASE_BATCHES_004_APPLICATION_DRAFT\.md/);
-  assert.match(html, /href="\/">Review the working product/);
-  assert.match(html, /href="https:\/\/base\.blockscout\.com\/address\/0x149d03ec527ad8667d47e7b6a2d316dd54033250\?tab=contract"/);
-  assert.match(html, /href="https:\/\/github\.com\/gnanam1990\/flowops\/blob\/main\/docs\/evidence\/REFERENCE_SIGNER_FUNDED_ESCROW_2026-08-15\.md"/);
-  assert.match(html, /href="https:\/\/github\.com\/gnanam1990\/flowops\/blob\/main\/docs\/acceptance\/ascp-v3\.4\.json"/);
-  assert.match(html, /href="https:\/\/github\.com\/gnanam1990\/flowops\/blob\/main\/docs\/proposals\/FLOWOPS_BASE_BATCHES_004_APPLICATION_DRAFT\.md"/);
-  assert.match(html, /later unrestricted real-money launch—not to the application build/);
-  assert.doesNotMatch(html, /\/demo|interactive walkthrough|Northstar Labs|Preview data/i);
-  assert.doesNotMatch(html, /current active users|paying customers|transaction volume/i);
+  assert.equal(response.status, 307);
+  assert.equal(response.headers.get("location"), "/");
 });
 
 test("renders the functional Base mainnet intent workspace fail-closed until deployment", async () => {
@@ -283,7 +258,7 @@ test("uses Sites auth only on hosted origins and never exposes its reserved rout
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /href="\/signin-with-chatgpt\?return_to=%2F"/);
-  assert.match(html, /Enter control room/);
+  assert.match(html, /Sign in/);
   assert.doesNotMatch(html, /Local sign-in disabled/);
 });
 
@@ -303,10 +278,9 @@ test("provides explicit loopback-only local sign-in and sign-out without grantin
   const signedIn = await render({ headers: { cookie: "flowops-local-session=active" }, env });
   assert.equal(signedIn.status, 200);
   const signedInHtml = await signedIn.text();
-  assert.match(signedInHtml, /Local Developer/);
-  assert.match(signedInHtml, /Identity active · authorized membership required/);
+  assert.match(signedInHtml, /Open control room/);
   assert.match(signedInHtml, /href="\/api\/local-auth\/signout\?return_to=%2F"/);
-  assert.match(signedInHtml, /Public operational status is not configured/);
+  assert.match(signedInHtml, /Mainnet runtime not connected/);
   assert.doesNotMatch(signedInHtml, /Live control plane|Acme Operators/);
 
   const signOut = await render({ path: "/api/local-auth/signout?return_to=%2F", env });
@@ -329,7 +303,7 @@ test("provides explicit loopback-only local sign-in and sign-out without grantin
   assert.equal(enrollment.headers.get("location"), "/api/local-auth/signin?return_to=%2Fenrollment");
 });
 
-test("shows the canonical zero-fund activated ASCP graph and keeps anchors as supporting evidence", async () => {
+test("shows only the canonical mainnet activation summary on the public page", async () => {
   const address = "0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA";
   const legacyAddress = "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250";
   const response = await render({
@@ -340,27 +314,11 @@ test("shows the canonical zero-fund activated ASCP graph and keeps anchors as su
   });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /BASE MAINNET · ACTIVATED \/ ZERO FUNDS/);
-  assert.match(html, /Payment controls activated; funding remains disabled/);
-  for (const contractAddress of [
-    "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1",
-    "0x15332e8c8e230e8a1c05095196dac42ba8cc6906",
-    "0x214cbbb2190075ba43fa6518560d37c09720e0c4",
-    "0x942b83421c3ac4e1a04753e5e0208fd56cad649e",
-  ]) {
-    assert.match(html, new RegExp(contractAddress));
-    assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${contractAddress}\\?tab=contract`));
-  }
-  assert.match(html, /Open intent evidence workspace/);
-  assert.match(html, /Legacy proposal evidence:/);
-  assert.match(html, new RegExp(`https://base\\.blockscout\\.com/address/${legacyAddress}\\?tab=contract`));
-  assert.match(html, /Contract graph/);
-  assert.match(html, /Source verified/);
-  assert.match(html, /Source verified<\/dt><dd class="status-verified">4 \/ 4/);
-  assert.match(html, /Onchain capability<\/dt><dd class="status-verified">Enabled/);
-  assert.match(html, /Funds<\/dt><dd>Zero/);
-  assert.match(html, /Module enabled · escrow allowlisted/);
-  assert.match(html, /View zero-fund activation transaction/);
+  assert.match(html, /BASE MAINNET · PAYMENT CONTROL PLANE/);
+  assert.match(html, /Controls enabled/);
+  assert.match(html, /Open mainnet workspace/);
+  assert.doesNotMatch(html, new RegExp(legacyAddress, "i"));
+  assert.doesNotMatch(html, /Legacy proposal|Sepolia/i);
   assert.match(html, /https:\/\/base\.blockscout\.com\/tx\/0x630c2a47e57013ae99a022725e648e4711a3f635bcefccaf34bda3f5b1735e8b/);
   assert.doesNotMatch(html, /payment path is operational/i);
 
@@ -371,10 +329,9 @@ test("shows the canonical zero-fund activated ASCP graph and keeps anchors as su
     },
   });
   const invalidHtml = await invalid.text();
-  assert.match(invalidHtml, /Payment controls activated; funding remains disabled/);
+  assert.match(invalidHtml, /Controls enabled/);
   assert.doesNotMatch(invalidHtml, /0xnot-a-mainnet-address/);
-  assert.match(invalidHtml, /Legacy proposal evidence:/);
-  assert.match(invalidHtml, new RegExp(`https://base\\.blockscout\\.com/address/${legacyAddress}\\?tab=contract`));
+  assert.doesNotMatch(invalidHtml, new RegExp(legacyAddress, "i"));
   assert.doesNotMatch(invalidHtml, /Open intent evidence workspace/);
 });
 
@@ -417,13 +374,9 @@ test("renders validated live public health without exposing organization records
   });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Live public status/);
-  assert.match(html, /45,511,958/);
-  assert.match(html, /2 \/ 2 reporting/);
-  assert.match(html, /New authorizations are paused/);
-  assert.match(html, /Base state is recovering/);
-  assert.match(html, /Organization economic data/);
-  assert.match(html, /Private by default/);
+  assert.match(html, /Mainnet observer online/);
+  assert.match(html, /Base mainnet · Chain ID 8453/);
+  assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
   assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
 
   respondingObservers = 3;
@@ -431,22 +384,22 @@ test("renders validated live public health without exposing organization records
     env: { FLOWOPS_CONTROL_API_URL: `http://127.0.0.1:${address.port}` },
   });
   const invalidHtml = await invalid.text();
-  assert.match(invalidHtml, /Status unavailable/);
-  assert.doesNotMatch(invalidHtml, /45,511,958|Live public status/);
+  assert.match(invalidHtml, /Mainnet runtime not connected/);
+  assert.doesNotMatch(invalidHtml, /45,511,958|Mainnet observer online/);
 });
 
 test("exchanges Sites identity server-side and renders only authorized live fields", async (t) => {
   const exchangeCredential = "sites-exchange-test-credential-000000000001";
   const sessionToken = "fos_v1.test-payload.test-signature";
   const now = new Date();
-	const baseSepoliaUSDC = "0x036cbd53842c5426634e7929541ec2318f3dcf7e";
+	const baseMainnetUSDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
   let snapshotOrganizationId = "org_live";
   let organizationPaused = false;
   let organizationName = "Acme Operators";
   let agentName = "Research Agent";
   let approvalPurpose = "Buy verified dataset";
-	let approvalChainId = 84532;
-	let ascpApprovalChainId = 84532;
+	let approvalChainId = 8453;
+	let ascpApprovalChainId = 8453;
   const upstream = createServer(async (request, response) => {
     if (request.url === "/v1/sites/session") {
       assert.equal(request.method, "POST");
@@ -476,7 +429,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
         organizationId: snapshotOrganizationId,
         organization: { id: snapshotOrganizationId, name: organizationName, authorizationsPaused: organizationPaused },
         chain: {
-		  chainId: 84532,
+		  chainId: 8453,
           state: "HEALTHY",
           reason: "independent observers agree",
           requiredObserverQuorum: 2,
@@ -493,7 +446,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
           intent: {
 			chainId: approvalChainId,
             agentId: "agent_live", taskId: "task_live", rail: "X402",
-			recipient: `0x${"1".repeat(40)}`, asset: baseSepoliaUSDC,
+			recipient: `0x${"1".repeat(40)}`, asset: baseMainnetUSDC,
             amountAtomic: "1250000", purpose: approvalPurpose,
           },
         }],
@@ -507,13 +460,13 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 			readyForManualResume: false, complete: false,
 		  },
 		  assets: [{
-			asset: baseSepoliaUSDC, escrowLockedAtomic: "250000",
+			asset: baseMainnetUSDC, escrowLockedAtomic: "250000",
 			recognizedExpenseAtomic: "1750000", spentTodayAtomic: "500000",
 			spentMonthAtomic: "1750000", unresolvedAtomic: "125000",
 		  }],
 		  exceptions: [{
 			id: "exec_unresolved", kind: "DIRECT_EXECUTION", state: "PENDING_CHAIN_RECOVERY",
-			asset: baseSepoliaUSDC, amountAtomic: "125000",
+			asset: baseMainnetUSDC, amountAtomic: "125000",
 			firstObservedAt: new Date(now.getTime() - 60_000).toISOString(),
 			reason: "canonical outcome remains unresolved", operatorActionNeeded: true,
 		  }],
@@ -526,22 +479,22 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 			operationId: `0x${"5".repeat(64)}`, agentId: "agent_live", taskId: "",
 			category: "", reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_live_1",
 			chainId: ascpApprovalChainId,
-			recipient: `0x${"1".repeat(40)}`, asset: baseSepoliaUSDC, assetSymbol: "USDC", assetDecimals: 6, amountAtomic: "2500000",
+			recipient: `0x${"1".repeat(40)}`, asset: baseMainnetUSDC, assetSymbol: "USDC", assetDecimals: 6, amountAtomic: "2500000",
 			requestedAt: new Date(now.getTime() - 20_000).toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
 		  }],
 		  assets: [{
-			asset: baseSepoliaUSDC, walletDeltaAtomic: "-2250000", escrowRestrictedAtomic: "-500000",
+			asset: baseMainnetUSDC, walletDeltaAtomic: "-2250000", escrowRestrictedAtomic: "-500000",
 			recognizedExpenseAtomic: "1750000", spentTodayAtomic: "500000", reservedAtomic: "2500000",
 			pendingChainAtomic: "250000", unresolvedAtomic: "125000",
 		  }],
 		  agentBudgets: [{
-			agentId: "agent_live", asset: baseSepoliaUSDC, dailyLimitAtomic: "10000000",
+			agentId: "agent_live", asset: baseMainnetUSDC, dailyLimitAtomic: "10000000",
 			spentTodayAtomic: "500000", reservedAtomic: "2500000", availableAtomic: "7000000",
 			currentTaskId: "task_ascp_live", activePolicy: true, policyVersion: "policy_live_1", policyConfigurationValid: true,
 		  }],
 		  activity: [{
 			id: `0x${"5".repeat(64)}`, kind: "PAYMENT_OPERATION", state: "LOCK_SUBMITTED", agentId: "agent_live",
-			taskId: "task_ascp_live", asset: baseSepoliaUSDC, amountAtomic: "250000", detail: "verified_data",
+			taskId: "task_ascp_live", asset: baseMainnetUSDC, amountAtomic: "250000", detail: "verified_data",
 			occurredAt: new Date(now.getTime() - 10_000).toISOString(),
 		  }],
 		},
@@ -569,7 +522,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.match(html, /2 \/ 2 agree/);
   assert.match(html, /Buy verified dataset/);
 	assert.match(html, /1\.250000 USDC/);
-	assert.match(html, /Base Sepolia \(84532\)/);
+	assert.match(html, /Base Mainnet \(8453\)/);
 	assert.match(html, /Recognized economic expense/);
 	assert.match(html, /1\.750000 USDC/);
 	assert.match(html, /ASCP PostgreSQL subledger/);
@@ -585,7 +538,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.doesNotMatch(html, new RegExp(exchangeCredential));
   assert.doesNotMatch(html, new RegExp(sessionToken.replaceAll(".", "\\.")));
 
-	ascpApprovalChainId = 8453;
+	ascpApprovalChainId = 84532;
 	const wrongASCPNetwork = await render({
 	  headers: {
 		"oai-authenticated-user-id": "sites-user-opaque",
@@ -596,7 +549,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 	const wrongASCPNetworkHtml = await wrongASCPNetwork.text();
 	assert.doesNotMatch(wrongASCPNetworkHtml, /Live control plane|Approval 0x333333…333333/);
 	assert.match(wrongASCPNetworkHtml, /Status unavailable/);
-	ascpApprovalChainId = 84532;
+	ascpApprovalChainId = 8453;
 
   organizationName = '<img src=x onerror="send_calls()">';
   agentName = '<script>swap("USDC","ETH")</script>';
@@ -630,7 +583,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
   assert.match(pausedHtml, /The persistent organization gate blocks new authorization issuance/);
   organizationPaused = false;
 
-	approvalChainId = 8453;
+	approvalChainId = 84532;
 	const wrongNetworkApproval = await render({
 	  headers: {
 		"oai-authenticated-user-id": "sites-user-opaque",
@@ -641,7 +594,7 @@ test("exchanges Sites identity server-side and renders only authorized live fiel
 	const wrongNetworkHtml = await wrongNetworkApproval.text();
 	assert.match(wrongNetworkHtml, /Status unavailable/);
 	assert.doesNotMatch(wrongNetworkHtml, /Buy verified dataset|Live control plane/);
-	approvalChainId = 84532;
+	approvalChainId = 8453;
 
   snapshotOrganizationId = "org_substituted";
   const substituted = await render({

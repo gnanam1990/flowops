@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import Link from "next/link";
 import type {
   Activity,
   Agent,
@@ -11,7 +12,6 @@ import type {
 } from "./dashboard-data";
 import type { ASCPMainnetDeployment } from "./mainnet/ascp-mainnet-deployment";
 import type { MainnetIntentAnchorDeployment } from "./mainnet/mainnet-types";
-import type { ProposalAnchorDeployment } from "./proposal-anchor";
 
 type Section =
   | "overview"
@@ -25,7 +25,6 @@ type ControlRoomProps = {
   snapshot: DashboardSnapshot;
   ascpMainnetDeployment: ASCPMainnetDeployment;
   mainnetIntentAnchor: MainnetIntentAnchorDeployment;
-  proposalAnchor: ProposalAnchorDeployment;
   viewer: { name: string; email: string; authenticated: boolean };
   accountHref: string | null;
 };
@@ -39,7 +38,7 @@ const navItems: { id: Section; label: string; mark: string }[] = [
   { id: "developers", label: "Developers", mark: "↗" },
 ];
 
-export function ControlRoom({ snapshot, ascpMainnetDeployment, mainnetIntentAnchor, proposalAnchor, viewer, accountHref }: ControlRoomProps) {
+export function ControlRoom({ snapshot, ascpMainnetDeployment, mainnetIntentAnchor, viewer, accountHref }: ControlRoomProps) {
   const [section, setSection] = useState<Section>("overview");
   const [approval, setApproval] = useState<Approval | null>(null);
   const [pauseOpen, setPauseOpen] = useState(false);
@@ -124,6 +123,18 @@ export function ControlRoom({ snapshot, ascpMainnetDeployment, mainnetIntentAnch
     return item.mark;
   };
   const connectionLive = snapshot.mode === "live" || snapshot.connection.label === "Live public status";
+
+  if (snapshot.mode === "public") {
+    return (
+      <PublicMainnetHome
+        snapshot={snapshot}
+        ascpDeployment={ascpMainnetDeployment}
+        intentAnchor={mainnetIntentAnchor}
+        accountHref={accountHref}
+        authenticated={viewer.authenticated}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -227,7 +238,6 @@ export function ControlRoom({ snapshot, ascpMainnetDeployment, mainnetIntentAnch
             <MainnetSafetyNotice
               ascpDeployment={ascpMainnetDeployment}
               intentAnchor={mainnetIntentAnchor}
-              legacyProposal={proposalAnchor}
             />
           ) : null}
 
@@ -305,11 +315,9 @@ export function ControlRoom({ snapshot, ascpMainnetDeployment, mainnetIntentAnch
 function MainnetSafetyNotice({
   ascpDeployment,
   intentAnchor,
-  legacyProposal,
 }: {
   ascpDeployment: ASCPMainnetDeployment;
   intentAnchor: MainnetIntentAnchorDeployment;
-  legacyProposal: ProposalAnchorDeployment;
 }) {
   const sourceVerified = ascpDeployment.contracts.every((contract) => contract.sourceVerified);
   return (
@@ -332,11 +340,6 @@ function MainnetSafetyNotice({
         <a href={`https://base.blockscout.com/tx/${ascpDeployment.activation.transactionHash}`} target="_blank" rel="noreferrer">
           <span>View zero-fund activation transaction ↗</span>
         </a>
-        {legacyProposal.address && legacyProposal.explorerHref ? (
-          <a className="proposal-anchor-legacy" href={legacyProposal.explorerHref} target="_blank" rel="noreferrer">
-            <span>Legacy proposal evidence: {legacyProposal.address} ↗</span>
-          </a>
-        ) : null}
       </div>
       <dl className="proposal-anchor-controls">
         <div><dt>Contract graph</dt><dd className="status-verified">Deployed</dd></div>
@@ -351,6 +354,73 @@ function MainnetSafetyNotice({
         <div><dt>Activation</dt><dd>Module enabled · escrow allowlisted</dd></div>
       </dl>
     </section>
+  );
+}
+
+function PublicMainnetHome({
+  snapshot,
+  ascpDeployment,
+  intentAnchor,
+  accountHref,
+  authenticated,
+}: {
+  snapshot: DashboardSnapshot;
+  ascpDeployment: ASCPMainnetDeployment;
+  intentAnchor: MainnetIntentAnchorDeployment;
+  accountHref: string | null;
+  authenticated: boolean;
+}) {
+  const sourceVerified = ascpDeployment.contracts.every((contract) => contract.sourceVerified);
+  const mainnetRuntimeObserved = snapshot.chain.chainId === 8453 && snapshot.connection.label === "Live public status";
+  const activationHref = `https://base.blockscout.com/tx/${ascpDeployment.activation.transactionHash}`;
+
+  return (
+    <main className="public-home">
+      <nav className="public-nav" aria-label="Public navigation">
+        <Link className="public-brand" href="/" aria-label="FlowOps home"><span aria-hidden="true" />FlowOps</Link>
+        <div className="public-nav-status"><i /> Base mainnet</div>
+        <div className="public-nav-actions">
+          <a href="https://github.com/gnanam1990/flowops" target="_blank" rel="noreferrer">GitHub ↗</a>
+          {accountHref ? <a className="public-signin" href={accountHref}>{authenticated ? "Open control room" : "Sign in"}</a> : null}
+        </div>
+      </nav>
+
+      <section className="public-hero">
+        <div className="public-hero-copy">
+          <p><span /> BASE MAINNET · PAYMENT CONTROL PLANE</p>
+          <h1>Agent payments.<br />Bounded before they move.</h1>
+          <p className="public-summary">FlowOps gives autonomous agents exact spending limits, human approval boundaries, customer-controlled signing, and canonical Base reconciliation.</p>
+          <div className="public-actions">
+            {intentAnchor.status === "limited-mainnet-live" ? <Link className="public-primary" href="/mainnet">Open mainnet workspace <span>→</span></Link> : null}
+            <a className="public-secondary" href={activationHref} target="_blank" rel="noreferrer">View activation on Base ↗</a>
+          </div>
+        </div>
+        <aside className="public-runtime-card" aria-label="Base mainnet activation status">
+          <header><span>MAINNET ACTIVATION</span><strong>Controls enabled</strong><i /></header>
+          <dl>
+            <div><dt>Contracts</dt><dd>{ascpDeployment.contracts.length} deployed</dd></div>
+            <div><dt>Source</dt><dd>{sourceVerified ? "Verified" : "Incomplete"}</dd></div>
+            <div><dt>Safe module</dt><dd>{ascpDeployment.activation.safeModuleEnabled ? "Enabled" : "Disabled"}</dd></div>
+            <div><dt>Funding</dt><dd>Zero</dd></div>
+          </dl>
+          <footer>
+            <span className={mainnetRuntimeObserved ? "runtime-live" : "runtime-pending"}><i /> {mainnetRuntimeObserved ? "Mainnet observer online" : "Mainnet runtime not connected"}</span>
+            <small>No funds or token approvals</small>
+          </footer>
+        </aside>
+      </section>
+
+      <section className="public-principles" aria-label="How FlowOps works">
+        <article><span>01</span><div><strong>Define the boundary</strong><p>Bind agent, task, recipient, asset, amount, policy version, nonce, and expiry.</p></div></article>
+        <article><span>02</span><div><strong>Keep signing with the customer</strong><p>FlowOps authorizes; a separate customer-managed signer independently decides whether to sign.</p></div></article>
+        <article><span>03</span><div><strong>Trust canonical evidence</strong><p>Settlement, release, and refund states advance only from confirmed Base evidence.</p></div></article>
+      </section>
+
+      <footer className="public-footer">
+        <span>FlowOps · Non-custodial agent spend control</span>
+        <span>Base mainnet · Chain ID 8453</span>
+      </footer>
+    </main>
   );
 }
 

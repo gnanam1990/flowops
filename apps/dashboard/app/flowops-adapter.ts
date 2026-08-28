@@ -213,6 +213,7 @@ export async function dashboardForUser(
         headers: { authorization: `Bearer ${session.accessToken}` },
       },
     );
+    if (snapshot.chain?.chainId !== 8453) throw new Error("dashboard snapshot is not Base mainnet");
     return mapControlSnapshot(snapshot, session.organizationId);
   } catch (error) {
     console.warn("[flowops-adapter] live snapshot unavailable", safeErrorMessage(error));
@@ -405,7 +406,7 @@ function mapControlSnapshot(raw: ControlSnapshot, sessionOrganizationId: string)
   };
 }
 
-function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number] | undefined, chainId: 8453 | 84532): Agent {
+function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number] | undefined, chainId: 8453): Agent {
   if (
     !isIdentifier(raw?.id) ||
     typeof raw.name !== "string" ||
@@ -430,7 +431,7 @@ function mapAgent(raw: ControlAgent, budget: ControlASCP["agentBudgets"][number]
   };
 }
 
-function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Map<string, string>, observedAt: Date, expectedChainId: 8453 | 84532): Approval {
+function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Map<string, string>, observedAt: Date, expectedChainId: 8453): Approval {
 	if (!isIdentifier(raw.approvalId) || !/^0x[0-9a-f]{64}$/.test(raw.reviewDigest) || !/^0x[0-9a-f]{64}$/.test(raw.operationId) ||
 		!isIdentifier(raw.agentId) || (raw.taskId !== "" && !isBoundedText(raw.taskId, 1024)) ||
 		(raw.category !== "" && !isBoundedText(raw.category, 1024)) ||
@@ -470,7 +471,7 @@ function mapASCPApproval(raw: ControlASCP["pendingApprovals"][number], names: Ma
 	};
 }
 
-function mapASCPActivity(raw: ControlASCP["activity"][number], names: Map<string, string>, observedAt: Date, chainId: 8453 | 84532): Activity {
+function mapASCPActivity(raw: ControlASCP["activity"][number], names: Map<string, string>, observedAt: Date, chainId: 8453): Activity {
 	if (!isIdentifier(raw.id) || typeof raw.kind !== "string" || !raw.kind || typeof raw.state !== "string" || !raw.state ||
 		(raw.agentId && !isIdentifier(raw.agentId)) || (raw.taskId && !isBoundedText(raw.taskId, 1024)) ||
 		(raw.asset && !/^0x[0-9a-f]{40}$/.test(raw.asset)) || (raw.amountAtomic && !validUnsignedAtomic(raw.amountAtomic))) {
@@ -507,7 +508,7 @@ function activityTitle(kind: string, state: string): string {
 	return `Payment ${humanize(state).toLowerCase()}`;
 }
 
-function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, string>, observedAt: Date, chainId: 8453 | 84532): Activity {
+function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, string>, observedAt: Date, chainId: 8453): Activity {
 	const approval = mapApproval(raw, names, observedAt, chainId);
 	return {
 		id: `LEGACY_APPROVAL-${approval.id}`,
@@ -519,7 +520,7 @@ function mapLegacyApprovalActivity(raw: ControlApproval, names: Map<string, stri
 	};
 }
 
-function mapApproval(raw: ControlApproval, names: Map<string, string>, observedAt: Date, expectedChainId: 8453 | 84532): Approval {
+function mapApproval(raw: ControlApproval, names: Map<string, string>, observedAt: Date, expectedChainId: 8453): Approval {
   if (
     !isIdentifier(raw?.requestId) ||
     !/^0x[0-9a-f]{64}$/.test(raw.requestDigest) ||
@@ -654,7 +655,7 @@ async function publicDashboard(
     const health = await requestJSON<PublicHealth>(request, `${controlApiUrl}/health`, {});
     if (
       health?.controlPlane !== "AVAILABLE" ||
-	  !isSupportedBaseChain(health.chainId) ||
+      health.chainId !== 8453 ||
       !isChainState(health.chainState) ||
       typeof health.authorizationsPaused !== "boolean" ||
       !Number.isSafeInteger(health.requiredObservers) ||
@@ -840,7 +841,6 @@ type AssetMetadata = { symbol: "USDC"; decimals: 6 };
 function validatedAssetMetadata(chainId: number, asset: string, reportedSymbol?: string, reportedDecimals?: number): AssetMetadata | null {
 	let expected: AssetMetadata | null = null;
 	if (chainId === 8453 && asset === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913") expected = { symbol: "USDC", decimals: 6 };
-	if (chainId === 84532 && asset === "0x036cbd53842c5426634e7929541ec2318f3dcf7e") expected = { symbol: "USDC", decimals: 6 };
 	if (reportedSymbol !== undefined || reportedDecimals !== undefined) {
 		if (!expected || reportedSymbol !== expected.symbol || reportedDecimals !== expected.decimals) throw new Error("asset metadata does not match the canonical chain asset");
 	}
@@ -856,12 +856,13 @@ function tokenAmount(atomic: string, metadata: AssetMetadata | null): string {
 	return `${negative ? "-" : ""}${BigInt(padded.slice(0, split)).toLocaleString("en-US")}.${padded.slice(split)} ${metadata.symbol}`;
 }
 
-function isSupportedBaseChain(value: unknown): value is 8453 | 84532 {
-	return value === 8453 || value === 84532;
+function isSupportedBaseChain(value: unknown): value is 8453 {
+	return value === 8453;
 }
 
-function networkLabel(chainId: 8453 | 84532): string {
-	return chainId === 8453 ? "Base Mainnet (8453)" : "Base Sepolia (84532)";
+function networkLabel(chainId: 8453): string {
+	if (chainId !== 8453) throw new Error("unsupported Base network");
+	return "Base Mainnet (8453)";
 }
 
 function atomicPercent(spent: string, limit: string): number {

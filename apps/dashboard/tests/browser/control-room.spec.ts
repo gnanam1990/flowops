@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-test("renders truthful public state and an exact approval confirmation", async ({ page }) => {
+test("renders a concise mainnet public page and an exact approval confirmation", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("banner").getByText("Live public status")).toBeVisible();
-  await expect(page.getByRole("main").getByText("Base Sepolia (84532)", { exact: true })).toBeVisible();
-  await expect(page.getByRole("main").getByText("Source verified", { exact: true }).locator("..")).toContainText("4 / 4");
-  await expect(page.getByRole("main").getByText("Onchain capability", { exact: true }).locator("..")).toContainText("Enabled");
+  await expect(page.getByRole("heading", { name: /Agent payments/ })).toBeVisible();
+  await expect(page.getByLabel("Base mainnet activation status")).toContainText("4 deployed");
+  await expect(page.getByLabel("Base mainnet activation status")).toContainText("Verified");
+  await expect(page.getByText("Base mainnet · Chain ID 8453", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Sepolia/i)).toHaveCount(0);
 
   await page.goto("/api/local-auth/signin?return_to=%2F");
   await expect(page.getByRole("banner").getByText("Live control plane")).toBeVisible();
@@ -19,9 +20,9 @@ test("renders truthful public state and an exact approval confirmation", async (
   const dialog = page.getByRole("dialog", { name: "Buy verified browser dataset" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("1,250,000 atomic");
-  await expect(dialog).toContainText("Base Sepolia (84532)");
+  await expect(dialog).toContainText("Base Mainnet (8453)");
   await expect(dialog).toContainText("0x1111111111111111111111111111111111111111");
-  await expect(dialog).toContainText("0x036cbd53842c5426634e7929541ec2318f3dcf7e");
+  await expect(dialog).toContainText("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913");
   await expect(dialog).toContainText(`0x${"a".repeat(64)}`);
   await expect(dialog.getByRole("button", { name: "Approve exact intent" })).toBeDisabled();
 
@@ -34,7 +35,7 @@ test("renders truthful public state and an exact approval confirmation", async (
 
 test("keeps the operational hierarchy intact at the tablet breakpoint", async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 900 });
-  await page.goto("/");
+  await page.goto("/api/local-auth/signin?return_to=%2F");
 
   const geometry = await page.evaluate(() => {
     const hero = document.querySelector<HTMLElement>(".command-header");

@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 
 const port = Number(process.argv[2] ?? "43121");
 const now = new Date();
-const usdc = "0x036cbd53842c5426634e7929541ec2318f3dcf7e";
+const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const recipient = "0x1111111111111111111111111111111111111111";
 const requestDigest = `0x${"a".repeat(64)}`;
 const exchangeCredential = ["browser", "e2e", "exchange", "fixture", "credential"].join("-");
@@ -16,7 +16,7 @@ function send(response, status, body) {
 const server = createServer(async (request, response) => {
   if (request.url === "/health") {
     return send(response, 200, {
-      controlPlane: "AVAILABLE", chainId: 84532, chainState: "HEALTHY", authorizationsPaused: false,
+      controlPlane: "AVAILABLE", chainId: 8453, chainState: "HEALTHY", authorizationsPaused: false,
       requiredObservers: 2, respondingObservers: 2, lastObservationAt: now.toISOString(), readyForManualResume: false,
       lastTrusted: { blockNumber: 12345678, observedAt: now.toISOString() },
     });
@@ -39,7 +39,7 @@ const server = createServer(async (request, response) => {
       live: true, generatedAt: now.toISOString(), organizationId: "org_browser",
       organization: { id: "org_browser", name: "Browser Operators", authorizationsPaused: false },
       chain: {
-        chainId: 84532, state: "HEALTHY", reason: "independent observers agree",
+        chainId: 8453, state: "HEALTHY", reason: "independent observers agree",
         requiredObserverQuorum: 2, respondingObservers: 2,
         lastTrusted: { blockNumber: 12345678, observedAt: now.toISOString() }, authorizationsPaused: false,
       },
@@ -49,7 +49,7 @@ const server = createServer(async (request, response) => {
         approvalExpiresAt: Math.floor(now.getTime() / 1000) + 300,
         decision: { reason: "HUMAN_APPROVAL_THRESHOLD", policyVersion: "policy_browser_1" },
         intent: {
-          chainId: 84532, agentId: "agent_browser", taskId: "task_browser", rail: "ESCROW",
+          chainId: 8453, agentId: "agent_browser", taskId: "task_browser", rail: "ESCROW",
           recipient, asset: usdc, amountAtomic: "1250000", purpose: "Buy verified browser dataset",
         },
       }],

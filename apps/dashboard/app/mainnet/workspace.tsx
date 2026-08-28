@@ -279,7 +279,7 @@ export function MainnetIntentWorkspace({ deployment }: { deployment: MainnetInte
       <nav className="mainnet-nav">
         <Link className="mainnet-brand" href="/"><span aria-hidden="true" />FlowOps</Link>
         <div><i /> BASE MAINNET · CHAIN ID 8453</div>
-        <Link href="/base">Reviewer brief ↗</Link>
+        <Link href="/">Control overview ↗</Link>
       </nav>
 
       <section className="mainnet-hero">
