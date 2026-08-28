@@ -73,6 +73,7 @@ type CanonicalExecutionState string
 const (
 	CanonicalExecutionSettled  CanonicalExecutionState = "SETTLED"
 	CanonicalExecutionReverted CanonicalExecutionState = "REVERTED"
+	CanonicalExecutionDropped  CanonicalExecutionState = "DROPPED"
 )
 
 type FinalizedExecution struct {
@@ -537,7 +538,7 @@ func (l *Lifecycle) finalizedExecution(record Record) (FinalizedExecution, bool)
 		return FinalizedExecution{}, false
 	}
 	finalized, ok := l.outcomeSource.FinalizedExecution(ExecutionID(record.Authorization.AuthorizationID))
-	if !ok || (finalized.State != CanonicalExecutionSettled && finalized.State != CanonicalExecutionReverted) ||
+	if !ok || (finalized.State != CanonicalExecutionSettled && finalized.State != CanonicalExecutionReverted && finalized.State != CanonicalExecutionDropped) ||
 		finalized.ExecutionID != ExecutionID(record.Authorization.AuthorizationID) ||
 		finalized.OrganizationID != record.Authorization.OrganizationID || finalized.AgentID != record.Authorization.AgentID ||
 		finalized.TaskID != record.Authorization.TaskID || finalized.ChainID != record.Authorization.ChainID ||

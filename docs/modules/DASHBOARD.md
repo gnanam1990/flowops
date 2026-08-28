@@ -18,6 +18,9 @@ shows recognized expense and escrow-locked amounts only in atomic units for an
 asset proved by the immutable execution or escrow reference. It never labels
 the operational subledger as a wallet balance or available treasury. Entries
 without a proved asset binding are excluded and counted visibly.
+Transaction-recovery exceptions render the proved nonce outcome and exact
+replacement identity without exposing the operator control key or providing a
+browser-side financial override.
 
 ## Entry and identity flow
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,37 @@ func TestReconciliationOutcomeProjectionRequiresCanonicalFinality(t *testing.T) 
 	source.reader = outcomeReaderStub{execution: reverted, ok: true}
 	if got, ok := source.FinalizedExecution("exec_1"); !ok || got.State != controlplane.CanonicalExecutionReverted {
 		t.Fatalf("reverted projection = %+v, %v", got, ok)
+	}
+	dropped := base
+	dropped.State, dropped.LedgerTransactionID, dropped.BlockHash = reconciliation.ExecutionDropped, "", "0x"+strings.Repeat("a", 64)
+	dropped.RecoveryResolutionActor = "operator_alice"
+	dropped.TransactionRecovery = &reconciliation.TransactionRecovery{
+		Nonce: 7, ScanFromBlock: 90, Outcome: reconciliation.RecoveryDropped, ThroughBlock: 100,
+		ThroughBlockHash: dropped.BlockHash, AccountNonce: 8, EvidenceDigest: "0x" + strings.Repeat("b", 64), ObservedAt: checkedAt,
+	}
+	source.reader = outcomeReaderStub{execution: dropped, ok: true}
+	if got, ok := source.FinalizedExecution("exec_1"); !ok || got.State != controlplane.CanonicalExecutionDropped {
+		t.Fatalf("dropped projection = %+v, %v", got, ok)
+	}
+	for index, mutate := range []func(*reconciliation.Execution){
+		func(e *reconciliation.Execution) { e.TransactionRecovery = nil },
+		func(e *reconciliation.Execution) {
+			e.TransactionRecovery.Outcome = reconciliation.RecoveryUnknownTransfer
+		},
+		func(e *reconciliation.Execution) {
+			e.TransactionRecovery.ThroughBlockHash = "0x" + strings.Repeat("c", 64)
+		},
+		func(e *reconciliation.Execution) { e.RecoveryResolutionActor = "" },
+		func(e *reconciliation.Execution) { e.ResolvedTransactionHash = "0x" + strings.Repeat("d", 64) },
+	} {
+		candidate := dropped
+		recovery := *dropped.TransactionRecovery
+		candidate.TransactionRecovery = &recovery
+		mutate(&candidate)
+		source.reader = outcomeReaderStub{execution: candidate, ok: true}
+		if _, ok := source.FinalizedExecution("exec_1"); ok {
+			t.Fatalf("unsafe dropped projection %d was accepted: %+v", index, candidate)
+		}
 	}
 	unsafe := []reconciliation.Execution{base, base, base, base, base}
 	unsafe[0].FinalityCheckedAt = nil

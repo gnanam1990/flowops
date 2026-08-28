@@ -19,6 +19,14 @@ type EscrowReceiptAndBlockSource interface {
 	EscrowCanonicalBlockQuorum(context.Context, EscrowTransition) ReorgResult
 }
 
+type TransactionOutcomeSource interface {
+	TransactionOutcomeQuorum(context.Context, Execution, uint64) TransactionOutcomeResult
+}
+
+type TransactionOutcomeEngine interface {
+	RecordTransactionOutcome(context.Context, string, []TransactionOutcomeEvidence) (Execution, error)
+}
+
 type WorkerEngine interface {
 	Status() ChainStatus
 	Executions() []Execution
@@ -51,6 +59,9 @@ type WorkerCycle struct {
 	Reverted          int  `json:"reverted"`
 	FinalityConfirmed int  `json:"finalityConfirmed"`
 	ReorgsReopened    int  `json:"reorgsReopened"`
+	TransactionProbes int  `json:"transactionProbes"`
+	IdentitiesBound   int  `json:"identitiesBound"`
+	AutoQuarantined   int  `json:"autoQuarantined"`
 	EscrowCandidates  int  `json:"escrowCandidates"`
 	EscrowConfirmed   int  `json:"escrowConfirmed"`
 	EscrowReverted    int  `json:"escrowReverted"`
@@ -238,7 +249,42 @@ func (w *Worker) reconcileReceipt(ctx context.Context, execution Execution, cycl
 		return ctx.Err()
 	}
 	if len(result.Evidence) == 0 {
-		cycle.Deferred++
+		if execution.BroadcastAttestation == nil || execution.X402SettlementClaim != nil {
+			cycle.Deferred++
+			return nil
+		}
+		outcomeSource, sourceOK := w.source.(TransactionOutcomeSource)
+		outcomeEngine, engineOK := w.engine.(TransactionOutcomeEngine)
+		status := w.engine.Status()
+		if !sourceOK || !engineOK || status.LastTrusted == nil || status.LastTrusted.BlockNumber <= w.engine.FinalityDepth() {
+			cycle.Deferred++
+			return nil
+		}
+		probeBlock := status.LastTrusted.BlockNumber - w.engine.FinalityDepth()
+		cycle.TransactionProbes++
+		queryCtx, probeCancel := context.WithTimeout(ctx, w.config.QueryTimeout)
+		outcome := outcomeSource.TransactionOutcomeQuorum(queryCtx, execution, probeBlock)
+		probeCancel()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if len(outcome.Evidence) == 0 {
+			cycle.Deferred++
+			return nil
+		}
+		updated, err := outcomeEngine.RecordTransactionOutcome(ctx, execution.Expected.ExecutionID, outcome.Evidence)
+		if err != nil {
+			if errors.Is(err, ErrUnsafeFinality) || errors.Is(err, ErrChainUnavailable) {
+				cycle.Deferred++
+				return nil
+			}
+			return fmt.Errorf("record transaction outcome for %s: %w", execution.Expected.ExecutionID, err)
+		}
+		if updated.State == ExecutionQuarantined {
+			cycle.AutoQuarantined++
+		} else if execution.TransactionRecovery == nil && updated.TransactionRecovery != nil {
+			cycle.IdentitiesBound++
+		}
 		return nil
 	}
 	var settlement *LedgerTransaction

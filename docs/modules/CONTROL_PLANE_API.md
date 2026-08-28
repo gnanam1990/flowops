@@ -82,6 +82,7 @@ contract, asset, and immutable release window are runtime admission settings.
 | `POST` | `/v1/operator/chain/resume` | dedicated operator-control key plus recovery readiness | Durable manual autonomous-execution release |
 | `GET` | `/v1/operator/reconciliation?organizationId=...` | dedicated operator-control key | Tenant-selected reconciliation read model for incident response |
 | `POST` | `/v1/operator/executions/{executionID}/quarantine` | dedicated operator-control key, exact organization, named operator, unproven disposition | Durable containment without asserting drop/replacement or moving funds |
+| `POST` | `/v1/operator/executions/{executionID}/recovery` | dedicated operator-control key, exact organization and named operator | `PROBE` independent nonce/content evidence or `FINALIZE_PROVEN` a durable proved drop/exact replacement; unknown transfers remain quarantined |
 
 Signer broadcast intake has rail-specific endpoints for `direct_usdc` and
 escrow FUND. An x402 facilitator result uses its authenticated, tenant-scoped

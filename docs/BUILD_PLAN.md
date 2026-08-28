@@ -23,7 +23,7 @@ Baseline: FlowOps PRD v1.3 plus Phase 0 findings dated 2026-08-11
    live 0.001 test-USDC calldata proof remains gated on designated Builder Codes
    and explicit payment approval.**
 7. Evidence Fetch provider. **Implementation complete; verification commands are documented in the module contract.**
-8. Base reconciliation and halt-safe state. **Continuous production observer wiring, durable quorum progress, customer-signer receipt registration, receipt/finality worker, bounded reorg correction, customer-side one-way transaction executor, and the manual operator gate are implemented; the funded customer signer path has completed one Base Sepolia FUND-to-REFUND run, while production provider selection and extended threshold measurements remain external gates.**
+8. Base reconciliation and halt-safe state. **Continuous production observer wiring, durable quorum progress, customer-signer receipt registration, receipt/finality worker, bounded reorg correction, nonce/content-bound direct-payment drop/replacement/unknown-transfer recovery, closed operator recovery actions, customer-side one-way transaction executor, and the manual operator gate are implemented; the funded customer signer path has completed one Base Sepolia FUND-to-REFUND run, while production provider selection and extended threshold measurements remain external gates.**
 9. Escrow contracts after the dispute-state redesign. **Local implementation,
    a verified Base Sepolia deployment, funded release/refund evidence, durable
    intent/transition reconciliation with reorg correction, and a structurally

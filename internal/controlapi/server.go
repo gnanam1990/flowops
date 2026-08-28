@@ -53,6 +53,10 @@ type ReconciliationOperator interface {
 	QuarantineForOrganization(context.Context, string, string, string, string) (reconciliation.Execution, error)
 }
 
+type ReconciliationRecoveryOperator interface {
+	RecoverForOrganization(context.Context, string, string, string, reconciliation.RecoveryAction) (reconciliation.Execution, error)
+}
+
 type ASCPAgentService interface {
 	Create(context.Context, ascpagent.Identity, string, ascpagent.CreateRequest) (ascpintake.Operation, error)
 	Get(context.Context, ascpagent.Identity, string) (ascpintake.Operation, error)
@@ -129,6 +133,7 @@ type ServerConfig struct {
 	X402Settlements          X402SettlementService
 	Escrow                   *EscrowRegistrar
 	Reconciliation           ReconciliationReader
+	ReconciliationRecovery   ReconciliationRecoveryOperator
 	ASCPAgent                ASCPAgentService
 	ASCPFlow                 ASCPFlowService
 	ASCPActivation           ASCPActivationService
@@ -154,6 +159,7 @@ type Server struct {
 	x402Settlements          X402SettlementService
 	escrow                   *EscrowRegistrar
 	reconciliation           ReconciliationReader
+	reconciliationRecovery   ReconciliationRecoveryOperator
 	ascpAgent                ASCPAgentService
 	ascpFlow                 ASCPFlowService
 	ascpActivation           ASCPActivationService
@@ -194,6 +200,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		x402Settlements:        cfg.X402Settlements,
 		escrow:                 cfg.Escrow,
 		reconciliation:         cfg.Reconciliation,
+		reconciliationRecovery: cfg.ReconciliationRecovery,
 		ascpAgent:              cfg.ASCPAgent,
 		ascpFlow:               cfg.ASCPFlow,
 		ascpActivation:         cfg.ASCPActivation,
@@ -272,6 +279,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		mux.Handle("POST /v1/operator/chain/resume", s.authenticateOperator(http.HandlerFunc(s.handleOperatorResume)))
 		mux.Handle("GET /v1/operator/reconciliation", s.authenticateOperator(http.HandlerFunc(s.handleOperatorReconciliation)))
 		mux.Handle("POST /v1/operator/executions/{executionID}/quarantine", s.authenticateOperator(http.HandlerFunc(s.handleOperatorQuarantine)))
+		if s.reconciliationRecovery != nil {
+			mux.Handle("POST /v1/operator/executions/{executionID}/recovery", s.authenticateOperator(http.HandlerFunc(s.handleOperatorRecovery)))
+		}
 	}
 	if s.ascpSettlement != nil && len(s.keeperCallbackKey) == 32 {
 		mux.Handle("POST /v1/ascp/settlement-attempts", s.authenticateStaticKey(s.keeperCallbackKey, http.HandlerFunc(s.handleASCPSettlementAttempt)))
@@ -682,6 +692,12 @@ type operatorQuarantineRequest struct {
 	Reason         string `json:"reason"`
 }
 
+type operatorRecoveryRequest struct {
+	OrganizationID string                        `json:"organizationId"`
+	Operator       string                        `json:"operator"`
+	Action         reconciliation.RecoveryAction `json:"action"`
+}
+
 func (s *Server) handleOperatorHalt(w http.ResponseWriter, r *http.Request) {
 	var request operatorHaltRequest
 	if err := decodeJSON(w, r, &request); err != nil {
@@ -781,6 +797,40 @@ func (s *Server) handleOperatorQuarantine(w http.ResponseWriter, r *http.Request
 		"execution":      execution,
 		"reconciliation": controller.OrganizationView(request.OrganizationID),
 	})
+}
+
+func (s *Server) handleOperatorRecovery(w http.ResponseWriter, r *http.Request) {
+	executionID := strings.TrimSpace(r.PathValue("executionID"))
+	var request operatorRecoveryRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	request.OrganizationID = strings.TrimSpace(request.OrganizationID)
+	request.Operator = strings.TrimSpace(request.Operator)
+	if !identifierPattern.MatchString(executionID) || !identifierPattern.MatchString(request.OrganizationID) || !identifierPattern.MatchString(request.Operator) ||
+		(request.Action != reconciliation.RecoveryActionProbe && request.Action != reconciliation.RecoveryActionFinalize) {
+		writeError(w, http.StatusBadRequest, "INVALID_RECOVERY_ACTION", errors.New("recovery identifiers or action are invalid"), false, "")
+		return
+	}
+	execution, err := s.reconciliationRecovery.RecoverForOrganization(r.Context(), request.OrganizationID, executionID, request.Operator, request.Action)
+	if err != nil {
+		switch {
+		case errors.Is(err, reconciliation.ErrUnknownExecution):
+			writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+		case errors.Is(err, reconciliation.ErrRecoveryBlocked), errors.Is(err, reconciliation.ErrUnsafeFinality), errors.Is(err, reconciliation.ErrChainUnavailable), errors.Is(err, reconciliation.ErrConflict):
+			writeError(w, http.StatusConflict, "RECOVERY_BLOCKED", err, false, "")
+		case errors.Is(err, reconciliation.ErrInvalidOperator):
+			writeError(w, http.StatusBadRequest, "INVALID_RECOVERY_ACTION", err, false, "")
+		default:
+			writeError(w, http.StatusServiceUnavailable, "RECOVERY_EVIDENCE_UNAVAILABLE", err, true, "")
+		}
+		return
+	}
+	response := map[string]any{"execution": execution}
+	if s.reconciliation != nil {
+		response["reconciliation"] = s.reconciliation.OrganizationView(request.OrganizationID)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleCreateASCPIntent(w http.ResponseWriter, r *http.Request) {

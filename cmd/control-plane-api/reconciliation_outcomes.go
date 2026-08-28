@@ -36,6 +36,13 @@ func (s reconciliationOutcomeSource) FinalizedExecution(executionID string) (con
 			return controlplane.FinalizedExecution{}, false
 		}
 		state = controlplane.CanonicalExecutionReverted
+	case reconciliation.ExecutionDropped:
+		if execution.LedgerTransactionID != "" || (execution.ResolvedTransactionHash != "" && execution.ResolvedTransactionHash != execution.Expected.TransactionHash) || execution.TransactionRecovery == nil ||
+			execution.TransactionRecovery.Outcome != reconciliation.RecoveryDropped || execution.TransactionRecovery.EvidenceDigest == "" || execution.RecoveryResolutionActor == "" ||
+			execution.BlockNumber != execution.TransactionRecovery.ThroughBlock || execution.BlockHash != execution.TransactionRecovery.ThroughBlockHash {
+			return controlplane.FinalizedExecution{}, false
+		}
+		state = controlplane.CanonicalExecutionDropped
 	default:
 		return controlplane.FinalizedExecution{}, false
 	}

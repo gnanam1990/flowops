@@ -147,6 +147,11 @@ type ControlReconciliation = {
 		firstObservedAt: string;
 		reason: string;
 		operatorActionNeeded: boolean;
+		recoveryOutcome?: string;
+		transactionNonce?: number;
+		replacementHash?: string;
+		replacementRecipient?: string;
+		replacementAmountAtomic?: string;
 	}>;
 	unclassifiedLedgerTransactions: number;
 };
@@ -572,11 +577,14 @@ function mapApproval(raw: ControlApproval, names: Map<string, string>, observedA
 function liveRisks(raw: ControlSnapshot, agents: Agent[], now: Date): Risk[] {
   const risks: Risk[] = [];
 	for (const exception of raw.reconciliation.exceptions) {
+		const recovery = exception.recoveryOutcome
+			? ` Recovery: ${humanize(exception.recoveryOutcome)}${exception.transactionNonce !== undefined ? ` at nonce ${exception.transactionNonce}` : ""}${exception.replacementHash ? `; replacement ${shortAddress(exception.replacementHash)}` : ""}.`
+			: "";
 		risks.push({
 			id: `reconciliation-${exception.kind}-${exception.id}`,
 			severity: exception.state === "QUARANTINED" ? "critical" : "warning",
 			title: `${humanize(exception.kind)} is ${humanize(exception.state).toLowerCase()}`,
-			detail: `${formatAtomic(exception.amountAtomic)} atomic on ${shortAddress(exception.asset)}. ${exception.reason || "Canonical outcome remains unresolved."}`,
+			detail: `${formatAtomic(exception.amountAtomic)} atomic on ${shortAddress(exception.asset)}. ${exception.reason || "Canonical outcome remains unresolved."}${recovery}`,
 			time: age(parseDate(exception.firstObservedAt), now),
 		});
 	}
@@ -624,7 +632,12 @@ function validReconciliation(value: ControlReconciliation | undefined): value is
 	if (!recovery || ![recovery.checkpointBlock, recovery.observedThroughBlock, recovery.totalCandidates, recovery.resolvedCandidates, recovery.unresolvedOutcomes, recovery.quarantinedOutcomes, recovery.pendingFinality].every((item) => Number.isSafeInteger(item) && item >= 0)) return false;
 	if (typeof recovery.readyForManualResume !== "boolean" || typeof recovery.complete !== "boolean" || !Number.isSafeInteger(value.unclassifiedLedgerTransactions) || value.unclassifiedLedgerTransactions < 0) return false;
 	if (!value.assets.every((asset) => /^0x[0-9a-f]{40}$/.test(asset.asset) && [asset.escrowLockedAtomic, asset.recognizedExpenseAtomic, asset.spentTodayAtomic, asset.spentMonthAtomic, asset.unresolvedAtomic].every(validSignedAtomic))) return false;
-	return value.exceptions.every((exception) => isIdentifier(exception.id) && typeof exception.kind === "string" && typeof exception.state === "string" && /^0x[0-9a-f]{40}$/.test(exception.asset) && validUnsignedAtomic(exception.amountAtomic) && typeof exception.firstObservedAt === "string" && typeof exception.reason === "string" && typeof exception.operatorActionNeeded === "boolean");
+	return value.exceptions.every((exception) => isIdentifier(exception.id) && typeof exception.kind === "string" && typeof exception.state === "string" && /^0x[0-9a-f]{40}$/.test(exception.asset) && validUnsignedAtomic(exception.amountAtomic) && typeof exception.firstObservedAt === "string" && typeof exception.reason === "string" && typeof exception.operatorActionNeeded === "boolean" &&
+		(exception.recoveryOutcome === undefined || ["ORIGINAL_PENDING", "DROPPED_PROVEN", "EXPECTED_REPLACEMENT", "UNKNOWN_TRANSFER"].includes(exception.recoveryOutcome)) &&
+		(exception.transactionNonce === undefined || Number.isSafeInteger(exception.transactionNonce) && exception.transactionNonce >= 0) &&
+		(exception.replacementHash === undefined || /^0x[0-9a-f]{64}$/.test(exception.replacementHash)) &&
+		(exception.replacementRecipient === undefined || /^0x[0-9a-f]{40}$/.test(exception.replacementRecipient)) &&
+		(exception.replacementAmountAtomic === undefined || validUnsignedAtomic(exception.replacementAmountAtomic)));
 }
 
 function validASCP(value: ControlASCP | undefined): value is ControlASCP {

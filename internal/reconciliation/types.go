@@ -31,7 +31,17 @@ const (
 	ExecutionPendingChainRecovery ExecutionState = "PENDING_CHAIN_RECOVERY"
 	ExecutionSettled              ExecutionState = "SETTLED"
 	ExecutionReverted             ExecutionState = "REVERTED"
+	ExecutionDropped              ExecutionState = "DROPPED"
 	ExecutionQuarantined          ExecutionState = "QUARANTINED"
+)
+
+type TransactionRecoveryOutcome string
+
+const (
+	RecoveryOriginalPending     TransactionRecoveryOutcome = "ORIGINAL_PENDING"
+	RecoveryDropped             TransactionRecoveryOutcome = "DROPPED_PROVEN"
+	RecoveryExpectedReplacement TransactionRecoveryOutcome = "EXPECTED_REPLACEMENT"
+	RecoveryUnknownTransfer     TransactionRecoveryOutcome = "UNKNOWN_TRANSFER"
 )
 
 type LedgerKind string
@@ -241,6 +251,50 @@ type Execution struct {
 	ReorgEvidenceDigest     string                `json:"reorgEvidenceDigest,omitempty"`
 	FinalityCheckedAt       *time.Time            `json:"finalityCheckedAt,omitempty"`
 	FinalityCheckedHead     uint64                `json:"finalityCheckedHead,omitempty"`
+	ResolvedTransactionHash string                `json:"resolvedTransactionHash,omitempty"`
+	TransactionRecovery     *TransactionRecovery  `json:"transactionRecovery,omitempty"`
+	RecoveryResolutionActor string                `json:"recoveryResolutionActor,omitempty"`
+}
+
+// TransactionRecovery is durable quorum evidence about the EOA nonce that
+// produced an unresolved direct payment. It never authorizes a retry. A
+// terminal outcome is recorded only after independent providers agree at the
+// same trusted canonical checkpoint.
+type TransactionRecovery struct {
+	Nonce                   uint64                     `json:"nonce"`
+	ScanFromBlock           uint64                     `json:"scanFromBlock"`
+	Outcome                 TransactionRecoveryOutcome `json:"outcome"`
+	ThroughBlock            uint64                     `json:"throughBlock"`
+	ThroughBlockHash        string                     `json:"throughBlockHash"`
+	AccountNonce            uint64                     `json:"accountNonce"`
+	ReplacementTransaction  string                     `json:"replacementTransaction,omitempty"`
+	ReplacementRecipient    string                     `json:"replacementRecipient,omitempty"`
+	ReplacementAmountAtomic string                     `json:"replacementAmountAtomic,omitempty"`
+	ReplacementBlockNumber  uint64                     `json:"replacementBlockNumber,omitempty"`
+	ReplacementBlockHash    string                     `json:"replacementBlockHash,omitempty"`
+	EvidenceDigest          string                     `json:"evidenceDigest"`
+	ObservedAt              time.Time                  `json:"observedAt"`
+}
+
+type TransactionOutcomeEvidence struct {
+	Provider                   string                     `json:"provider"`
+	ChainID                    uint64                     `json:"chainId"`
+	OriginalTransactionHash    string                     `json:"originalTransactionHash"`
+	Outcome                    TransactionRecoveryOutcome `json:"outcome"`
+	Nonce                      uint64                     `json:"nonce"`
+	ThroughBlock               uint64                     `json:"throughBlock"`
+	ThroughBlockHash           string                     `json:"throughBlockHash"`
+	AccountNonce               uint64                     `json:"accountNonce"`
+	ReplacementTransactionHash string                     `json:"replacementTransactionHash,omitempty"`
+	ReplacementRecipient       string                     `json:"replacementRecipient,omitempty"`
+	ReplacementAmountAtomic    string                     `json:"replacementAmountAtomic,omitempty"`
+	ReplacementBlockNumber     uint64                     `json:"replacementBlockNumber,omitempty"`
+	ReplacementBlockHash       string                     `json:"replacementBlockHash,omitempty"`
+}
+
+type TransactionOutcomeResult struct {
+	Evidence []TransactionOutcomeEvidence `json:"evidence"`
+	Failures map[string]string            `json:"failures,omitempty"`
 }
 
 // X402SettlementClaim preserves the facilitator result that introduced an

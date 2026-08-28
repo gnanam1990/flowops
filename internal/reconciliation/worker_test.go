@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gnanam1990/flowops/pkg/envelope"
 )
 
 type workerSource struct {
@@ -21,6 +23,15 @@ type escrowWorkerSource struct {
 	*workerSource
 	escrowReceipts map[string]EscrowReceiptResult
 	escrowBlocks   map[string]ReorgResult
+}
+
+type recoveryWorkerSource struct {
+	*workerSource
+	outcomes map[string]TransactionOutcomeResult
+}
+
+func (s *recoveryWorkerSource) TransactionOutcomeQuorum(_ context.Context, execution Execution, _ uint64) TransactionOutcomeResult {
+	return s.outcomes[execution.Expected.ExecutionID]
 }
 
 func (s *escrowWorkerSource) EscrowReceiptQuorum(_ context.Context, expected EscrowExpectedReceipt) EscrowReceiptResult {
@@ -79,7 +90,7 @@ func testEscrowWorker(t *testing.T, source *escrowWorkerSource, engine *Engine, 
 
 func canonicalBlockEvidence(execution Execution, canonicalHash string, head uint64) []ReorgEvidence {
 	base := ReorgEvidence{
-		ChainID: execution.Expected.ChainID, TransactionHash: execution.Expected.TransactionHash,
+		ChainID: execution.Expected.ChainID, TransactionHash: resolvedTransactionHash(execution),
 		OriginalBlockNumber: execution.BlockNumber, OriginalBlockHash: execution.BlockHash,
 		CanonicalBlockHash: canonicalHash, ObservedHead: head,
 	}
@@ -98,7 +109,7 @@ func TestWorkerFinalizesCanonicalReceiptExactlyOnce(t *testing.T) {
 	defer engine.Close()
 	bootstrapHealthy(t, engine, clock, 100)
 	expected := testExpected()
-	if _, err := engine.RegisterBroadcast(context.Background(), expected); err != nil {
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, testBroadcastAttestation(t, expected, clock.Now())); err != nil {
 		t.Fatal(err)
 	}
 	source := &workerSource{receipts: map[string]ReceiptResult{
@@ -216,6 +227,87 @@ func TestWorkerDefersDisputedOrMissingReceiptAndNeverRebroadcasts(t *testing.T) 
 	unresolved, _ := engine.Execution(expected.ExecutionID)
 	if unresolved.State != ExecutionBroadcast || unresolved.LedgerTransactionID != "" || engine.Balance(expected.OrganizationID, "agent_service_expense") != "0" {
 		t.Fatalf("unsafe evidence changed state: %+v", unresolved)
+	}
+}
+
+func TestWorkerBindsTransactionIdentityThenQuarantinesProvedDrop(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 28, 20, 0, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "worker-recovery.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 300)
+	expected := testExpected()
+	if _, err := engine.RegisterAttestedBroadcast(context.Background(), expected, testBroadcastAttestation(t, expected, clock.Now())); err != nil {
+		t.Fatal(err)
+	}
+	through := engine.Status().LastTrusted.BlockNumber - engine.FinalityDepth()
+	source := &recoveryWorkerSource{
+		workerSource: &workerSource{receipts: map[string]ReceiptResult{}},
+		outcomes: map[string]TransactionOutcomeResult{expected.ExecutionID: {
+			Evidence: transactionOutcomeQuorum(Execution{Expected: expected}, RecoveryOriginalPending, 21, 0, through, "", "", ""),
+		}},
+	}
+	worker, err := NewWorker(source, engine, WorkerConfig{Interval: time.Second, QueryTimeout: 50 * time.Millisecond, Clock: clock.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle, err := worker.RunOnce(context.Background())
+	if err != nil || cycle.TransactionProbes != 1 || cycle.IdentitiesBound != 1 || cycle.AutoQuarantined != 0 {
+		t.Fatalf("identity cycle = %+v, %v", cycle, err)
+	}
+	bound, _ := engine.Execution(expected.ExecutionID)
+	if bound.TransactionRecovery == nil || bound.TransactionRecovery.Nonce != 21 || bound.State != ExecutionBroadcast {
+		t.Fatalf("bound execution = %+v", bound)
+	}
+	source.outcomes[expected.ExecutionID] = TransactionOutcomeResult{Evidence: transactionOutcomeQuorum(bound, RecoveryDropped, 21, 22, through, "", "", "")}
+	cycle, err = worker.RunOnce(context.Background())
+	if err != nil || cycle.TransactionProbes != 1 || cycle.AutoQuarantined != 1 {
+		t.Fatalf("drop cycle = %+v, %v", cycle, err)
+	}
+	quarantined, _ := engine.Execution(expected.ExecutionID)
+	if quarantined.State != ExecutionQuarantined || quarantined.TransactionRecovery.Outcome != RecoveryDropped || engine.Balance(expected.OrganizationID, "agent_service_expense") != "0" {
+		t.Fatalf("quarantined execution = %+v", quarantined)
+	}
+	cycle, err = worker.RunOnce(context.Background())
+	if err != nil || cycle.ReceiptCandidates != 0 || cycle.TransactionProbes != 0 {
+		t.Fatalf("quarantined execution was probed again = %+v, %v", cycle, err)
+	}
+}
+
+func TestWorkerNeverAppliesDirectNonceRecoveryToX402Settlement(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 28, 20, 15, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "worker-x402-recovery.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 300)
+	expected := testExpected()
+	expected.ExecutionID = envelope.ExecutionID("auth_x402")
+	claim := testX402Claim(t, expected)
+	if _, err := engine.RegisterX402Settlement(context.Background(), expected, claim); err != nil {
+		t.Fatal(err)
+	}
+	through := engine.Status().LastTrusted.BlockNumber - engine.FinalityDepth()
+	source := &recoveryWorkerSource{
+		workerSource: &workerSource{receipts: map[string]ReceiptResult{}},
+		outcomes:     map[string]TransactionOutcomeResult{expected.ExecutionID: {Evidence: transactionOutcomeQuorum(Execution{Expected: expected}, RecoveryDropped, 1, 2, through, "", "", "")}},
+	}
+	worker, err := NewWorker(source, engine, WorkerConfig{Interval: time.Second, QueryTimeout: 50 * time.Millisecond, Clock: clock.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle, err := worker.RunOnce(context.Background())
+	if err != nil || cycle.TransactionProbes != 0 || cycle.Deferred != 1 {
+		t.Fatalf("x402 direct recovery cycle = %+v, %v", cycle, err)
+	}
+	unresolved, _ := engine.Execution(expected.ExecutionID)
+	if unresolved.State != ExecutionBroadcast || unresolved.TransactionRecovery != nil {
+		t.Fatalf("x402 execution entered direct nonce recovery = %+v", unresolved)
 	}
 }
 

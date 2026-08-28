@@ -520,6 +520,29 @@ does not create a retry, settlement, refund, or replacement transaction. Keep
 the execution quarantined until separately collected nonce and transaction
 evidence supports a reviewed resolution.
 
+For a customer-signer-attested direct-USDC execution, request the built-in
+independent proof instead of supplying a disposition:
+
+```sh
+printf '%s\n' '{"organizationId":"org_acme","executionId":"exec_123","operator":"operator_alice","action":"PROBE"}' \
+  | /flowops/flowops-operator execution-recovery
+```
+
+`PROBE` either binds the still-pending transaction identity, records a proved
+terminal outcome in quarantine, or fails closed. Review the reconciliation
+projection. Only a `DROPPED_PROVEN` or `EXPECTED_REPLACEMENT` outcome supports:
+
+```sh
+printf '%s\n' '{"organizationId":"org_acme","executionId":"exec_123","operator":"operator_alice","action":"FINALIZE_PROVEN"}' \
+  | /flowops/flowops-operator execution-recovery
+```
+
+For an exact replacement, the API re-reads independent receipt evidence. For a
+proved drop, it revalidates the durable finality-depth proof against the current
+trusted checkpoint. `UNKNOWN_TRANSFER` cannot be finalized through this command
+and remains quarantined for accounting investigation. The same operator may
+safely repeat a completed finalization after response loss.
+
 ## Owner enrollment and bootstrap
 
 1. Deploy the private Sites version with only `FLOWOPS_SITES_PROJECT_ID` set.

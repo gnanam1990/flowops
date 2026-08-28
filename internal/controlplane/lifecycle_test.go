@@ -331,6 +331,11 @@ func TestCanonicalRevertReleasesReservationOnlyAfterFinalityAndSurvivesRestart(t
 	if afterRestart.TaskReservedAtomic != "0" || afterRestart.TaskSpentAtomic != "0" {
 		t.Fatalf("replayed revert snapshot = %+v", afterRestart)
 	}
+	outcomes[ExecutionID(signed.Authorization.AuthorizationID)] = finalizedOutcome(signed.Authorization, CanonicalExecutionDropped, clock.Now().Unix())
+	afterDropProof := restarted.spendSnapshot(firstIntent, clock.Now())
+	if afterDropProof.TaskReservedAtomic != "0" || afterDropProof.TaskSpentAtomic != "0" {
+		t.Fatalf("proved drop did not release reservation = %+v", afterDropProof)
+	}
 	fullBudget, err := restarted.Submit(context.Background(), controlIntent("reverted_reuse", "200"))
 	if err != nil || fullBudget.State != StatePendingApproval {
 		t.Fatalf("released budget was not reusable: %+v, %v", fullBudget, err)

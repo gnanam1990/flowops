@@ -82,6 +82,15 @@ func TestOperatorClientReadsReconciliationAndQuarantinesWithoutClaimingOutcome(t
 				t.Fatalf("quarantine body = %+v err=%v", body, err)
 			}
 			_, _ = w.Write([]byte(`{"execution":{"state":"QUARANTINED"}}`))
+		case 3:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/operator/executions/exec_1/recovery" {
+				t.Fatalf("recovery request = %s %s", r.Method, r.URL.Path)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["action"] != "FINALIZE_PROVEN" || body["organizationId"] != "org_acme" || body["executionId"] != nil {
+				t.Fatalf("recovery body = %+v err=%v", body, err)
+			}
+			_, _ = w.Write([]byte(`{"execution":{"state":"DROPPED"}}`))
 		default:
 			t.Fatalf("unexpected request %d", requests)
 		}
@@ -96,7 +105,11 @@ func TestOperatorClientReadsReconciliationAndQuarantinesWithoutClaimingOutcome(t
 	if err := run(context.Background(), []string{"execution-quarantine"}, strings.NewReader(input), &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 2 {
+	recovery := `{"organizationId":"org_acme","executionId":"exec_1","operator":"operator_alice","action":"FINALIZE_PROVEN"}`
+	if err := run(context.Background(), []string{"execution-recovery"}, strings.NewReader(recovery), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 3 {
 		t.Fatalf("requests = %d", requests)
 	}
 }

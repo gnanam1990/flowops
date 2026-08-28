@@ -16,11 +16,13 @@ import (
 )
 
 type rpcFixture struct {
-	chainID  string
-	blocks   map[string]rpcBlock
-	receipt  *rpcReceipt
-	receipts map[string]*rpcReceipt
-	logs     []rpcLog
+	chainID      string
+	blocks       map[string]rpcBlock
+	receipt      *rpcReceipt
+	receipts     map[string]*rpcReceipt
+	logs         []rpcLog
+	transactions map[string]*rpcTransaction
+	accountNonce string
 }
 
 type fixtureTransport struct {
@@ -64,6 +66,11 @@ func (t *fixtureTransport) RoundTrip(request *http.Request) (*http.Response, err
 		}
 	case "eth_getLogs":
 		result = fixture.logs
+	case "eth_getTransactionByHash":
+		hash, _ := call.Params[0].(string)
+		result = fixture.transactions[hash]
+	case "eth_getTransactionCount":
+		result = fixture.accountNonce
 	default:
 		return nil, fmt.Errorf("unexpected method %s", call.Method)
 	}
@@ -269,6 +276,102 @@ func TestObserverSetDecodesCanonicalUSDCReceiptEvidence(t *testing.T) {
 		if !evidence.Success || evidence.BlockNumber != 101 || evidence.Sender != expected.Sender || evidence.AmountAtomic != "100" {
 			t.Fatalf("evidence = %+v", evidence)
 		}
+	}
+}
+
+func TestObserverSetProvesPendingDroppedAndReplacementOutcomes(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 28, 18, 0, 0, 0, time.UTC)
+	expected := testExpected()
+	original := &rpcTransaction{
+		Hash: expected.TransactionHash, From: expected.Sender, To: expected.Asset,
+		Nonce: "0x7", Value: "0x0", Input: expectedTransferCalldata(expected),
+	}
+	fixtures := map[string]*rpcFixture{
+		"alpha.rpc.example": {chainID: "0x14a34", blocks: map[string]rpcBlock{"0x64": rpcBlockFixture(100, now)}, transactions: map[string]*rpcTransaction{expected.TransactionHash: original}, accountNonce: "0x7"},
+		"beta.rpc.example":  {chainID: "0x14a34", blocks: map[string]rpcBlock{"0x64": rpcBlockFixture(100, now)}, transactions: map[string]*rpcTransaction{expected.TransactionHash: original}, accountNonce: "0x7"},
+	}
+	observers, err := NewObserverSet(84532, observerProviders(), rpcClient(fixtures), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution := Execution{Expected: expected, State: ExecutionBroadcast}
+	pending := observers.TransactionOutcomeQuorum(t.Context(), execution, 100)
+	if len(pending.Failures) != 0 || len(pending.Evidence) != 2 {
+		t.Fatalf("pending outcome = %+v", pending)
+	}
+	for _, evidence := range pending.Evidence {
+		if evidence.Outcome != RecoveryOriginalPending || evidence.Nonce != 7 || evidence.ThroughBlockHash != testHash(100) {
+			t.Fatalf("pending evidence = %+v", evidence)
+		}
+	}
+	fixtures["beta.rpc.example"].accountNonce = "0x8"
+	stalePending := observers.TransactionOutcomeQuorum(t.Context(), execution, 100)
+	if len(stalePending.Evidence) != 1 || len(stalePending.Failures) != 1 {
+		t.Fatalf("stale pending transaction manufactured quorum = %+v", stalePending)
+	}
+	fixtures["beta.rpc.example"].accountNonce = "0x7"
+
+	execution.TransactionRecovery = &TransactionRecovery{Nonce: 7, ScanFromBlock: 100, Outcome: RecoveryOriginalPending}
+	for _, fixture := range fixtures {
+		fixture.transactions = map[string]*rpcTransaction{expected.TransactionHash: original}
+		fixture.accountNonce = "0x8"
+	}
+	dropped := observers.TransactionOutcomeQuorum(t.Context(), execution, 100)
+	if len(dropped.Failures) != 0 || len(dropped.Evidence) != 2 || dropped.Evidence[0].Outcome != RecoveryDropped {
+		t.Fatalf("dropped outcome = %+v", dropped)
+	}
+
+	replacementHash := testHash(777)
+	replacement := &rpcTransaction{Hash: replacementHash, From: expected.Sender, To: expected.Asset, Nonce: "0x7", Value: "0x0", Input: expectedTransferCalldata(expected), BlockNumber: "0x64", BlockHash: testHash(100)}
+	log := transferLog(expected)
+	log.TransactionHash, log.BlockNumber, log.BlockHash = replacementHash, "0x64", testHash(100)
+	for _, fixture := range fixtures {
+		fixture.transactions[replacementHash] = replacement
+		fixture.logs = []rpcLog{log}
+	}
+	replaced := observers.TransactionOutcomeQuorum(t.Context(), execution, 100)
+	if len(replaced.Failures) != 0 || len(replaced.Evidence) != 2 || replaced.Evidence[0].Outcome != RecoveryExpectedReplacement || replaced.Evidence[0].ReplacementTransactionHash != replacementHash {
+		t.Fatalf("replacement outcome = %+v", replaced)
+	}
+
+	unknownRecipient := "0x4444444444444444444444444444444444444444"
+	unknownExpected := expected
+	unknownExpected.Recipient = unknownRecipient
+	unknownExpected.AmountAtomic = "101"
+	unknown := &rpcTransaction{Hash: replacementHash, From: expected.Sender, To: expected.Asset, Nonce: "0x7", Value: "0x0", Input: expectedTransferCalldata(unknownExpected), BlockNumber: "0x64", BlockHash: testHash(100)}
+	unknownLog := transferLog(unknownExpected)
+	unknownLog.TransactionHash, unknownLog.BlockNumber, unknownLog.BlockHash = replacementHash, "0x64", testHash(100)
+	for _, fixture := range fixtures {
+		fixture.transactions[replacementHash] = unknown
+		fixture.logs = []rpcLog{unknownLog}
+	}
+	unknownResult := observers.TransactionOutcomeQuorum(t.Context(), execution, 100)
+	if len(unknownResult.Failures) != 0 || len(unknownResult.Evidence) != 2 || unknownResult.Evidence[0].Outcome != RecoveryUnknownTransfer || unknownResult.Evidence[0].ReplacementRecipient != unknownRecipient || unknownResult.Evidence[0].ReplacementAmountAtomic != "101" {
+		t.Fatalf("unknown transfer outcome = %+v", unknownResult)
+	}
+
+	fixtures["beta.rpc.example"].accountNonce = "0x7"
+	disputed := observers.TransactionOutcomeQuorum(t.Context(), execution, 100)
+	if len(disputed.Evidence) != 2 || len(disputed.Failures) != 0 || disputed.Evidence[0].Outcome == disputed.Evidence[1].Outcome {
+		t.Fatalf("nonce disagreement was hidden from quorum validation = %+v", disputed)
+	}
+}
+
+func TestTransactionRecoveryLogWindowsAreProviderBoundedAndOverflowSafe(t *testing.T) {
+	t.Parallel()
+	windows, err := transactionRecoveryLogWindows(1, 25_001)
+	want := [][2]uint64{{1, 10_000}, {10_001, 20_000}, {20_001, 25_001}}
+	if err != nil || !slices.Equal(windows, want) {
+		t.Fatalf("windows=%v want=%v err=%v", windows, want, err)
+	}
+	maximum := ^uint64(0)
+	windows, err = transactionRecoveryLogWindows(maximum-5, maximum)
+	if err != nil || !slices.Equal(windows, [][2]uint64{{maximum - 5, maximum}}) {
+		t.Fatalf("overflow windows=%v err=%v", windows, err)
+	}
+	if _, err := transactionRecoveryLogWindows(1, transactionRecoveryMaxBlocks+2); err == nil {
+		t.Fatal("unbounded transaction recovery scan was accepted")
 	}
 }
 

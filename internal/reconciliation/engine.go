@@ -431,6 +431,7 @@ func (e *Engine) ReconcileReceipt(ctx context.Context, executionID string, evide
 	resolved := cloneExecution(execution)
 	resolved.BlockNumber = canonical.BlockNumber
 	resolved.BlockHash = canonical.BlockHash
+	resolved.ResolvedTransactionHash = execution.Expected.TransactionHash
 	resolved.ResolvedAt = &now
 	resolved.FinalityCheckedAt = nil
 	resolved.FinalityCheckedHead = 0
@@ -768,6 +769,19 @@ func (e *Engine) apply(event journalEvent) error {
 		if err := e.preserveBroadcastAttestation(&payload.Execution); err != nil {
 			return err
 		}
+		if event.Key != payload.Execution.Expected.ExecutionID {
+			return errors.New("execution event key does not match execution identity")
+		}
+		current, exists := e.executions[event.Key]
+		if exists && (!equalJSON(current.Expected, payload.Execution.Expected) || current.BroadcastAt != payload.Execution.BroadcastAt) {
+			return errors.New("execution event changed immutable broadcast identity")
+		}
+		if event.Kind == eventExecutionBroadcast && payload.Execution.State != ExecutionBroadcast && payload.Execution.State != ExecutionPendingChainRecovery {
+			return errors.New("broadcast event contains a non-broadcast execution state")
+		}
+		if event.Kind == eventExecutionQuarantine && (!exists || payload.Execution.State != ExecutionQuarantined) {
+			return errors.New("quarantine event does not transition an existing execution")
+		}
 		if _, exists := e.escrowByHash[payload.Execution.Expected.TransactionHash]; exists {
 			return errors.New("execution transaction hash is already bound to an escrow transition")
 		}
@@ -906,6 +920,65 @@ func (e *Engine) preserveBroadcastAttestation(next *Execution) error {
 	if next.BroadcastAttestation != nil && next.X402SettlementClaim != nil {
 		return errors.New("execution cannot carry both direct and x402 broadcast evidence")
 	}
+	if current, ok := e.executions[next.Expected.ExecutionID]; ok {
+		if next.TransactionRecovery == nil && current.TransactionRecovery != nil {
+			recovery := *current.TransactionRecovery
+			next.TransactionRecovery = &recovery
+		}
+		if next.ResolvedTransactionHash == "" {
+			next.ResolvedTransactionHash = current.ResolvedTransactionHash
+		}
+		if next.RecoveryResolutionActor == "" {
+			next.RecoveryResolutionActor = current.RecoveryResolutionActor
+		}
+	}
+	if next.TransactionRecovery != nil {
+		recovery := next.TransactionRecovery
+		if recovery.ScanFromBlock == 0 || recovery.ThroughBlock < recovery.ScanFromBlock || !hashPattern.MatchString(recovery.ThroughBlockHash) || !hashPattern.MatchString(recovery.EvidenceDigest) || recovery.ObservedAt.IsZero() {
+			return errors.New("execution transaction recovery evidence is invalid")
+		}
+		if recovery.Outcome != RecoveryOriginalPending && recovery.AccountNonce <= recovery.Nonce {
+			return errors.New("terminal transaction recovery did not prove nonce consumption")
+		}
+		switch recovery.Outcome {
+		case RecoveryOriginalPending:
+			if recovery.AccountNonce > recovery.Nonce {
+				return errors.New("pending transaction recovery claims a consumed nonce")
+			}
+			if recovery.ReplacementTransaction != "" || recovery.ReplacementRecipient != "" || recovery.ReplacementAmountAtomic != "" || recovery.ReplacementBlockNumber != 0 || recovery.ReplacementBlockHash != "" {
+				return errors.New("transaction recovery outcome contains unexpected replacement evidence")
+			}
+		case RecoveryDropped:
+			if recovery.ReplacementTransaction != "" || recovery.ReplacementRecipient != "" || recovery.ReplacementAmountAtomic != "" || recovery.ReplacementBlockNumber != 0 || recovery.ReplacementBlockHash != "" {
+				return errors.New("transaction recovery outcome contains unexpected replacement evidence")
+			}
+		case RecoveryExpectedReplacement:
+			if !hashPattern.MatchString(recovery.ReplacementTransaction) || recovery.ReplacementTransaction == next.Expected.TransactionHash || recovery.ReplacementRecipient != next.Expected.Recipient || recovery.ReplacementAmountAtomic != next.Expected.AmountAtomic || recovery.ReplacementBlockNumber == 0 || recovery.ReplacementBlockNumber > recovery.ThroughBlock || !hashPattern.MatchString(recovery.ReplacementBlockHash) {
+				return errors.New("transaction recovery expected replacement evidence is invalid")
+			}
+			if _, err := positiveInteger(recovery.ReplacementAmountAtomic); err != nil {
+				return errors.New("transaction recovery replacement amount is invalid")
+			}
+		case RecoveryUnknownTransfer:
+			if !hashPattern.MatchString(recovery.ReplacementTransaction) || recovery.ReplacementTransaction == next.Expected.TransactionHash || !addressPattern.MatchString(recovery.ReplacementRecipient) || recovery.ReplacementBlockNumber == 0 || recovery.ReplacementBlockNumber > recovery.ThroughBlock || !hashPattern.MatchString(recovery.ReplacementBlockHash) {
+				return errors.New("transaction recovery replacement evidence is invalid")
+			}
+			if _, err := positiveInteger(recovery.ReplacementAmountAtomic); err != nil {
+				return errors.New("transaction recovery replacement amount is invalid")
+			}
+			if recovery.ReplacementRecipient == next.Expected.Recipient && recovery.ReplacementAmountAtomic == next.Expected.AmountAtomic {
+				return errors.New("unknown transaction recovery matches the expected transfer")
+			}
+		default:
+			return errors.New("transaction recovery outcome is invalid")
+		}
+	}
+	if next.ResolvedTransactionHash != "" && !hashPattern.MatchString(next.ResolvedTransactionHash) {
+		return errors.New("resolved transaction hash is invalid")
+	}
+	if next.RecoveryResolutionActor != "" && !identifierPattern.MatchString(next.RecoveryResolutionActor) {
+		return errors.New("recovery resolution actor is invalid")
+	}
 	return nil
 }
 
@@ -1037,7 +1110,7 @@ func (e *Engine) validateCanonicalBlockQuorum(execution Execution, evidence []Re
 			return ReorgEvidence{}, ErrUnsafeFinality
 		}
 		seen[observation.Provider] = struct{}{}
-		if observation.ChainID != execution.Expected.ChainID || observation.TransactionHash != execution.Expected.TransactionHash || observation.OriginalBlockNumber != execution.BlockNumber || observation.OriginalBlockHash != execution.BlockHash {
+		if observation.ChainID != execution.Expected.ChainID || observation.TransactionHash != resolvedTransactionHash(execution) || observation.OriginalBlockNumber != execution.BlockNumber || observation.OriginalBlockHash != execution.BlockHash {
 			return ReorgEvidence{}, ErrUnsafeFinality
 		}
 		if !hashPattern.MatchString(observation.CanonicalBlockHash) || observation.CanonicalBlockHash != canonical {
@@ -1209,7 +1282,18 @@ func cloneExecution(execution Execution) Execution {
 		checkedAt := *execution.FinalityCheckedAt
 		execution.FinalityCheckedAt = &checkedAt
 	}
+	if execution.TransactionRecovery != nil {
+		recovery := *execution.TransactionRecovery
+		execution.TransactionRecovery = &recovery
+	}
 	return execution
+}
+
+func resolvedTransactionHash(execution Execution) string {
+	if execution.ResolvedTransactionHash != "" {
+		return execution.ResolvedTransactionHash
+	}
+	return execution.Expected.TransactionHash
 }
 
 func cloneReorgEvidence(evidence []ReorgEvidence) []ReorgEvidence {

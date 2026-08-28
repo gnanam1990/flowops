@@ -4,8 +4,9 @@ Status: production observer, signer receipt registration, receipt/finality
 worker wiring, durable CallEscrow intent and transition reconciliation, and
 live Evidence Fetch release and acknowledged-refund manifests complete;
 one funded customer-signer escrow lifecycle complete; tenant-scoped operator
-read model and explicit unproven-outcome quarantine complete; dedicated
-production provider selection and measurement remain open
+read model, explicit unproven-outcome quarantine, and nonce-bound direct-payment
+recovery complete; dedicated production provider selection and measurement
+remain open
 
 Packages: `internal/reconciliation`, `internal/controlplane`, `pkg/referencesigner`
 
@@ -265,9 +266,11 @@ Do not place secret-bearing RPC URLs on a command line. Production endpoints bel
 - select and contractually assess at least two production Base RPC providers;
 - complete and record the multi-hour Sepolia confirmation, stall-age,
   head-skew, reorg-lookback, rate-limit, and recovery-window measurement;
-- add unknown-transfer detection and quorum nonce/content evidence for proven
-  transaction-replacement and dropped-transaction workflows; explicit
-  unproven-outcome quarantine is implemented;
+- extend nonce-bound unknown-transfer scanning beyond already registered
+  customer-signer direct-USDC executions if a future wallet inventory supplies
+  separately authorized signer/asset watch registrations; the current worker
+  proves pending, dropped, exact-replacement, and unknown-transfer outcomes for
+  registered direct executions and never applies that model to x402;
 - assess and document production Clef/HSM operations for the runnable
   customer-side signer packaging; the deployed no-funds pilot worker remains idle until a
   design partner provisions a signer receipt public key and supplies a real

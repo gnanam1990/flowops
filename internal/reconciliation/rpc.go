@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	maxRPCResponseBytes = 1 << 20
-	transferTopic       = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	maxRPCResponseBytes             = 1 << 20
+	transactionRecoveryLogBlockSpan = uint64(10_000)
+	transactionRecoveryMaxBlocks    = uint64(50_000)
+	transferTopic                   = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 )
 
 type RPCProvider struct {
@@ -98,6 +100,10 @@ type rpcReceipt struct {
 type rpcTransaction struct {
 	Hash        string `json:"hash"`
 	From        string `json:"from"`
+	To          string `json:"to"`
+	Nonce       string `json:"nonce"`
+	Value       string `json:"value"`
+	Input       string `json:"input"`
 	BlockNumber string `json:"blockNumber"`
 	BlockHash   string `json:"blockHash"`
 }
@@ -278,6 +284,261 @@ func (s *ObserverSet) ReceiptQuorum(ctx context.Context, expected ExpectedExecut
 	return output
 }
 
+// TransactionOutcomeQuorum observes the original transaction identity and,
+// once that identity has been durably bound, proves whether its nonce remains
+// pending, was consumed without the expected native-USDC transfer, or was
+// replaced by a transaction carrying expected or unknown transfer content.
+// It is read-only and never broadcasts a replacement.
+func (s *ObserverSet) TransactionOutcomeQuorum(ctx context.Context, execution Execution, throughBlock uint64) TransactionOutcomeResult {
+	type providerResult struct {
+		provider string
+		evidence TransactionOutcomeEvidence
+		err      error
+	}
+	results := make(chan providerResult, len(s.providers))
+	var group sync.WaitGroup
+	for _, provider := range s.providers {
+		provider := provider
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			evidence, err := s.transactionOutcome(ctx, provider, execution, throughBlock)
+			results <- providerResult{provider: provider.Name, evidence: evidence, err: err}
+		}()
+	}
+	group.Wait()
+	close(results)
+	output := TransactionOutcomeResult{Failures: make(map[string]string)}
+	for result := range results {
+		if result.err != nil {
+			output.Failures[result.provider] = result.err.Error()
+			continue
+		}
+		output.Evidence = append(output.Evidence, result.evidence)
+	}
+	sort.Slice(output.Evidence, func(i, j int) bool { return output.Evidence[i].Provider < output.Evidence[j].Provider })
+	if len(output.Failures) == 0 {
+		output.Failures = nil
+	}
+	return output
+}
+
+func (s *ObserverSet) transactionOutcome(ctx context.Context, provider RPCProvider, execution Execution, throughBlock uint64) (TransactionOutcomeEvidence, error) {
+	expected := execution.Expected
+	if err := s.verifyChain(ctx, provider); err != nil {
+		return TransactionOutcomeEvidence{}, err
+	}
+	checkpoint, err := s.block(ctx, provider, fmt.Sprintf("0x%x", throughBlock))
+	if err != nil {
+		return TransactionOutcomeEvidence{}, err
+	}
+	base := TransactionOutcomeEvidence{
+		Provider: provider.Name, ChainID: s.chainID, OriginalTransactionHash: expected.TransactionHash,
+		ThroughBlock: checkpoint.number, ThroughBlockHash: checkpoint.hash,
+	}
+	transaction, err := s.transaction(ctx, provider, expected.TransactionHash)
+	if err != nil {
+		return TransactionOutcomeEvidence{}, err
+	}
+	if transaction != nil {
+		nonce, err := verifyExpectedTransaction(*transaction, expected)
+		if err != nil {
+			return TransactionOutcomeEvidence{}, err
+		}
+		if execution.TransactionRecovery != nil && execution.TransactionRecovery.Nonce != nonce {
+			return TransactionOutcomeEvidence{}, errors.New("original transaction nonce changed after durable binding")
+		}
+		accountNonce, err := s.accountNonce(ctx, provider, expected.Sender, throughBlock)
+		if err != nil {
+			return TransactionOutcomeEvidence{}, err
+		}
+		if accountNonce <= nonce {
+			base.Outcome, base.Nonce, base.AccountNonce = RecoveryOriginalPending, nonce, accountNonce
+			return base, nil
+		}
+		if execution.TransactionRecovery == nil {
+			return TransactionOutcomeEvidence{}, errors.New("provider returned a stale original transaction before its nonce and content were durably bound")
+		}
+		base.Nonce, base.AccountNonce = nonce, accountNonce
+	} else {
+		if execution.TransactionRecovery == nil {
+			return TransactionOutcomeEvidence{}, errors.New("original transaction is unavailable before its nonce and content were independently bound")
+		}
+		base.Nonce = execution.TransactionRecovery.Nonce
+		accountNonce, err := s.accountNonce(ctx, provider, expected.Sender, throughBlock)
+		if err != nil {
+			return TransactionOutcomeEvidence{}, err
+		}
+		base.AccountNonce = accountNonce
+		if accountNonce <= base.Nonce {
+			return TransactionOutcomeEvidence{}, errors.New("original transaction is absent but its nonce is not canonically consumed")
+		}
+	}
+	replacement, transfer, err := s.transferAtNonce(ctx, provider, execution, throughBlock)
+	if err != nil {
+		return TransactionOutcomeEvidence{}, err
+	}
+	if replacement == nil {
+		base.Outcome = RecoveryDropped
+		return base, nil
+	}
+	base.ReplacementTransactionHash = replacement.Hash
+	base.ReplacementRecipient = transfer.recipient
+	base.ReplacementAmountAtomic = transfer.amount
+	base.ReplacementBlockNumber = transfer.blockNumber
+	base.ReplacementBlockHash = transfer.blockHash
+	if replacement.Hash != expected.TransactionHash && transfer.recipient == expected.Recipient && transfer.amount == expected.AmountAtomic {
+		if _, err := verifyExpectedTransaction(*replacement, expected); err == nil {
+			base.Outcome = RecoveryExpectedReplacement
+			return base, nil
+		}
+	}
+	base.Outcome = RecoveryUnknownTransfer
+	return base, nil
+}
+
+func (s *ObserverSet) accountNonce(ctx context.Context, provider RPCProvider, sender string, block uint64) (uint64, error) {
+	var nonceHex string
+	if err := s.call(ctx, provider, "eth_getTransactionCount", []any{sender, fmt.Sprintf("0x%x", block)}, &nonceHex); err != nil {
+		return 0, err
+	}
+	nonce, err := parseHexUint64(nonceHex)
+	if err != nil {
+		return 0, errors.New("RPC account nonce is invalid")
+	}
+	return nonce, nil
+}
+
+type observedTransfer struct {
+	recipient   string
+	amount      string
+	blockNumber uint64
+	blockHash   string
+}
+
+func (s *ObserverSet) transferAtNonce(ctx context.Context, provider RPCProvider, execution Execution, throughBlock uint64) (*rpcTransaction, observedTransfer, error) {
+	fromBlock := execution.TransactionRecovery.ScanFromBlock
+	windows, err := transactionRecoveryLogWindows(fromBlock, throughBlock)
+	if err != nil {
+		return nil, observedTransfer{}, err
+	}
+	fromTopic := "0x" + strings.Repeat("0", 24) + execution.Expected.Sender[2:]
+	logs := make([]rpcLog, 0)
+	for _, blockWindow := range windows {
+		filter := map[string]any{
+			"address": execution.Expected.Asset, "fromBlock": fmt.Sprintf("0x%x", blockWindow[0]), "toBlock": fmt.Sprintf("0x%x", blockWindow[1]),
+			"topics": []any{transferTopic, fromTopic},
+		}
+		var windowLogs []rpcLog
+		if err := s.call(ctx, provider, "eth_getLogs", []any{filter}, &windowLogs); err != nil {
+			return nil, observedTransfer{}, err
+		}
+		logs = append(logs, windowLogs...)
+	}
+	var matched *rpcTransaction
+	var transfer observedTransfer
+	for _, event := range logs {
+		if event.Removed || strings.ToLower(event.Address) != execution.Expected.Asset || len(event.Topics) != 3 || strings.ToLower(event.Topics[0]) != transferTopic || strings.ToLower(event.Topics[1]) != fromTopic {
+			continue
+		}
+		hash, err := canonicalHash(event.TransactionHash)
+		if err != nil {
+			return nil, observedTransfer{}, errors.New("transfer log transaction hash is invalid")
+		}
+		transaction, err := s.transaction(ctx, provider, hash)
+		if err != nil || transaction == nil {
+			return nil, observedTransfer{}, errors.New("transfer log transaction is unavailable")
+		}
+		nonce, err := parseHexUint64(transaction.Nonce)
+		if err != nil {
+			return nil, observedTransfer{}, errors.New("transfer transaction nonce is invalid")
+		}
+		if nonce != execution.TransactionRecovery.Nonce {
+			continue
+		}
+		if matched != nil && matched.Hash != transaction.Hash {
+			return nil, observedTransfer{}, errors.New("multiple canonical transactions claim the same sender nonce")
+		}
+		recipient, err := addressFromTopic(event.Topics[2])
+		if err != nil {
+			return nil, observedTransfer{}, errors.New("transfer recipient is invalid")
+		}
+		amount, err := dataUint256(event.Data)
+		if err != nil || amount.Sign() <= 0 {
+			return nil, observedTransfer{}, errors.New("transfer amount is invalid")
+		}
+		blockNumber, err := parseHexUint64(event.BlockNumber)
+		blockHash, hashErr := canonicalHash(event.BlockHash)
+		if err != nil || hashErr != nil || blockNumber < fromBlock || blockNumber > throughBlock || transaction.BlockNumber != event.BlockNumber || strings.ToLower(transaction.BlockHash) != blockHash {
+			return nil, observedTransfer{}, errors.New("transfer transaction block binding is invalid")
+		}
+		canonical, err := s.block(ctx, provider, fmt.Sprintf("0x%x", blockNumber))
+		if err != nil || canonical.hash != blockHash {
+			return nil, observedTransfer{}, errors.New("transfer transaction block is not canonical")
+		}
+		copy := *transaction
+		matched, transfer = &copy, observedTransfer{recipient: recipient, amount: amount.String(), blockNumber: blockNumber, blockHash: blockHash}
+	}
+	return matched, transfer, nil
+}
+
+func transactionRecoveryLogWindows(from, to uint64) ([][2]uint64, error) {
+	if from == 0 || to < from || to-from > transactionRecoveryMaxBlocks {
+		return nil, errors.New("transaction recovery log window is invalid or exceeds 50000 blocks")
+	}
+	windows := make([][2]uint64, 0, (to-from)/transactionRecoveryLogBlockSpan+1)
+	for start := from; ; {
+		end := start + transactionRecoveryLogBlockSpan - 1
+		if end < start || end > to {
+			end = to
+		}
+		windows = append(windows, [2]uint64{start, end})
+		if end == to {
+			return windows, nil
+		}
+		start = end + 1
+	}
+}
+
+func (s *ObserverSet) transaction(ctx context.Context, provider RPCProvider, hash string) (*rpcTransaction, error) {
+	var transaction *rpcTransaction
+	if err := s.call(ctx, provider, "eth_getTransactionByHash", []any{hash}, &transaction); err != nil {
+		return nil, err
+	}
+	if transaction == nil {
+		return nil, nil
+	}
+	canonical, err := canonicalHash(transaction.Hash)
+	if err != nil || canonical != hash {
+		return nil, errors.New("RPC transaction hash is invalid")
+	}
+	transaction.Hash = canonical
+	transaction.From = strings.ToLower(transaction.From)
+	transaction.To = strings.ToLower(transaction.To)
+	transaction.Input = strings.ToLower(transaction.Input)
+	return transaction, nil
+}
+
+func verifyExpectedTransaction(transaction rpcTransaction, expected ExpectedExecution) (uint64, error) {
+	nonce, err := parseHexUint64(transaction.Nonce)
+	if err != nil {
+		return 0, errors.New("transaction nonce is invalid")
+	}
+	value, err := parseHexUint256(transaction.Value)
+	if err != nil || value.Sign() != 0 {
+		return 0, errors.New("native-USDC transaction value must be zero")
+	}
+	if transaction.From != expected.Sender || transaction.To != expected.Asset || transaction.Input != expectedTransferCalldata(expected) {
+		return 0, errors.New("transaction sender, asset, or calldata does not match the expected transfer")
+	}
+	return nonce, nil
+}
+
+func expectedTransferCalldata(expected ExpectedExecution) string {
+	amount, _ := new(big.Int).SetString(expected.AmountAtomic, 10)
+	return "0xa9059cbb" + strings.Repeat("0", 24) + expected.Recipient[2:] + fmt.Sprintf("%064x", amount)
+}
+
 func (s *ObserverSet) ReorgQuorum(ctx context.Context, execution Execution) ReorgResult {
 	result := s.CanonicalBlockQuorum(ctx, execution)
 	filtered := ReorgResult{Failures: result.Failures}
@@ -295,7 +556,7 @@ func (s *ObserverSet) ReorgQuorum(ctx context.Context, execution Execution) Reor
 }
 
 func (s *ObserverSet) CanonicalBlockQuorum(ctx context.Context, execution Execution) ReorgResult {
-	return s.canonicalBlockQuorum(ctx, execution.Expected.TransactionHash, execution.BlockNumber, execution.BlockHash)
+	return s.canonicalBlockQuorum(ctx, resolvedTransactionHash(execution), execution.BlockNumber, execution.BlockHash)
 }
 
 // EscrowCanonicalBlockQuorum checks whether the exact block that confirmed an
@@ -544,6 +805,17 @@ func parseHexUint64(value string) (uint64, error) {
 		return 0, errors.New("non-canonical hex quantity")
 	}
 	return strconv.ParseUint(value[2:], 16, 64)
+}
+
+func parseHexUint256(value string) (*big.Int, error) {
+	if len(value) < 3 || !strings.HasPrefix(value, "0x") || value[2] == '0' && len(value) > 3 {
+		return nil, errors.New("non-canonical hex quantity")
+	}
+	parsed, ok := new(big.Int).SetString(value[2:], 16)
+	if !ok || parsed.Sign() < 0 || parsed.BitLen() > 256 {
+		return nil, errors.New("hex quantity exceeds uint256")
+	}
+	return parsed, nil
 }
 
 func canonicalHash(value string) (string, error) {

@@ -355,11 +355,15 @@ func run(ctx context.Context) (returnErr error) {
 	reconciliationWorker, err := reconciliation.NewWorker(observers, reconciliationEngine, reconciliation.WorkerConfig{
 		Interval: cfg.reconciliationInterval, QueryTimeout: cfg.reconciliationTimeout,
 		OnCycle: func(cycle reconciliation.WorkerCycle) {
-			slog.Info("Base reconciliation cycle completed", "examined", cycle.Examined, "receiptCandidates", cycle.ReceiptCandidates, "settled", cycle.Settled, "reverted", cycle.Reverted, "finalityConfirmed", cycle.FinalityConfirmed, "reorgsReopened", cycle.ReorgsReopened, "escrowCandidates", cycle.EscrowCandidates, "escrowConfirmed", cycle.EscrowConfirmed, "escrowReverted", cycle.EscrowReverted, "escrowFinalized", cycle.EscrowFinalized, "escrowReorgs", cycle.EscrowReorgs, "deferred", cycle.Deferred, "skippedForChain", cycle.SkippedForChain)
+			slog.Info("Base reconciliation cycle completed", "examined", cycle.Examined, "receiptCandidates", cycle.ReceiptCandidates, "settled", cycle.Settled, "reverted", cycle.Reverted, "finalityConfirmed", cycle.FinalityConfirmed, "reorgsReopened", cycle.ReorgsReopened, "transactionProbes", cycle.TransactionProbes, "identitiesBound", cycle.IdentitiesBound, "autoQuarantined", cycle.AutoQuarantined, "escrowCandidates", cycle.EscrowCandidates, "escrowConfirmed", cycle.EscrowConfirmed, "escrowReverted", cycle.EscrowReverted, "escrowFinalized", cycle.EscrowFinalized, "escrowReorgs", cycle.EscrowReorgs, "deferred", cycle.Deferred, "skippedForChain", cycle.SkippedForChain)
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("create Base reconciliation worker: %w", err)
+	}
+	recoveryCoordinator, err := reconciliation.NewRecoveryCoordinator(observers, observers, reconciliationEngine, cfg.reconciliationTimeout, time.Now)
+	if err != nil {
+		return fmt.Errorf("create Base transaction recovery coordinator: %w", err)
 	}
 	ascpSettlementStore, err := ascpsettlement.NewPostgresStore(db)
 	if err != nil {
@@ -389,13 +393,14 @@ func run(ctx context.Context) (returnErr error) {
 		OperatorControlKey: cfg.operatorKey, KeeperCallbackKey: cfg.keeperCallbackKey,
 		MetricsKey: cfg.metricsKey, Readiness: store,
 		SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, X402Settlements: x402Settlements, Escrow: escrowRegistrar,
-		Reconciliation:     reconciliationEngine,
-		ASCPAgent:          ascpAgentService,
-		ASCPFlow:           ascpOrchestrationService,
-		ASCPActivation:     ascpActivationService,
-		ASCPSignerBindings: signerBindingStore,
-		ASCPWorkflows:      workflowService,
-		ASCPSettlement:     ascpSettlementRegistrar{store: ascpSettlementStore},
+		Reconciliation:         reconciliationEngine,
+		ReconciliationRecovery: recoveryCoordinator,
+		ASCPAgent:              ascpAgentService,
+		ASCPFlow:               ascpOrchestrationService,
+		ASCPActivation:         ascpActivationService,
+		ASCPSignerBindings:     signerBindingStore,
+		ASCPWorkflows:          workflowService,
+		ASCPSettlement:         ascpSettlementRegistrar{store: ascpSettlementStore},
 	})
 	if err != nil {
 		return err

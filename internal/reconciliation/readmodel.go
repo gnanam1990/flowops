@@ -42,6 +42,11 @@ type Exception struct {
 	FirstObservedAt      time.Time `json:"firstObservedAt"`
 	Reason               string    `json:"reason"`
 	OperatorActionNeeded bool      `json:"operatorActionNeeded"`
+	RecoveryOutcome      string    `json:"recoveryOutcome,omitempty"`
+	TransactionNonce     uint64    `json:"transactionNonce,omitempty"`
+	ReplacementHash      string    `json:"replacementHash,omitempty"`
+	ReplacementRecipient string    `json:"replacementRecipient,omitempty"`
+	ReplacementAmount    string    `json:"replacementAmountAtomic,omitempty"`
 }
 
 type AssetLedgerSummary struct {
@@ -102,12 +107,20 @@ func (e *Engine) OrganizationView(organizationID string) OrganizationView {
 		case ExecutionQuarantined:
 			view.Recovery.QuarantinedOutcomes++
 			assetSummary(execution.Expected.Asset)
-			view.Exceptions = append(view.Exceptions, Exception{
+			exception := Exception{
 				ID: execution.Expected.ExecutionID, Kind: "DIRECT_EXECUTION", State: string(execution.State),
 				TransactionHash: execution.Expected.TransactionHash, Asset: execution.Expected.Asset,
 				AmountAtomic: execution.Expected.AmountAtomic, FirstObservedAt: execution.BroadcastAt,
 				Reason: execution.Resolution, OperatorActionNeeded: true,
-			})
+			}
+			if execution.TransactionRecovery != nil {
+				exception.RecoveryOutcome = string(execution.TransactionRecovery.Outcome)
+				exception.TransactionNonce = execution.TransactionRecovery.Nonce
+				exception.ReplacementHash = execution.TransactionRecovery.ReplacementTransaction
+				exception.ReplacementRecipient = execution.TransactionRecovery.ReplacementRecipient
+				exception.ReplacementAmount = execution.TransactionRecovery.ReplacementAmountAtomic
+			}
+			view.Exceptions = append(view.Exceptions, exception)
 		default:
 			view.Recovery.ResolvedCandidates++
 		}

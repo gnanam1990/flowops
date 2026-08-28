@@ -258,6 +258,7 @@ type mutableChain struct {
 	resumeErr   error
 	views       map[string]reconciliation.OrganizationView
 	quarantined []string
+	recovered   []string
 }
 
 func (c *mutableChain) ForceHalt(_ context.Context, _ string, reason string) (reconciliation.ChainStatus, error) {
@@ -408,6 +409,44 @@ func TestOperatorReconciliationIsTenantBoundAndQuarantinePreservesUnprovenOutcom
 	}
 }
 
+func TestOperatorRecoveryRequiresDedicatedKeyTenantAndClosedActionSet(t *testing.T) {
+	server, _, chain, _, journal, _ := setupServer(t)
+	defer server.Close()
+	defer journal.Close()
+	operatorToken := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("o", 32)))
+	path := server.URL + "/v1/operator/executions/exec_pending/recovery"
+	request := operatorRecoveryRequest{OrganizationID: "org_a", Operator: "operator_alice", Action: reconciliation.RecoveryActionProbe}
+	status, body := doRequest(t, server.Client(), http.MethodPost, path, ownerTokenA, "", request)
+	if status != http.StatusUnauthorized || body["error"].(map[string]any)["code"] != "UNAUTHENTICATED" {
+		t.Fatalf("tenant token reached recovery control = %d %+v", status, body)
+	}
+	request.OrganizationID = "org_b"
+	status, _ = doRequest(t, server.Client(), http.MethodPost, path, operatorToken, "", request)
+	if status != http.StatusNotFound {
+		t.Fatalf("cross-tenant recovery = %d", status)
+	}
+	request.OrganizationID, request.Action = "org_a", "FORCE_SETTLED"
+	status, body = doRequest(t, server.Client(), http.MethodPost, path, operatorToken, "", request)
+	if status != http.StatusBadRequest || body["error"].(map[string]any)["code"] != "INVALID_RECOVERY_ACTION" {
+		t.Fatalf("open-ended recovery action = %d %+v", status, body)
+	}
+	request.Action = reconciliation.RecoveryActionProbe
+	status, body = doRequest(t, server.Client(), http.MethodPost, path, operatorToken, "", request)
+	if status != http.StatusOK || body["execution"].(map[string]any)["state"] != string(reconciliation.ExecutionQuarantined) {
+		t.Fatalf("proved recovery probe = %d %+v", status, body)
+	}
+	request.Action = reconciliation.RecoveryActionFinalize
+	status, body = doRequest(t, server.Client(), http.MethodPost, path, operatorToken, "", request)
+	if status != http.StatusOK || body["execution"].(map[string]any)["state"] != string(reconciliation.ExecutionDropped) {
+		t.Fatalf("proved recovery finalization = %d %+v", status, body)
+	}
+	chain.mu.Lock()
+	defer chain.mu.Unlock()
+	if len(chain.recovered) != 2 {
+		t.Fatalf("recovery audit calls = %#v", chain.recovered)
+	}
+}
+
 func newHealthyChain(now time.Time) *mutableChain {
 	return &mutableChain{status: reconciliation.ChainStatus{
 		ChainID: 84532, State: reconciliation.StateHealthy, StateChangedAt: now.Add(-time.Minute),
@@ -446,6 +485,20 @@ func (c *mutableChain) QuarantineForOrganization(_ context.Context, _, execution
 		Expected: reconciliation.ExpectedExecution{ExecutionID: executionID},
 		State:    reconciliation.ExecutionQuarantined, Resolution: "manual quarantine by " + operator + ": " + reason,
 	}, nil
+}
+
+func (c *mutableChain) RecoverForOrganization(_ context.Context, organizationID, executionID, operator string, action reconciliation.RecoveryAction) (reconciliation.Execution, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if organizationID != "org_a" {
+		return reconciliation.Execution{}, reconciliation.ErrUnknownExecution
+	}
+	c.recovered = append(c.recovered, organizationID+"\x00"+executionID+"\x00"+operator+"\x00"+string(action))
+	state := reconciliation.ExecutionQuarantined
+	if action == reconciliation.RecoveryActionFinalize {
+		state = reconciliation.ExecutionDropped
+	}
+	return reconciliation.Execution{Expected: reconciliation.ExpectedExecution{ExecutionID: executionID, OrganizationID: organizationID}, State: state}, nil
 }
 
 func (c *mutableChain) halt(now time.Time) {
@@ -586,7 +639,7 @@ func setupHandler(t *testing.T) (*Server, *memoryStore, *mutableChain, *controlp
 	ids := &sequenceIDs{}
 	server, err := NewServer(ServerConfig{
 		Store: store, Lifecycle: lifecycle, Chain: chain, Clock: func() time.Time { return now },
-		IDSource: ids.next, SiteSessions: siteSessions, OperatorControlKey: []byte(strings.Repeat("o", 32)), Reconciliation: chain,
+		IDSource: ids.next, SiteSessions: siteSessions, OperatorControlKey: []byte(strings.Repeat("o", 32)), Reconciliation: chain, ReconciliationRecovery: chain,
 	})
 	if err != nil {
 		t.Fatal(err)

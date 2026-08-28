@@ -41,6 +41,13 @@ type quarantineInput struct {
 	Reason         string `json:"reason"`
 }
 
+type recoveryInput struct {
+	OrganizationID string `json:"organizationId"`
+	ExecutionID    string `json:"executionId"`
+	Operator       string `json:"operator"`
+	Action         string `json:"action"`
+}
+
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -105,6 +112,20 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 				Disposition    string `json:"disposition"`
 				Reason         string `json:"reason"`
 			}{request.OrganizationID, request.Operator, request.Disposition, request.Reason})
+		case "execution-recovery":
+			var request recoveryInput
+			if err := decodeStrict(input, &request); err != nil {
+				return err
+			}
+			if strings.TrimSpace(request.ExecutionID) == "" {
+				return errors.New("executionId is required")
+			}
+			path = "/v1/operator/executions/" + url.PathEscape(request.ExecutionID) + "/recovery"
+			body, _ = json.Marshal(struct {
+				OrganizationID string `json:"organizationId"`
+				Operator       string `json:"operator"`
+				Action         string `json:"action"`
+			}{request.OrganizationID, request.Operator, request.Action})
 		default:
 			return usageError()
 		}
@@ -117,7 +138,7 @@ func run(ctx context.Context, args []string, input io.Reader, output io.Writer) 
 }
 
 func usageError() error {
-	return errors.New("usage: flowops-operator chain-status|chain-halt|chain-resume|reconciliation-status|execution-quarantine")
+	return errors.New("usage: flowops-operator chain-status|chain-halt|chain-resume|reconciliation-status|execution-quarantine|execution-recovery")
 }
 
 func send(ctx context.Context, output io.Writer, method, endpoint, token string, body []byte) error {
