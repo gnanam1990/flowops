@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "activationId": "ascp-v4-base-mainnet-activation-v1-2026-08-28",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "status": "executed-verified-funding-disabled",
+  "sourceDeployment": {
+    "record": "deployments/base-mainnet-ascp-experimental-v1.json",
+    "releaseId": "base-mainnet-ascp-experimental-v1",
+    "sourceCommit": "48a701bc99b5b903389ff7b149e5567787268838"
+  },
+  "authorization": {
+    "approvalText": "CONFIRM SEND ZERO-FUND BASE MAINNET ACTIVATION BATCH",
+    "moduleActivationAuthorized": true,
+    "fundingAuthorized": false,
+    "usdcApprovalAuthorized": false
+  },
+  "safe": {
+    "address": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "threshold": 2,
+    "safeTxHash": "0x7d1a4bef7c2131ed3bd40fb61260d05731703371db8a22187429498bcb491b1f",
+    "nonceBefore": 0,
+    "nonceAfter": 1,
+    "confirmedOwners": [
+      "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+      "0xe88872f94013e4584bceafb5d5f87da291d086d2"
+    ]
+  },
+  "contracts": {
+    "serviceDirectory": "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1",
+    "agentRegistry": "0x15332e8c8e230e8a1c05095196dac42ba8cc6906",
+    "escrow": "0x214cbbb2190075ba43fa6518560d37c09720e0c4",
+    "spendModule": "0x942b83421c3ac4e1a04753e5e0208fd56cad649e",
+    "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+  },
+  "safeTransaction": {
+    "to": "0x9641d764fc13c8b624c04430c7356c1c7c8102e2",
+    "value": "0",
+    "operation": 1,
+    "safeTxGas": "0",
+    "baseGas": "0",
+    "gasPrice": "0",
+    "gasToken": "0x0000000000000000000000000000000000000000",
+    "refundReceiver": "0x0000000000000000000000000000000000000000",
+    "nonce": 0,
+    "data": "0x8d80ff0a0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000015200942b83421c3ac4e1a04753e5e0208fd56cad649e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000847a22532a000000000000000000000000214cbbb2190075ba43fa6518560d37c09720e0c4829518ab89788763954e964351e23a4bf8b08e5e5ad5d86aaa2ab185b82ac4c96cdaf2e420bfbde4e85b5cc9d63b7c3a10c8d7cb8cea61aeb19a75a2385188350d82391369de7d84cd517a714efc5e21d862e2d6dbe47bc204d7972c44fd234f0013e9fa8d49ee3e3b456db71d111da9b78fabd51800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000024610b5925000000000000000000000000942b83421c3ac4e1a04753e5e0208fd56cad649e0000000000000000000000000000",
+    "dataHash": "0xea73cfac66f3196ea1e47d74bbce681945a741f998059dbd91b7ee74ced91d98"
+  },
+  "actions": [
+    {
+      "order": 1,
+      "to": "0x942b83421c3ac4e1a04753e5e0208fd56cad649e",
+      "value": "0",
+      "operation": "CALL",
+      "method": "setEscrowAllowlist(address,bytes32,bytes32,bytes32)",
+      "escrow": "0x214cbbb2190075ba43fa6518560d37c09720e0c4",
+      "escrowRuntimeCodeHash": "0x829518ab89788763954e964351e23a4bf8b08e5e5ad5d86aaa2ab185b82ac4c9",
+      "workflowId": "0x6cdaf2e420bfbde4e85b5cc9d63b7c3a10c8d7cb8cea61aeb19a75a238518835",
+      "workflowPayloadHash": "0x0d82391369de7d84cd517a714efc5e21d862e2d6dbe47bc204d7972c44fd234f",
+      "data": "0x7a22532a000000000000000000000000214cbbb2190075ba43fa6518560d37c09720e0c4829518ab89788763954e964351e23a4bf8b08e5e5ad5d86aaa2ab185b82ac4c96cdaf2e420bfbde4e85b5cc9d63b7c3a10c8d7cb8cea61aeb19a75a2385188350d82391369de7d84cd517a714efc5e21d862e2d6dbe47bc204d7972c44fd234f"
+    },
+    {
+      "order": 2,
+      "to": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+      "value": "0",
+      "operation": "CALL",
+      "method": "enableModule(address)",
+      "module": "0x942b83421c3ac4e1a04753e5e0208fd56cad649e",
+      "data": "0x610b5925000000000000000000000000942b83421c3ac4e1a04753e5e0208fd56cad649e"
+    }
+  ],
+  "execution": {
+    "transactionHash": "0x630c2a47e57013ae99a022725e648e4711a3f635bcefccaf34bda3f5b1735e8b",
+    "outerFrom": "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+    "outerTo": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "outerNonce": 2726,
+    "outerInputHash": "0xeda316ab5d1bbfada1d23e94ea48639efd2523572309d83266a2f191649d8834",
+    "transactionType": 2,
+    "receiptStatus": true,
+    "blockNumber": 50562161,
+    "blockHash": "0xcfa2dab0402aa5fa3fb2092df078025751201864ea745484439e8c0971707958",
+    "blockTimestamp": "2026-08-28T10:41:09Z",
+    "transactionIndex": 204,
+    "gasUsed": 155834,
+    "effectiveGasPriceWei": "7405327",
+    "l1FeeWei": "3843614613"
+  },
+  "eventEvidence": {
+    "safeMultiSigTransactionTopic": "0x66753cd2356569ee081232e3be8909b950e0a76c1f8460c3a5e3c2be32b11bed",
+    "executionSuccessTopic": "0x442e715f626346e8c54381002da614f62bee8d27386535b2521ec8540898556e",
+    "enabledModuleTopic": "0xecdf3a3effea5783a3c4c2140e677577666428d44ed9d474a0b3a4c9943f8440",
+    "escrowAllowlistSetTopic": "0x02b8c7e709e3f27c20a4ecb3669d2682fcba9309e1902881bf1814c71b9f6eb3",
+    "governanceWorkflowBoundTopic": "0x71840a8df3cf7e14c302ff72b4fd1c651a2845389dfb0a4fdd884a2ffb104bfe"
+  },
+  "postState": {
+    "safeNonce": 1,
+    "spendModuleEnabled": true,
+    "escrowAllowlistCodeHash": "0x829518ab89788763954e964351e23a4bf8b08e5e5ad5d86aaa2ab185b82ac4c9",
+    "directoryVersion": 0,
+    "directoryRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "agentCount": 0,
+    "escrowTotalLocked": "0",
+    "spendExecutedPrincipal": "0",
+    "callEscrowEmergencyPaused": false,
+    "spendModuleEmergencyPaused": false,
+    "safeNativeBalanceWei": "0",
+    "safeUsdcBalance": "0",
+    "allContractNativeBalancesWei": "0",
+    "allContractUsdcBalances": "0",
+    "safeToSpendModuleUsdcAllowance": "0",
+    "safeToCallEscrowUsdcAllowance": "0",
+    "runtimeEnabled": true,
+    "fundingEnabled": false
+  },
+  "verification": {
+    "verifiedAt": "2026-08-28T10:44:00Z",
+    "providersAgreed": true,
+    "rpcEvidence": [
+      {
+        "provider": "Base public RPC",
+        "url": "https://mainnet.base.org",
+        "observedHead": 50562335
+      },
+      {
+        "provider": "Blast public RPC",
+        "url": "https://base-mainnet.public.blastapi.io",
+        "observedHead": 50562335
+      }
+    ],
+    "safeTransactionUrl": "https://app.safe.global/transactions/tx?id=multisig_0x13E9Fa8d49Ee3E3b456Db71d111Da9b78fABD518_0x7d1a4bef7c2131ed3bd40fb61260d05731703371db8a22187429498bcb491b1f&safe=base%3A0x13E9Fa8d49Ee3E3b456Db71d111Da9b78fABD518",
+    "safeTransactionServiceUrl": "https://api.safe.global/tx-service/base/api/v1/multisig-transactions/0x7d1a4bef7c2131ed3bd40fb61260d05731703371db8a22187429498bcb491b1f/",
+    "blockscoutTransactionUrl": "https://base.blockscout.com/tx/0x630c2a47e57013ae99a022725e648e4711a3f635bcefccaf34bda3f5b1735e8b"
+  },
+  "notes": "Base mainnet zero-fund capability activation only. The exact escrow bytecode was allowlisted and the spend module was enabled through the existing 2-of-3 Safe. No USDC approval, funding, directory publication, verifier activation, or agent registration was included."
+}

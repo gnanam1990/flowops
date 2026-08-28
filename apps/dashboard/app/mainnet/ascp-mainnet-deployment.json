@@ -3,7 +3,7 @@
   "releaseId": "base-mainnet-ascp-experimental-v1",
   "network": "Base mainnet",
   "chainId": 8453,
-  "status": "deployed-inactive",
+  "status": "activated-zero-fund",
   "firstDeploymentBlock": 50557746,
   "finalizedThroughBlock": 50557998,
   "safe": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
@@ -47,11 +47,16 @@
     }
   ],
   "activation": {
-    "runtimeEnabled": false,
+    "runtimeEnabled": true,
     "externalReviewCompleted": false,
-    "safeModuleEnabled": false,
-    "escrowAllowlisted": false,
+    "safeModuleEnabled": true,
+    "escrowAllowlisted": true,
     "fundingAuthorized": false,
+    "safeTxHash": "0x7d1a4bef7c2131ed3bd40fb61260d05731703371db8a22187429498bcb491b1f",
+    "transactionHash": "0x630c2a47e57013ae99a022725e648e4711a3f635bcefccaf34bda3f5b1735e8b",
+    "blockNumber": 50562161,
+    "safeNonce": 1,
+    "escrowRuntimeCodeHash": "0x829518ab89788763954e964351e23a4bf8b08e5e5ad5d86aaa2ab185b82ac4c9",
     "allContractNativeBalancesWei": "0",
     "allContractUsdcBalancesAtomic": "0"
   }

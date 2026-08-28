@@ -1,4 +1,4 @@
-.PHONY: test check fmt-check solidity-fmt-check acceptance-manifest-check test-ascp-external-acceptance verify-ascp-external-acceptance test-ascp-safe-owner-proof verify-ascp-safe-owner-proof test-ascp-local-acceptance-rehearsal ascp-local-acceptance-rehearsal deployment-evidence-check test-deployment-evidence ascp-sepolia-evidence-check test-ascp-sepolia-evidence verify-ascp-sepolia-deployment ascp-sepolia-activation-evidence-check test-ascp-sepolia-activation-evidence verify-ascp-sepolia-activation test-ascp-directory-release test-ascp-directory-presign test-ascp-directory-relay test-ascp-directory-transaction-preview test-ascp-canonical-usdc-fork test-ascp-asset-recovery-accounting verify-ascp-sepolia-directory-v1-readiness verify-ascp-mainnet-safe test-ascp-mainnet-candidate test-ascp-mainnet-runtime-bindings funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor test-mainnet-intent-anchor verify-ascp-sepolia-asset dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-ascp-sepolia-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
+.PHONY: test check fmt-check solidity-fmt-check acceptance-manifest-check test-ascp-external-acceptance verify-ascp-external-acceptance test-ascp-safe-owner-proof verify-ascp-safe-owner-proof test-ascp-local-acceptance-rehearsal ascp-local-acceptance-rehearsal deployment-evidence-check test-deployment-evidence ascp-sepolia-evidence-check test-ascp-sepolia-evidence verify-ascp-sepolia-deployment ascp-sepolia-activation-evidence-check test-ascp-sepolia-activation-evidence verify-ascp-sepolia-activation ascp-mainnet-activation-evidence-check test-ascp-mainnet-activation-evidence test-ascp-directory-release test-ascp-directory-presign test-ascp-directory-relay test-ascp-directory-transaction-preview test-ascp-canonical-usdc-fork test-ascp-asset-recovery-accounting verify-ascp-sepolia-directory-v1-readiness verify-ascp-mainnet-safe test-ascp-mainnet-candidate test-ascp-mainnet-runtime-bindings funded-signer-evidence-check mainnet-readiness-check mainnet-final-audit test-mainnet-final-audit test-mainnet-readiness test-mainnet-deployer-verification test-security-review-package test-proposal-anchor test-mainnet-intent-anchor verify-ascp-sepolia-asset dashboard-deps dashboard-check smoke-dashboard smoke-x402-readonly smoke-x402-builder-experiment smoke-evidence-fetch smoke-reconciliation smoke-reconciliation-operator smoke-postgres-readiness smoke-signer-executor smoke-reference-signer smoke-escrow-signer smoke-funded-signer-evidence smoke-pilot-limits smoke-rpc-admission smoke-escrow smoke-escrow-deployment smoke-ascp-sepolia-deployment smoke-escrow-mainnet-readiness smoke-escrow-reconciliation smoke-escrow-durable smoke-mcp
 
 GO_PACKAGES := ./cmd/... ./internal/... ./pkg/...
 GO_FILES := $(shell git ls-files '*.go')
@@ -75,6 +75,16 @@ test-ascp-sepolia-activation-evidence:
 
 verify-ascp-sepolia-activation:
 	deploy/ascp/verify-base-sepolia-activation-readonly.sh
+
+ascp-mainnet-activation-evidence-check:
+	deploy/ascp/check-base-mainnet-activation-evidence.sh
+
+test-ascp-mainnet-activation-evidence:
+	deploy/ascp/test-base-mainnet-activation-evidence.sh
+
+.PHONY: verify-ascp-mainnet-activation
+verify-ascp-mainnet-activation:
+	deploy/ascp/verify-base-mainnet-activation-readonly.sh
 
 test-ascp-directory-release:
 	go test -race ./pkg/directoryrelease ./cmd/ascp-directory-release

@@ -69,10 +69,10 @@ starter copy or fabricated preview success states.
   approval, deposit, or payment.
 - The four finalized Base mainnet ASCP addresses are public deployment evidence,
   not secrets or operator-supplied runtime state. The dashboard bundles the
-  checked `app/mainnet/ascp-mainnet-deployment.json` projection and labels the
-  graph deployed but inactive until the Safe module, escrow allowlist, runtime
-  release, and funding gates are independently satisfied. Validate it against
-  the canonical repository evidence with
+  checked `app/mainnet/ascp-mainnet-deployment.json` projection. It reports the
+  verified zero-fund module/escrow activation while keeping directory,
+  verifier, registered-agent, runtime-release, and funding gates explicit.
+  Validate it against the canonical deployment and activation evidence with
   `make test-ascp-mainnet-runtime-bindings` from the repository root.
 - Runtime dependencies must pass the high-severity audit gate. The vinext build
   tool currently brings a development-only `image-size` advisory; FlowOps does

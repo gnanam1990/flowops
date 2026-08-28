@@ -213,10 +213,10 @@ test("renders a fail-closed public control room without illustrative organizatio
 	assert.match(html, /Public health evidence is unavailable/);
   assert.match(html, /Organization controls locked/);
   assert.match(html, /Economic activity/);
-	assert.match(html, /Payment contract graph deployed; activation blocked/);
+	assert.match(html, /Payment controls activated; funding remains disabled/);
 	assert.match(html, /Source verified<\/dt><dd class="status-verified">4 \/ 4/);
-  assert.match(html, /Safe module is disabled, the escrow is not allowlisted/);
-  assert.match(html, /Runtime<\/dt><dd>Blocked/);
+  assert.match(html, /Safe module is enabled and bound to the exact escrow runtime code hash/);
+  assert.match(html, /Onchain capability<\/dt><dd class="status-verified">Enabled/);
   assert.match(html, /Funds<\/dt><dd>Zero/);
   assert.doesNotMatch(html, /Northstar Labs|Signal Harbor|Research Scout|\$15,140\.00|Preview data/);
 });
@@ -329,7 +329,7 @@ test("provides explicit loopback-only local sign-in and sign-out without grantin
   assert.equal(enrollment.headers.get("location"), "/api/local-auth/signin?return_to=%2Fenrollment");
 });
 
-test("shows the canonical deployed-inactive ASCP graph and keeps anchors as supporting evidence", async () => {
+test("shows the canonical zero-fund activated ASCP graph and keeps anchors as supporting evidence", async () => {
   const address = "0xD109ec995d8fC1FFD2fd66f367288b3Bc3EC8AAA";
   const legacyAddress = "0x149D03Ec527Ad8667d47e7b6a2d316Dd54033250";
   const response = await render({
@@ -340,8 +340,8 @@ test("shows the canonical deployed-inactive ASCP graph and keeps anchors as supp
   });
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /BASE MAINNET · DEPLOYED \/ INACTIVE/);
-  assert.match(html, /Payment contract graph deployed; activation blocked/);
+  assert.match(html, /BASE MAINNET · ACTIVATED \/ ZERO FUNDS/);
+  assert.match(html, /Payment controls activated; funding remains disabled/);
   for (const contractAddress of [
     "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1",
     "0x15332e8c8e230e8a1c05095196dac42ba8cc6906",
@@ -357,9 +357,11 @@ test("shows the canonical deployed-inactive ASCP graph and keeps anchors as supp
   assert.match(html, /Contract graph/);
   assert.match(html, /Source verified/);
   assert.match(html, /Source verified<\/dt><dd class="status-verified">4 \/ 4/);
-  assert.match(html, /Runtime<\/dt><dd>Blocked/);
+  assert.match(html, /Onchain capability<\/dt><dd class="status-verified">Enabled/);
   assert.match(html, /Funds<\/dt><dd>Zero/);
-  assert.match(html, /Module disabled · escrow not allowlisted/);
+  assert.match(html, /Module enabled · escrow allowlisted/);
+  assert.match(html, /View zero-fund activation transaction/);
+  assert.match(html, /https:\/\/base\.blockscout\.com\/tx\/0x630c2a47e57013ae99a022725e648e4711a3f635bcefccaf34bda3f5b1735e8b/);
   assert.doesNotMatch(html, /payment path is operational/i);
 
   const invalid = await render({
@@ -369,7 +371,7 @@ test("shows the canonical deployed-inactive ASCP graph and keeps anchors as supp
     },
   });
   const invalidHtml = await invalid.text();
-  assert.match(invalidHtml, /Payment contract graph deployed; activation blocked/);
+  assert.match(invalidHtml, /Payment controls activated; funding remains disabled/);
   assert.doesNotMatch(invalidHtml, /0xnot-a-mainnet-address/);
   assert.match(invalidHtml, /Legacy proposal evidence:/);
   assert.match(invalidHtml, new RegExp(`https://base\\.blockscout\\.com/address/${legacyAddress}\\?tab=contract`));

@@ -315,10 +315,10 @@ function MainnetSafetyNotice({
   return (
     <section className="proposal-anchor-notice" aria-label="Base mainnet ASCP deployment status">
       <div className="proposal-anchor-copy">
-        <span>BASE MAINNET · DEPLOYED / INACTIVE</span>
-        <h2>Payment contract graph deployed; activation blocked</h2>
+        <span>BASE MAINNET · ACTIVATED / ZERO FUNDS</span>
+        <h2>Payment controls activated; funding remains disabled</h2>
         <p>
-          All four contracts are finalized and source verified on Base mainnet. The Safe module is disabled, the escrow is not allowlisted, and every contract remains zero-funded; no payment path is represented as operational.
+          All four contracts are finalized and source verified on Base mainnet. The Safe module is enabled and bound to the exact escrow runtime code hash. Every contract remains zero-funded, with no USDC approval, directory version, verifier, or registered agent, so no end-to-end payment path is represented as operational.
         </p>
         <div className="mainnet-contract-links">
           {ascpDeployment.contracts.map((contract) => (
@@ -329,6 +329,9 @@ function MainnetSafetyNotice({
           ))}
         </div>
         {intentAnchor.status === "limited-mainnet-live" ? <a href="/mainnet"><span>Open intent evidence workspace ↗</span></a> : null}
+        <a href={`https://base.blockscout.com/tx/${ascpDeployment.activation.transactionHash}`} target="_blank" rel="noreferrer">
+          <span>View zero-fund activation transaction ↗</span>
+        </a>
         {legacyProposal.address && legacyProposal.explorerHref ? (
           <a className="proposal-anchor-legacy" href={legacyProposal.explorerHref} target="_blank" rel="noreferrer">
             <span>Legacy proposal evidence: {legacyProposal.address} ↗</span>
@@ -343,9 +346,9 @@ function MainnetSafetyNotice({
             {sourceVerified ? "4 / 4" : "Incomplete"}
           </dd>
         </div>
-        <div><dt>Runtime</dt><dd>Blocked</dd></div>
+        <div><dt>Onchain capability</dt><dd className="status-verified">Enabled</dd></div>
         <div><dt>Funds</dt><dd>Zero</dd></div>
-        <div><dt>Activation</dt><dd>Module disabled · escrow not allowlisted</dd></div>
+        <div><dt>Activation</dt><dd>Module enabled · escrow allowlisted</dd></div>
       </dl>
     </section>
   );

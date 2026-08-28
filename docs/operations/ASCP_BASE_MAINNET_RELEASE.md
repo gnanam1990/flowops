@@ -1,23 +1,26 @@
 # ASCP Base mainnet release
 
 Status: four contracts deployed and finalized as an owner-authorized, unaudited,
-zero-fund graph; runtime activation and funding remain blocked.
+zero-fund graph; the Safe module and exact escrow allowlist are activated, while
+funding and the end-to-end production runtime remain blocked.
 
 ## Current preparation state
 
 The production Safe and four ASCP contracts are finalized on Base mainnet. The
-canonical post-deployment evidence is
-`deployments/base-mainnet-ascp-experimental-v1.json`. It records an explicitly
-unaudited deployment: all sources are verified, but the Safe module is disabled,
-the escrow is not allowlisted, no funding was authorized, and all four contract
-ETH and USDC balances were observed as zero.
+canonical deployment snapshot is
+`deployments/base-mainnet-ascp-experimental-v1.json`; the later zero-fund
+activation is recorded separately in
+`deployments/base-mainnet-ascp-activation-v1.json`. All sources are verified,
+the Safe module is enabled, and the escrow is allowlisted by its exact runtime
+code hash. No funding or USDC approval was authorized, and the Safe plus all four
+contracts were observed with zero ETH and zero USDC.
 
 The exact public address tuple is mirrored into the deliberately incomplete
 runtime binding profile at
 `deploy/control-plane/base-mainnet-ascp-deployed-inactive.env.example` and the
 dashboard record at
 `apps/dashboard/app/mainnet/ascp-mainnet-deployment.json`. Validate that neither
-surface drifted from the evidence record with:
+surface drifted from the deployment and activation evidence records with:
 
 ```sh
 make test-ascp-mainnet-runtime-bindings
@@ -39,11 +42,12 @@ candidate graph inside a pinned finalized Base mainnet fork and verifies every
 address and zero-fund invariant. It never signs or broadcasts a transaction.
 
 The production deployment script remains fail-closed and is not retroactively
-promoted by the experimental deployment. External review, production RPC
-admission, exact on-chain activation review, and a signed runtime release
-manifest remain mandatory before the control-plane process may observe this
-tuple as an enabled Base mainnet runtime. Funding and payment authorization are
-later, independent ceremonies.
+promoted by the experimental deployment. The zero-fund activation does not
+publish a directory, activate a verifier, register an agent, configure the
+control-plane runtime, or authorize funds. Production RPC admission and a signed
+runtime release manifest remain mandatory before the control-plane process may
+use this tuple. Funding and payment authorization are later, independent
+ceremonies.
 
 ## Required sequence
 
@@ -51,12 +55,13 @@ later, independent ceremonies.
    SHA-256 digest into a reviewed activation plan. Review must treat the current
    on-chain addresses and runtime code hashes as immutable inputs.
 2. Complete production RPC admission with two or more independent paid providers.
-3. Re-verify every deployment receipt, constructor binding, runtime code hash,
+3. Re-verify every deployment and activation receipt, constructor binding, runtime code hash,
    source-verification result, Safe owner/threshold state, module state, escrow
    allowlist state, and zero balances through the admitted providers.
-4. Review the exact authority rules and the separately proposed Safe actions.
-   Do not enable the module, allowlist the escrow, publish a directory root, or
-   activate a verifier merely to make the dashboard or runtime appear live.
+4. Review the exact authority rules. The module/allowlist activation is already
+   recorded; directory publication and verifier activation remain separate
+   governed actions and must not be performed merely to make the runtime appear
+   live.
 5. Keep the zero-fund binding profile incomplete until steps 1–4 are evidenced.
 6. Build the release image from the immutable reviewed commit in the trusted
    build pipeline, push it to the private registry, and pin its immutable image

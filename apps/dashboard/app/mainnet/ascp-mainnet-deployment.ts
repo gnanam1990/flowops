@@ -14,18 +14,23 @@ export type ASCPMainnetDeployment = {
   releaseId: string;
   network: "Base mainnet";
   chainId: 8453;
-  status: "deployed-inactive";
+  status: "activated-zero-fund";
   firstDeploymentBlock: number;
   finalizedThroughBlock: number;
   safe: string;
   asset: { address: string; symbol: "USDC"; decimals: 6 };
   contracts: ASCPMainnetContract[];
   activation: {
-    runtimeEnabled: false;
+    runtimeEnabled: true;
     externalReviewCompleted: false;
-    safeModuleEnabled: false;
-    escrowAllowlisted: false;
+    safeModuleEnabled: true;
+    escrowAllowlisted: true;
     fundingAuthorized: false;
+    safeTxHash: string;
+    transactionHash: string;
+    blockNumber: number;
+    safeNonce: 1;
+    escrowRuntimeCodeHash: string;
     allContractNativeBalancesWei: "0";
     allContractUsdcBalancesAtomic: "0";
   };

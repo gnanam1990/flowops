@@ -5,10 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 evidence="${FLOWOPS_ASCP_MAINNET_EVIDENCE_RECORD:-${repo_root}/deployments/base-mainnet-ascp-experimental-v1.json}"
 dashboard="${FLOWOPS_ASCP_MAINNET_DASHBOARD_RECORD:-${repo_root}/apps/dashboard/app/mainnet/ascp-mainnet-deployment.json}"
 runtime="${FLOWOPS_ASCP_MAINNET_RUNTIME_BINDINGS:-${repo_root}/deploy/control-plane/base-mainnet-ascp-deployed-inactive.env.example}"
+activation="${FLOWOPS_ASCP_MAINNET_ACTIVATION_RECORD:-${repo_root}/deployments/base-mainnet-ascp-activation-v1.json}"
 
-for file in "${evidence}" "${dashboard}" "${runtime}"; do
+for file in "${evidence}" "${dashboard}" "${runtime}" "${activation}"; do
   test -f "${file}" || { echo "missing Base mainnet binding input: ${file}" >&2; exit 1; }
 done
+
+FLOWOPS_ASCP_MAINNET_ACTIVATION_RECORD="${activation}" \
+  "${repo_root}/deploy/ascp/check-base-mainnet-activation-evidence.sh" >/dev/null
 
 jq -e '
   .schemaVersion == 1 and
@@ -26,7 +30,8 @@ jq -e '
   ([.contracts[].sourceVerified] | all)
 ' "${evidence}" >/dev/null
 
-expected_dashboard="$(jq -c '
+expected_dashboard="$(jq -c --slurpfile activation "${activation}" '
+  $activation[0] as $a |
   {
     releaseId,
     network: "Base mainnet",
@@ -44,9 +49,14 @@ expected_dashboard="$(jq -c '
     }],
     activation: {
       externalReviewCompleted: .authorization.externalReviewCompleted,
-      safeModuleEnabled: .safe.spendModuleEnabled,
-      escrowAllowlisted: .observedInitialState.escrowAllowlisted,
-      fundingAuthorized: .authorization.fundingAuthorized,
+      safeModuleEnabled: $a.postState.spendModuleEnabled,
+      escrowAllowlisted: true,
+      fundingAuthorized: $a.postState.fundingEnabled,
+      safeTxHash: $a.safe.safeTxHash,
+      transactionHash: $a.execution.transactionHash,
+      blockNumber: $a.execution.blockNumber,
+      safeNonce: $a.postState.safeNonce,
+      escrowRuntimeCodeHash: $a.postState.escrowAllowlistCodeHash,
       allContractNativeBalancesWei: .observedInitialState.allContractNativeBalancesWei,
       allContractUsdcBalancesAtomic: .observedInitialState.allContractUsdcBalancesAtomic
     }
@@ -79,6 +89,11 @@ actual_dashboard="$(jq -c '
       safeModuleEnabled: .activation.safeModuleEnabled,
       escrowAllowlisted: .activation.escrowAllowlisted,
       fundingAuthorized: .activation.fundingAuthorized,
+      safeTxHash: .activation.safeTxHash,
+      transactionHash: .activation.transactionHash,
+      blockNumber: .activation.blockNumber,
+      safeNonce: .activation.safeNonce,
+      escrowRuntimeCodeHash: .activation.escrowRuntimeCodeHash,
       allContractNativeBalancesWei: .activation.allContractNativeBalancesWei,
       allContractUsdcBalancesAtomic: .activation.allContractUsdcBalancesAtomic
     }
@@ -91,8 +106,8 @@ test "${actual_dashboard}" = "${expected_dashboard}" || {
 }
 
 jq -e '
-  .status == "deployed-inactive" and
-  .activation.runtimeEnabled == false and
+  .status == "activated-zero-fund" and
+  .activation.runtimeEnabled == true and
   ([.contracts[].binding] | sort) == ([
     "FLOWOPS_ASCP_DIRECTORY_CONTRACT",
     "FLOWOPS_ASCP_AGENT_REGISTRY_CONTRACT",
@@ -122,4 +137,4 @@ test "$(env_value FLOWOPS_ASCP_SPEND_MODULE_CONTRACT)" = "$(evidence_contract as
 test "$(env_value FLOWOPS_ESCROW_CONTRACT)" = "$(evidence_contract ascp_call_escrow)"
 test "$(env_value FLOWOPS_ASCP_GOVERNANCE_FROM_BLOCK)" = "$(jq -r '[.contracts[].blockNumber] | min' "${evidence}")"
 
-echo "Base mainnet deployed-inactive runtime and dashboard bindings are canonical"
+echo "Base mainnet zero-fund activated dashboard and runtime bindings are canonical"
