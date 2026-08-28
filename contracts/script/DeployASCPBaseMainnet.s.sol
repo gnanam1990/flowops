@@ -11,6 +11,12 @@ import {ASCPSpendModule} from "../src/ASCPSpendModule.sol";
 interface IMainnetSafeDeploymentTarget {
     function getOwners() external view returns (address[] memory);
     function getThreshold() external view returns (uint256);
+    function nonce() external view returns (uint256);
+    function masterCopy() external view returns (address);
+    function getModulesPaginated(address start, uint256 pageSize)
+        external
+        view
+        returns (address[] memory array, address next);
     function isModuleEnabled(address module) external view returns (bool);
     function execTransactionFromModule(address to, uint256 value, bytes memory data, uint8 operation)
         external
@@ -35,6 +41,13 @@ contract DeployASCPBaseMainnet is Script {
     address public constant DESIGNATED_DEPLOYER = address(0);
     uint256 public constant EXPECTED_DEPLOYER_NONCE = 0;
     address public constant PRODUCTION_SAFE = address(0);
+    address public constant EXPECTED_SAFE_OWNER_1 = address(0);
+    address public constant EXPECTED_SAFE_OWNER_2 = address(0);
+    address public constant EXPECTED_SAFE_OWNER_3 = address(0);
+    uint256 public constant EXPECTED_SAFE_THRESHOLD = 0;
+    uint256 public constant EXPECTED_SAFE_NONCE = 0;
+    bytes32 public constant EXPECTED_SAFE_RUNTIME_CODE_HASH = bytes32(0);
+    address public constant EXPECTED_SAFE_IMPLEMENTATION = address(0);
     address public constant DIRECTORY_PUBLISHER = address(0);
     address public constant DIRECTORY_PAUSER = address(0);
     address public constant REGISTRY_ADMIN = address(0);
@@ -197,8 +210,24 @@ contract DeployASCPBaseMainnet is Script {
 
     function _requireSafe(address safe) private {
         if (safe.code.length == 0) revert ProductionSafeNotContract(safe);
+        address[3] memory expectedOwners = _expectedSafeOwners();
+        uint256 expectedThreshold = _expectedSafeThreshold();
+        uint256 expectedNonce = _expectedSafeNonce();
+        bytes32 expectedRuntimeCodeHash = _expectedSafeRuntimeCodeHash();
+        address expectedImplementation = _expectedSafeImplementation();
+        if (
+            expectedOwners[0] == address(0) || expectedOwners[1] == address(0) || expectedOwners[2] == address(0)
+                || expectedOwners[0] == expectedOwners[1] || expectedOwners[0] == expectedOwners[2]
+                || expectedOwners[1] == expectedOwners[2] || expectedThreshold != 2
+                || expectedRuntimeCodeHash == bytes32(0) || expectedImplementation == address(0)
+                || safe.codehash != expectedRuntimeCodeHash
+        ) revert ProductionSafeInterfaceInvalid(safe);
         address[] memory owners;
         uint256 threshold;
+        uint256 safeNonce;
+        address implementation;
+        address[] memory modules;
+        address nextModule;
         bool zeroModuleEnabled;
         try IMainnetSafeDeploymentTarget(safe).getOwners() returns (address[] memory values) {
             owners = values;
@@ -210,19 +239,38 @@ contract DeployASCPBaseMainnet is Script {
         } catch {
             revert ProductionSafeInterfaceInvalid(safe);
         }
+        try IMainnetSafeDeploymentTarget(safe).nonce() returns (uint256 value) {
+            safeNonce = value;
+        } catch {
+            revert ProductionSafeInterfaceInvalid(safe);
+        }
+        try IMainnetSafeDeploymentTarget(safe).masterCopy() returns (address value) {
+            implementation = value;
+        } catch {
+            revert ProductionSafeInterfaceInvalid(safe);
+        }
+        try IMainnetSafeDeploymentTarget(safe).getModulesPaginated(address(0x1), 1) returns (
+            address[] memory values, address next
+        ) {
+            modules = values;
+            nextModule = next;
+        } catch {
+            revert ProductionSafeInterfaceInvalid(safe);
+        }
         try IMainnetSafeDeploymentTarget(safe).isModuleEnabled(address(0)) returns (bool enabled) {
             zeroModuleEnabled = enabled;
         } catch {
             revert ProductionSafeInterfaceInvalid(safe);
         }
-        if (owners.length == 0 || threshold == 0 || threshold > owners.length || zeroModuleEnabled) {
+        if (
+            owners.length != expectedOwners.length || threshold != expectedThreshold || safeNonce != expectedNonce
+                || implementation != expectedImplementation || modules.length != 0 || nextModule != address(0x1)
+                || zeroModuleEnabled
+        ) {
             revert ProductionSafeInterfaceInvalid(safe);
         }
         for (uint256 index = 0; index < owners.length; ++index) {
-            if (owners[index] == address(0)) revert ProductionSafeInterfaceInvalid(safe);
-            for (uint256 prior = 0; prior < index; ++prior) {
-                if (owners[index] == owners[prior]) revert ProductionSafeInterfaceInvalid(safe);
-            }
+            if (owners[index] != expectedOwners[index]) revert ProductionSafeInterfaceInvalid(safe);
         }
         (bool moduleCallSucceeded, bytes memory moduleCallResult) = safe.call(
             abi.encodeCall(IMainnetSafeDeploymentTarget.execTransactionFromModule, (address(0), 0, bytes(""), uint8(0)))
@@ -293,6 +341,26 @@ contract DeployASCPBaseMainnet is Script {
 
     function _productionSafe() internal view virtual returns (address) {
         return PRODUCTION_SAFE;
+    }
+
+    function _expectedSafeOwners() internal view virtual returns (address[3] memory owners) {
+        owners = [EXPECTED_SAFE_OWNER_1, EXPECTED_SAFE_OWNER_2, EXPECTED_SAFE_OWNER_3];
+    }
+
+    function _expectedSafeThreshold() internal view virtual returns (uint256) {
+        return EXPECTED_SAFE_THRESHOLD;
+    }
+
+    function _expectedSafeNonce() internal view virtual returns (uint256) {
+        return EXPECTED_SAFE_NONCE;
+    }
+
+    function _expectedSafeRuntimeCodeHash() internal view virtual returns (bytes32) {
+        return EXPECTED_SAFE_RUNTIME_CODE_HASH;
+    }
+
+    function _expectedSafeImplementation() internal view virtual returns (address) {
+        return EXPECTED_SAFE_IMPLEMENTATION;
     }
 
     function _directoryPublisher() internal view virtual returns (address) {

@@ -207,6 +207,7 @@ contract ASCPCallEscrow is ReentrancyGuard {
         bytes32[] calldata resourceProof
     ) external nonReentrant returns (bytes32 callId) {
         if (msg.sender != safe) revert NotSafe(msg.sender);
+        if (emergencyPaused) revert EmergencyPaused();
         if (c.chainId != block.chainid) revert ChainMismatch(block.chainid, c.chainId);
         if (c.escrowContract != address(this)) revert EscrowMismatch(address(this), c.escrowContract);
         if (

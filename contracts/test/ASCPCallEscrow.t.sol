@@ -378,6 +378,24 @@ contract ASCPCallEscrowTest is Test {
         escrow.lockCall(c, seller, resource, new bytes32[](0), new bytes32[](0));
     }
 
+    function testEmergencyPauseRejectsNewLocksWithoutDisablingExpiryRecovery() public {
+        ASCPCallEscrow.ExecutionCommitment memory existing = _commitment();
+        bytes32 existingCallId = buyer.lock(escrow, existing, seller, resource, new bytes32[](0), new bytes32[](0));
+
+        settlementGovernor.pause(escrow);
+        assertTrue(escrow.emergencyPaused());
+
+        ASCPCallEscrow.ExecutionCommitment memory next = _commitment();
+        next.operationId = keccak256("post-pause-operation");
+        vm.expectRevert(ASCPCallEscrow.EmergencyPaused.selector);
+        buyer.lock(escrow, next, seller, resource, new bytes32[](0), new bytes32[](0));
+
+        vm.warp(existing.settleBy + 1);
+        escrow.claimExpired(existingCallId);
+        assertEq(uint8(escrow.getCall(existingCallId).state), uint8(ASCPCallEscrow.State.Refunded));
+        assertEq(escrow.totalLocked(), 0);
+    }
+
     function testLockRejectsFeeOnTransferAssetAtomically() public {
         FeeToken feeToken = new FeeToken();
         ASCPCallEscrow feeEscrow = new ASCPCallEscrow(

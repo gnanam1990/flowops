@@ -8,12 +8,27 @@ import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 contract ProductionSafeFixture {
     function getOwners() external pure returns (address[] memory owners) {
-        owners = new address[](1);
+        owners = new address[](3);
         owners[0] = address(0xA11CE);
+        owners[1] = address(0xB0B);
+        owners[2] = address(0xCAFE);
     }
 
     function getThreshold() external pure returns (uint256) {
-        return 1;
+        return 2;
+    }
+
+    function nonce() external pure returns (uint256) {
+        return 0;
+    }
+
+    function masterCopy() external pure returns (address) {
+        return address(0x1111);
+    }
+
+    function getModulesPaginated(address, uint256) external pure returns (address[] memory modules, address next) {
+        modules = new address[](0);
+        next = address(0x1);
     }
 
     function isModuleEnabled(address) external pure returns (bool) {
@@ -55,6 +70,38 @@ contract ViewOnlyProductionSafeFixture {
     }
 }
 
+contract StructurallyValidOneOfOneSafeFixture {
+    function getOwners() external pure returns (address[] memory owners) {
+        owners = new address[](1);
+        owners[0] = address(0xA11CE);
+    }
+
+    function getThreshold() external pure returns (uint256) {
+        return 1;
+    }
+
+    function nonce() external pure returns (uint256) {
+        return 0;
+    }
+
+    function masterCopy() external pure returns (address) {
+        return address(0x1111);
+    }
+
+    function getModulesPaginated(address, uint256) external pure returns (address[] memory modules, address next) {
+        modules = new address[](0);
+        next = address(0x1);
+    }
+
+    function isModuleEnabled(address) external pure returns (bool) {
+        return false;
+    }
+
+    function execTransactionFromModule(address, uint256, bytes memory, uint8) external pure returns (bool) {
+        revert("GS104");
+    }
+}
+
 contract ReadyASCPMainnetDeploymentHarness is DeployASCPBaseMainnet {
     address internal immutable readySafe;
 
@@ -68,6 +115,26 @@ contract ReadyASCPMainnetDeploymentHarness is DeployASCPBaseMainnet {
 
     function _productionSafe() internal view override returns (address) {
         return readySafe;
+    }
+
+    function _expectedSafeOwners() internal pure override returns (address[3] memory owners) {
+        owners = [address(0xA11CE), address(0xB0B), address(0xCAFE)];
+    }
+
+    function _expectedSafeThreshold() internal pure override returns (uint256) {
+        return 2;
+    }
+
+    function _expectedSafeNonce() internal pure override returns (uint256) {
+        return 0;
+    }
+
+    function _expectedSafeRuntimeCodeHash() internal pure override returns (bytes32) {
+        return keccak256(type(ProductionSafeFixture).runtimeCode);
+    }
+
+    function _expectedSafeImplementation() internal pure override returns (address) {
+        return address(0x1111);
     }
 
     function _expectedCanonicalUSDCCodeHash() internal view override returns (bytes32) {
@@ -120,6 +187,30 @@ contract PreparedASCPMainnetCandidateHarness is DeployASCPBaseMainnet {
 
     function _productionSafe() internal pure override returns (address) {
         return 0x13E9Fa8d49Ee3E3b456Db71d111Da9b78fABD518;
+    }
+
+    function _expectedSafeOwners() internal pure override returns (address[3] memory owners) {
+        owners = [
+            0x0f094eec6B569c3f33033102ad3ce33EAbFeb2fB,
+            0xE8405844a45C209895afE2e49be6aA2C6C6202a6,
+            0xe88872F94013E4584BCeafb5d5f87dA291d086D2
+        ];
+    }
+
+    function _expectedSafeThreshold() internal pure override returns (uint256) {
+        return 2;
+    }
+
+    function _expectedSafeNonce() internal pure override returns (uint256) {
+        return 0;
+    }
+
+    function _expectedSafeRuntimeCodeHash() internal pure override returns (bytes32) {
+        return 0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c;
+    }
+
+    function _expectedSafeImplementation() internal pure override returns (address) {
+        return 0x29fcB43b46531BcA003ddC8FCB67FFE91900C762;
     }
 
     function _directoryPublisher() internal pure override returns (address) {
@@ -179,6 +270,13 @@ contract DeployASCPBaseMainnetTest is Test {
         assertEq(deployment.DESIGNATED_DEPLOYER(), address(0));
         assertEq(deployment.EXPECTED_DEPLOYER_NONCE(), 0);
         assertEq(deployment.PRODUCTION_SAFE(), address(0));
+        assertEq(deployment.EXPECTED_SAFE_OWNER_1(), address(0));
+        assertEq(deployment.EXPECTED_SAFE_OWNER_2(), address(0));
+        assertEq(deployment.EXPECTED_SAFE_OWNER_3(), address(0));
+        assertEq(deployment.EXPECTED_SAFE_THRESHOLD(), 0);
+        assertEq(deployment.EXPECTED_SAFE_NONCE(), 0);
+        assertEq(deployment.EXPECTED_SAFE_RUNTIME_CODE_HASH(), bytes32(0));
+        assertEq(deployment.EXPECTED_SAFE_IMPLEMENTATION(), address(0));
         assertEq(deployment.EXTERNAL_REVIEW_DIGEST(), bytes32(0));
         assertEq(deployment.RELEASE_PLAN_DIGEST(), bytes32(0));
         assertFalse(deployment.MAINNET_BROADCAST_ENABLED());
@@ -418,7 +516,17 @@ contract DeployASCPBaseMainnetTest is Test {
 
         assertFalse(IMainnetSafeDeploymentTarget(PREPARED_SAFE).isModuleEnabled(address(deployed.spendModule)));
         assertEq(IMainnetSafeDeploymentTarget(PREPARED_SAFE).getThreshold(), 2);
-        assertEq(IMainnetSafeDeploymentTarget(PREPARED_SAFE).getOwners().length, 3);
+        assertEq(IMainnetSafeDeploymentTarget(PREPARED_SAFE).nonce(), 0);
+        assertEq(IMainnetSafeDeploymentTarget(PREPARED_SAFE).masterCopy(), 0x29fcB43b46531BcA003ddC8FCB67FFE91900C762);
+        address[] memory owners = IMainnetSafeDeploymentTarget(PREPARED_SAFE).getOwners();
+        assertEq(owners.length, 3);
+        assertEq(owners[0], 0x0f094eec6B569c3f33033102ad3ce33EAbFeb2fB);
+        assertEq(owners[1], 0xE8405844a45C209895afE2e49be6aA2C6C6202a6);
+        assertEq(owners[2], 0xe88872F94013E4584BCeafb5d5f87dA291d086D2);
+        (address[] memory modules, address nextModule) =
+            IMainnetSafeDeploymentTarget(PREPARED_SAFE).getModulesPaginated(address(0x1), 1);
+        assertEq(modules.length, 0);
+        assertEq(nextModule, address(0x1));
         assertEq(IERC20(candidate.BASE_MAINNET_USDC()).balanceOf(PREPARED_SAFE), 0);
         assertEq(PREPARED_SAFE.balance, 0);
 
@@ -443,6 +551,70 @@ contract DeployASCPBaseMainnetTest is Test {
         vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
         vm.expectRevert(
             abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(invalidSafe))
+        );
+        ready.run();
+    }
+
+    function test_promotedHarnessRejectsStructurallyValidButSubstitutedOneOfOneSafe() public {
+        StructurallyValidOneOfOneSafeFixture substitutedSafe = new StructurallyValidOneOfOneSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(substitutedSafe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(substitutedSafe)
+            )
+        );
+        ready.run();
+    }
+
+    function testFuzz_promotedHarnessRejectsEveryReviewedSafeStateDrift(uint8 selectedDrift) public {
+        ProductionSafeFixture safe = new ProductionSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(safe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        selectedDrift = uint8(bound(selectedDrift, 0, 4));
+        if (selectedDrift == 0) {
+            address[] memory owners = new address[](3);
+            owners[0] = address(0xBAD);
+            owners[1] = address(0xB0B);
+            owners[2] = address(0xCAFE);
+            vm.mockCall(
+                address(safe),
+                abi.encodeWithSelector(IMainnetSafeDeploymentTarget.getOwners.selector),
+                abi.encode(owners)
+            );
+        } else if (selectedDrift == 1) {
+            vm.mockCall(
+                address(safe),
+                abi.encodeWithSelector(IMainnetSafeDeploymentTarget.getThreshold.selector),
+                abi.encode(uint256(1))
+            );
+        } else if (selectedDrift == 2) {
+            vm.mockCall(
+                address(safe),
+                abi.encodeWithSelector(IMainnetSafeDeploymentTarget.nonce.selector),
+                abi.encode(uint256(1))
+            );
+        } else if (selectedDrift == 3) {
+            vm.mockCall(
+                address(safe),
+                abi.encodeWithSelector(IMainnetSafeDeploymentTarget.masterCopy.selector),
+                abi.encode(address(0xBAD))
+            );
+        } else {
+            address[] memory modules = new address[](1);
+            modules[0] = address(0xBAD);
+            vm.mockCall(
+                address(safe),
+                abi.encodeWithSelector(IMainnetSafeDeploymentTarget.getModulesPaginated.selector, address(0x1), 1),
+                abi.encode(modules, address(0x1))
+            );
+        }
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(safe))
         );
         ready.run();
     }
