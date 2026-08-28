@@ -130,6 +130,7 @@ contract DeployASCPBaseMainnet is Script {
 
         _verifyDeployment(deployed, safe, publisher, pauser, registryAdmin, spendAuthorizer, orgDomain);
         console2.log("FlowOps ASCP v4 Base mainnet deployment");
+        console2.log("deploymentMode", _deploymentMode());
         console2.log("deployer", deployer);
         console2.log("safe", safe);
         console2.log("serviceDirectory", address(deployed.serviceDirectory));
@@ -151,7 +152,7 @@ contract DeployASCPBaseMainnet is Script {
         bytes32 reviewDigest,
         bytes32 releasePlanDigest,
         bool broadcastEnabled
-    ) external pure {
+    ) external view {
         _requireReleaseGates(
             deployer,
             safe,
@@ -177,7 +178,7 @@ contract DeployASCPBaseMainnet is Script {
         bytes32 reviewDigest,
         bytes32 releasePlanDigest,
         bool broadcastEnabled
-    ) internal pure {
+    ) internal view virtual {
         if (deployer == address(0)) revert MainnetDeployerNotDesignated();
         if (safe == address(0)) revert ProductionSafeNotDesignated();
         if (
@@ -393,5 +394,9 @@ contract DeployASCPBaseMainnet is Script {
 
     function _broadcastEnabled() internal view virtual returns (bool) {
         return MAINNET_BROADCAST_ENABLED;
+    }
+
+    function _deploymentMode() internal pure virtual returns (string memory) {
+        return "production-reviewed";
     }
 }
