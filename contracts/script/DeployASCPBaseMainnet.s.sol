@@ -71,7 +71,17 @@ contract DeployASCPBaseMainnet is Script {
     error UnexpectedDeployerNonce(uint256 expected, uint256 actual);
     error ProductionSafeNotDesignated();
     error ProductionSafeNotContract(address safe);
-    error ProductionSafeInterfaceInvalid(address safe);
+    error ProductionSafeExpectationsInvalid(address safe);
+    error ProductionSafeRuntimeCodeHashMismatch(address safe, bytes32 expected, bytes32 actual);
+    error ProductionSafeCallFailed(address safe, bytes4 selector);
+    error ProductionSafeOwnerCountMismatch(address safe, uint256 expected, uint256 actual);
+    error ProductionSafeOwnerMismatch(address safe, uint256 index, address expected, address actual);
+    error ProductionSafeThresholdMismatch(address safe, uint256 expected, uint256 actual);
+    error ProductionSafeNonceMismatch(address safe, uint256 expected, uint256 actual);
+    error ProductionSafeImplementationMismatch(address safe, address expected, address actual);
+    error ProductionSafeModulePaginationInvalid(address safe, uint256 moduleCount, address nextModule);
+    error ProductionSafeZeroAddressModuleEnabled(address safe);
+    error ProductionSafeModuleExecutionProbeFailed(address safe);
     error AuthorityNotDesignated();
     error AuthoritySeparationInvalid();
     error OrganizationDomainNotDesignated();
@@ -221,8 +231,10 @@ contract DeployASCPBaseMainnet is Script {
                 || expectedOwners[0] == expectedOwners[1] || expectedOwners[0] == expectedOwners[2]
                 || expectedOwners[1] == expectedOwners[2] || expectedThreshold != 2
                 || expectedRuntimeCodeHash == bytes32(0) || expectedImplementation == address(0)
-                || safe.codehash != expectedRuntimeCodeHash
-        ) revert ProductionSafeInterfaceInvalid(safe);
+        ) revert ProductionSafeExpectationsInvalid(safe);
+        if (safe.codehash != expectedRuntimeCodeHash) {
+            revert ProductionSafeRuntimeCodeHashMismatch(safe, expectedRuntimeCodeHash, safe.codehash);
+        }
         address[] memory owners;
         uint256 threshold;
         uint256 safeNonce;
@@ -233,22 +245,22 @@ contract DeployASCPBaseMainnet is Script {
         try IMainnetSafeDeploymentTarget(safe).getOwners() returns (address[] memory values) {
             owners = values;
         } catch {
-            revert ProductionSafeInterfaceInvalid(safe);
+            revert ProductionSafeCallFailed(safe, IMainnetSafeDeploymentTarget.getOwners.selector);
         }
         try IMainnetSafeDeploymentTarget(safe).getThreshold() returns (uint256 value) {
             threshold = value;
         } catch {
-            revert ProductionSafeInterfaceInvalid(safe);
+            revert ProductionSafeCallFailed(safe, IMainnetSafeDeploymentTarget.getThreshold.selector);
         }
         try IMainnetSafeDeploymentTarget(safe).nonce() returns (uint256 value) {
             safeNonce = value;
         } catch {
-            revert ProductionSafeInterfaceInvalid(safe);
+            revert ProductionSafeCallFailed(safe, IMainnetSafeDeploymentTarget.nonce.selector);
         }
         try IMainnetSafeDeploymentTarget(safe).masterCopy() returns (address value) {
             implementation = value;
         } catch {
-            revert ProductionSafeInterfaceInvalid(safe);
+            revert ProductionSafeCallFailed(safe, IMainnetSafeDeploymentTarget.masterCopy.selector);
         }
         try IMainnetSafeDeploymentTarget(safe).getModulesPaginated(address(0x1), 1) returns (
             address[] memory values, address next
@@ -256,22 +268,35 @@ contract DeployASCPBaseMainnet is Script {
             modules = values;
             nextModule = next;
         } catch {
-            revert ProductionSafeInterfaceInvalid(safe);
+            revert ProductionSafeCallFailed(safe, IMainnetSafeDeploymentTarget.getModulesPaginated.selector);
         }
         try IMainnetSafeDeploymentTarget(safe).isModuleEnabled(address(0)) returns (bool enabled) {
             zeroModuleEnabled = enabled;
         } catch {
-            revert ProductionSafeInterfaceInvalid(safe);
+            revert ProductionSafeCallFailed(safe, IMainnetSafeDeploymentTarget.isModuleEnabled.selector);
         }
-        if (
-            owners.length != expectedOwners.length || threshold != expectedThreshold || safeNonce != expectedNonce
-                || implementation != expectedImplementation || modules.length != 0 || nextModule != address(0x1)
-                || zeroModuleEnabled
-        ) {
-            revert ProductionSafeInterfaceInvalid(safe);
+        if (owners.length != expectedOwners.length) {
+            revert ProductionSafeOwnerCountMismatch(safe, expectedOwners.length, owners.length);
+        }
+        if (threshold != expectedThreshold) {
+            revert ProductionSafeThresholdMismatch(safe, expectedThreshold, threshold);
+        }
+        if (safeNonce != expectedNonce) {
+            revert ProductionSafeNonceMismatch(safe, expectedNonce, safeNonce);
+        }
+        if (implementation != expectedImplementation) {
+            revert ProductionSafeImplementationMismatch(safe, expectedImplementation, implementation);
+        }
+        if (modules.length != 0 || nextModule != address(0x1)) {
+            revert ProductionSafeModulePaginationInvalid(safe, modules.length, nextModule);
+        }
+        if (zeroModuleEnabled) {
+            revert ProductionSafeZeroAddressModuleEnabled(safe);
         }
         for (uint256 index = 0; index < owners.length; ++index) {
-            if (owners[index] != expectedOwners[index]) revert ProductionSafeInterfaceInvalid(safe);
+            if (owners[index] != expectedOwners[index]) {
+                revert ProductionSafeOwnerMismatch(safe, index, expectedOwners[index], owners[index]);
+            }
         }
         (bool moduleCallSucceeded, bytes memory moduleCallResult) = safe.call(
             abi.encodeCall(IMainnetSafeDeploymentTarget.execTransactionFromModule, (address(0), 0, bytes(""), uint8(0)))
@@ -279,7 +304,7 @@ contract DeployASCPBaseMainnet is Script {
         if (
             moduleCallSucceeded
                 || keccak256(moduleCallResult) != keccak256(abi.encodeWithSignature("Error(string)", "GS104"))
-        ) revert ProductionSafeInterfaceInvalid(safe);
+        ) revert ProductionSafeModuleExecutionProbeFailed(safe);
     }
 
     function _requireCleanPredictedAddresses(address deployer, uint256 startingNonce) private view {

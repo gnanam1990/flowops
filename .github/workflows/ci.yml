@@ -72,6 +72,10 @@ jobs:
         run: make test-mainnet-readiness
       - name: Validate Base mainnet runtime and dashboard bindings
         run: make test-ascp-mainnet-runtime-bindings
+      - name: Validate reproducible Base mainnet deployment candidate
+        env:
+          BASE_MAINNET_FORK_RPC_URL: https://mainnet.base.org
+        run: make test-ascp-mainnet-candidate
       - name: Validate Base mainnet deployer and source ceremony
         run: make test-mainnet-deployer-verification
       - name: Validate external security-review package remains fail-closed

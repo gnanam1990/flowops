@@ -55,21 +55,6 @@ contract InvalidProductionSafeFixture {
     }
 }
 
-contract ViewOnlyProductionSafeFixture {
-    function getOwners() external pure returns (address[] memory owners) {
-        owners = new address[](1);
-        owners[0] = address(0xA11CE);
-    }
-
-    function getThreshold() external pure returns (uint256) {
-        return 1;
-    }
-
-    function isModuleEnabled(address) external pure returns (bool) {
-        return false;
-    }
-}
-
 contract StructurallyValidOneOfOneSafeFixture {
     function getOwners() external pure returns (address[] memory owners) {
         owners = new address[](1);
@@ -550,7 +535,12 @@ contract DeployASCPBaseMainnetTest is Test {
         vm.chainId(8453);
         vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
         vm.expectRevert(
-            abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(invalidSafe))
+            abi.encodeWithSelector(
+                DeployASCPBaseMainnet.ProductionSafeRuntimeCodeHashMismatch.selector,
+                address(invalidSafe),
+                keccak256(type(ProductionSafeFixture).runtimeCode),
+                address(invalidSafe).codehash
+            )
         );
         ready.run();
     }
@@ -563,7 +553,10 @@ contract DeployASCPBaseMainnetTest is Test {
         vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
         vm.expectRevert(
             abi.encodeWithSelector(
-                DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(substitutedSafe)
+                DeployASCPBaseMainnet.ProductionSafeRuntimeCodeHashMismatch.selector,
+                address(substitutedSafe),
+                keccak256(type(ProductionSafeFixture).runtimeCode),
+                address(substitutedSafe).codehash
             )
         );
         ready.run();
@@ -613,20 +606,99 @@ contract DeployASCPBaseMainnetTest is Test {
                 abi.encode(modules, address(0x1))
             );
         }
+        if (selectedDrift == 0) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    DeployASCPBaseMainnet.ProductionSafeOwnerMismatch.selector,
+                    address(safe),
+                    0,
+                    address(0xA11CE),
+                    address(0xBAD)
+                )
+            );
+        } else if (selectedDrift == 1) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    DeployASCPBaseMainnet.ProductionSafeThresholdMismatch.selector, address(safe), 2, 1
+                )
+            );
+        } else if (selectedDrift == 2) {
+            vm.expectRevert(
+                abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeNonceMismatch.selector, address(safe), 0, 1)
+            );
+        } else if (selectedDrift == 3) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    DeployASCPBaseMainnet.ProductionSafeImplementationMismatch.selector,
+                    address(safe),
+                    address(0x1111),
+                    address(0xBAD)
+                )
+            );
+        } else {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    DeployASCPBaseMainnet.ProductionSafeModulePaginationInvalid.selector, address(safe), 1, address(0x1)
+                )
+            );
+        }
+        ready.run();
+    }
+
+    function test_promotedHarnessRejectsUnexpectedlySuccessfulSafeModuleExecutionProbe() public {
+        ProductionSafeFixture safe = new ProductionSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(safe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        vm.mockCall(
+            address(safe),
+            abi.encodeCall(
+                IMainnetSafeDeploymentTarget.execTransactionFromModule, (address(0), 0, bytes(""), uint8(0))
+            ),
+            abi.encode(true)
+        );
         vm.expectRevert(
-            abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(safe))
+            abi.encodeWithSelector(
+                DeployASCPBaseMainnet.ProductionSafeModuleExecutionProbeFailed.selector, address(safe)
+            )
         );
         ready.run();
     }
 
-    function test_promotedHarnessRejectsViewCompatibleContractWithoutSafeModuleExecution() public {
-        ViewOnlyProductionSafeFixture viewOnlySafe = new ViewOnlyProductionSafeFixture();
-        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(viewOnlySafe));
+    function test_promotedHarnessRejectsEnabledZeroAddressModule() public {
+        ProductionSafeFixture safe = new ProductionSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(safe));
         MockUSDC usdcFixture = new MockUSDC();
         vm.chainId(8453);
         vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        vm.mockCall(
+            address(safe),
+            abi.encodeWithSelector(IMainnetSafeDeploymentTarget.isModuleEnabled.selector, address(0)),
+            abi.encode(true)
+        );
         vm.expectRevert(
-            abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeInterfaceInvalid.selector, address(viewOnlySafe))
+            abi.encodeWithSelector(DeployASCPBaseMainnet.ProductionSafeZeroAddressModuleEnabled.selector, address(safe))
+        );
+        ready.run();
+    }
+
+    function test_promotedHarnessRejectsInvalidSafeModulePaginationSentinel() public {
+        ProductionSafeFixture safe = new ProductionSafeFixture();
+        ReadyASCPMainnetDeploymentHarness ready = new ReadyASCPMainnetDeploymentHarness(address(safe));
+        MockUSDC usdcFixture = new MockUSDC();
+        vm.chainId(8453);
+        vm.etch(ready.BASE_MAINNET_USDC(), address(usdcFixture).code);
+        address[] memory modules = new address[](0);
+        vm.mockCall(
+            address(safe),
+            abi.encodeWithSelector(IMainnetSafeDeploymentTarget.getModulesPaginated.selector, address(0x1), 1),
+            abi.encode(modules, address(0))
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployASCPBaseMainnet.ProductionSafeModulePaginationInvalid.selector, address(safe), 0, address(0)
+            )
         );
         ready.run();
     }
