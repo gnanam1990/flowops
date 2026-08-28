@@ -35,9 +35,16 @@ func run(args []string, output io.Writer, now time.Time) error {
 		_, err = fmt.Fprintln(output, string(encoded))
 		return err
 	}
-	if len(args) == 2 && args[0] == "digest" {
+	if len(args) == 3 && args[0] == "digest" {
 		proof, err := safeownerproof.LoadProof(args[1])
 		if err != nil {
+			return err
+		}
+		profile, err := safeownerproof.LoadProfile(args[2])
+		if err != nil {
+			return err
+		}
+		if err := safeownerproof.ValidateUnsigned(proof, profile, now); err != nil {
 			return err
 		}
 		message, err := safeownerproof.SigningMessage(proof)
@@ -62,5 +69,5 @@ func run(args []string, output io.Writer, now time.Time) error {
 		_, err = fmt.Fprintf(output, "safe owner control proof %s verified with %d reviewed owners; no transaction authorized\n", proof.ChallengeID, len(proof.Signatures))
 		return err
 	}
-	return errors.New("usage: ascp-safe-owner-proof template <profile.json> <challenge-id> | digest <proof.json> | verify <proof.json> <profile.json>")
+	return errors.New("usage: ascp-safe-owner-proof template <profile.json> <challenge-id> | digest <proof.json> <profile.json> | verify <proof.json> <profile.json>")
 }

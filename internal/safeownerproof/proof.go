@@ -175,30 +175,8 @@ func SigningMessage(proof Proof) (string, error) {
 }
 
 func Verify(proof Proof, profile Profile, now time.Time) error {
-	if err := profile.Validate(); err != nil {
+	if err := ValidateUnsigned(proof, profile, now); err != nil {
 		return err
-	}
-	profileDigest, err := ProfileSHA256(profile)
-	if err != nil {
-		return err
-	}
-	if proof.SchemaVersion != SchemaVersion || proof.ProfileID != profile.ProfileID || proof.ProfileSHA256 != profileDigest || !idPattern.MatchString(proof.ChallengeID) {
-		return errors.New("safe owner proof profile binding is invalid")
-	}
-	if proof.Statement != "I control this reviewed Safe owner address. This proof creates no transaction and authorizes no deployment, funding, token approval, module activation, or asset movement." {
-		return errors.New("safe owner proof statement is invalid")
-	}
-	issuedAt, err := time.Parse(time.RFC3339, proof.IssuedAt)
-	if err != nil {
-		return errors.New("safe owner proof issuedAt is invalid")
-	}
-	expiresAt, err := time.Parse(time.RFC3339, proof.ExpiresAt)
-	if err != nil || !expiresAt.After(issuedAt) || expiresAt.Sub(issuedAt) > time.Duration(profile.MaximumAgeSeconds)*time.Second {
-		return errors.New("safe owner proof expiry is invalid")
-	}
-	now = now.UTC()
-	if issuedAt.After(now.Add(5*time.Minute)) || !expiresAt.After(now) {
-		return errors.New("safe owner proof is not currently valid")
 	}
 	if len(proof.Signatures) < profile.MinimumOwnerSignatures || len(proof.Signatures) > len(profile.Safe.Owners) {
 		return errors.New("safe owner proof signature quorum is incomplete")
@@ -233,6 +211,37 @@ func Verify(proof Proof, profile Profile, now time.Time) error {
 			return fmt.Errorf("safe owner proof signature for %s is invalid", signed.Owner)
 		}
 		seen[owner] = struct{}{}
+	}
+	return nil
+}
+
+// ValidateUnsigned proves that a wallet will sign only the current committed
+// profile, candidate and non-authorizing statement before a message is shown.
+func ValidateUnsigned(proof Proof, profile Profile, now time.Time) error {
+	if err := profile.Validate(); err != nil {
+		return err
+	}
+	profileDigest, err := ProfileSHA256(profile)
+	if err != nil {
+		return err
+	}
+	if proof.SchemaVersion != SchemaVersion || proof.ProfileID != profile.ProfileID || proof.ProfileSHA256 != profileDigest || !idPattern.MatchString(proof.ChallengeID) {
+		return errors.New("safe owner proof profile binding is invalid")
+	}
+	if proof.Statement != "I control this reviewed Safe owner address. This proof creates no transaction and authorizes no deployment, funding, token approval, module activation, or asset movement." {
+		return errors.New("safe owner proof statement is invalid")
+	}
+	issuedAt, err := time.Parse(time.RFC3339, proof.IssuedAt)
+	if err != nil {
+		return errors.New("safe owner proof issuedAt is invalid")
+	}
+	expiresAt, err := time.Parse(time.RFC3339, proof.ExpiresAt)
+	if err != nil || !expiresAt.After(issuedAt) || expiresAt.Sub(issuedAt) > time.Duration(profile.MaximumAgeSeconds)*time.Second {
+		return errors.New("safe owner proof expiry is invalid")
+	}
+	now = now.UTC()
+	if issuedAt.After(now.Add(5*time.Minute)) || !expiresAt.After(now) {
+		return errors.New("safe owner proof is not currently valid")
 	}
 	return nil
 }

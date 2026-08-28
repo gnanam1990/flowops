@@ -13,7 +13,9 @@ go run ./cmd/ascp-safe-owner-proof template \
   deployments/base-mainnet-safe-owner-control-profile-v1.json \
   owner-control-<reviewed-run-id> > /secure/safe-owner-proof.json
 
-go run ./cmd/ascp-safe-owner-proof digest /secure/safe-owner-proof.json
+go run ./cmd/ascp-safe-owner-proof digest \
+  /secure/safe-owner-proof.json \
+  deployments/base-mainnet-safe-owner-control-profile-v1.json
 ```
 
 Two distinct owners must sign the exact visible EIP-191 message. Append each
