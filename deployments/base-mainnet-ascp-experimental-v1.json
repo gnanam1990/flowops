@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "base-mainnet-ascp-experimental-v1",
+  "status": "finalized",
+  "purpose": "owner-authorized-unaudited-zero-fund-builder-evidence",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "sourceCommit": "48a701bc99b5b903389ff7b149e5567787268838",
+  "sourceBaseline": {
+    "deploymentScript": {
+      "path": "contracts/script/DeployASCPBaseMainnetExperimental.s.sol",
+      "sha256": "0x56b9e8543737f7b7699f4ad3ec20e487ad2d9d2da650f80d42ac9fdf19c99e34"
+    },
+    "contractSourceSha256": {
+      "serviceDirectory": "0x96383f78d182e194fe5c4e01ca57f4929503258c6558f3b9f693ed7c630f54bc",
+      "agentRegistry": "0x70e41f43eb8b3e14d9a100b86738dcaa92db6c51ff3ebcd5c55fdd807299bca4",
+      "ascpCallEscrow": "0x3849c079e603e0314e976d91fa351e011b8fa09637ed8e283192e7cc40ec7181",
+      "ascpSpendModule": "0x974dec9237a927258faa232c9e97ba6628ae4d099cbff5208bcd54a72b440efe"
+    },
+    "foundryConfigurationSha256": "0xe843a712bc7043b7ac16ef357ee29c300ba663a0d971d6f229c1c11b84bd88b0"
+  },
+  "authorization": {
+    "approvalText": "CONFIRM FOUR ZERO-FUND BASE MAINNET DEPLOYMENTS",
+    "approvalTextKeccak": "0x301b5a40af11d4691407fd2fa39a42415b516667633f044b0207bd206eaf8766",
+    "approvalChannel": "interactive-wallet-confirmation",
+    "approvalRecordedOnchain": false,
+    "externalReviewDigest": null,
+    "externalReviewCompleted": false,
+    "fundingAuthorized": false,
+    "moduleActivationAuthorized": false,
+    "usdcApprovalAuthorized": false
+  },
+  "deployer": {
+    "address": "0x3c1daa7a6193848320e9477cbcfb7f512c0fd74b",
+    "firstCreationNonce": 1,
+    "lastCreationNonce": 4,
+    "observedLatestNonceAfterDeployment": 5,
+    "observedBalanceWeiAfterDeployment": "1080801154672306"
+  },
+  "safe": {
+    "address": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "owners": [
+      "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
+      "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
+      "0xe88872f94013e4584bceafb5d5f87da291d086d2"
+    ],
+    "threshold": 2,
+    "nonceAfterDeployment": 0,
+    "spendModuleEnabled": false
+  },
+  "asset": {
+    "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "symbol": "USDC",
+    "decimals": 6
+  },
+  "organizationDomain": "0x36444de4c6f22f9f5ddaf7a7d993666631402ec5e038bf1032c455373f69bb93",
+  "authorities": {
+    "governor": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "directoryPublisher": "0xb6e55668efb27a1571dbe14a9e388eed8a654fac",
+    "directoryPauser": "0xec8757c4dc1184f3ece812295d5ac5b570ab0ce0",
+    "registryAdmin": "0x0d9973d582b694e8ce101bd17e5768c35bacbe60",
+    "spendAuthorizer": "0x90f4c2af31bcbf3f1e0a800bd606fc00bc0a446b"
+  },
+  "initialCapsAtomic": {
+    "perTransaction": "1000000",
+    "perDay": "10000000",
+    "allowanceCeiling": "10000000"
+  },
+  "contracts": [
+    {
+      "name": "service_directory",
+      "address": "0x2bc89b98ada8335feab04d5b7b5af6a63eb95fd1",
+      "transactionHash": "0x99da4a0f3be1e5b490570d0a51f8dce4b58638595964d708bfeec493424350ac",
+      "nonce": 1,
+      "blockNumber": 50557746,
+      "blockHash": "0xd62c948a1bf9644417e074841f6426a5c67a1c602b8ef28805b79ad1e2a88cd1",
+      "blockTimestamp": 1787904839,
+      "valueWei": "0",
+      "gasUsed": 3002725,
+      "effectiveGasPriceWei": 6000000,
+      "initCodeKeccak": "0xb5e73df5aa9c7fbc346d164f8f8490dfcf0a83e70458a923668a97df3711553f",
+      "runtimeCodeKeccak": "0xb71440130e44a9e77eff6971bcee2e3c12537dd5dd9dcffd2b614161b5fed953",
+      "sourceVerified": true
+    },
+    {
+      "name": "agent_registry",
+      "address": "0x15332e8c8e230e8a1c05095196dac42ba8cc6906",
+      "transactionHash": "0x5b036137c01b7281d4f8385b0419bfd9a1db4163e5c3f56e4f5b6c5aec315dff",
+      "nonce": 2,
+      "blockNumber": 50557912,
+      "blockHash": "0xe8828fc830c9b8e5b93775dea434fd758e4eb16657f3f10a0d8f36f40a0f92db",
+      "blockTimestamp": 1787905171,
+      "valueWei": "0",
+      "gasUsed": 1819961,
+      "effectiveGasPriceWei": 6000000,
+      "initCodeKeccak": "0x478b36312cc0585c43d7c51139e9f39ae63fe2527f634153336a99e7ded4e286",
+      "runtimeCodeKeccak": "0x58e2aa5adaabe5ab0ef5e4b6900d21d54978ff6d183f4a24c0100182bc6d8247",
+      "sourceVerified": true
+    },
+    {
+      "name": "ascp_call_escrow",
+      "address": "0x214cbbb2190075ba43fa6518560d37c09720e0c4",
+      "transactionHash": "0x6901f31bedc11f80126df77fb7d908f9f7fff711c74a4fe06b8ea9ef9aa4dd9f",
+      "nonce": 3,
+      "blockNumber": 50557918,
+      "blockHash": "0x72db5cc09b9a2ac07801c3106628ffe4282734da46f804449ef37b1c2c27ad4e",
+      "blockTimestamp": 1787905183,
+      "valueWei": "0",
+      "gasUsed": 3163604,
+      "effectiveGasPriceWei": 6000000,
+      "initCodeKeccak": "0xd9f45e40ff8ada4fc8353bc0e572e5a854ce0b2bd98b484ae53c42d7536811ea",
+      "runtimeCodeKeccak": "0x829518ab89788763954e964351e23a4bf8b08e5e5ad5d86aaa2ab185b82ac4c9",
+      "sourceVerified": true
+    },
+    {
+      "name": "ascp_spend_module",
+      "address": "0x942b83421c3ac4e1a04753e5e0208fd56cad649e",
+      "transactionHash": "0xa1bffd35c627a2b1b61267262c8d6c84d68d242290748075e84b55e5a8068025",
+      "nonce": 4,
+      "blockNumber": 50557923,
+      "blockHash": "0x592f98cd0b399e6e808d09ac51ffa230c75982da45e058eec20e5e0f919abe6e",
+      "blockTimestamp": 1787905193,
+      "valueWei": "0",
+      "gasUsed": 3045316,
+      "effectiveGasPriceWei": 6000000,
+      "initCodeKeccak": "0xcbf879b4d6c3c53b1ef443263e2be7dc778113ff2ca4855079bc5a380401c42d",
+      "runtimeCodeKeccak": "0x49f11b84ac94168f962879f66946732321ecb105af82ba4edf33485e8f7a8355",
+      "sourceVerified": true
+    }
+  ],
+  "observedInitialState": {
+    "directoryVersion": 0,
+    "directoryRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "agentCount": 0,
+    "escrowTotalLockedAtomic": "0",
+    "spendExecutedPrincipalAtomic": "0",
+    "escrowAllowlisted": false,
+    "spendModuleEnabled": false,
+    "allContractNativeBalancesWei": "0",
+    "allContractUsdcBalancesAtomic": "0"
+  },
+  "verification": {
+    "receiptRpcUrls": [
+      "https://mainnet.base.org",
+      "https://base-mainnet.public.blastapi.io"
+    ],
+    "receiptsSuccessfulOnBothRpcs": true,
+    "addressesMatchOnBothRpcs": true,
+    "runtimeCodeMatchesOnBothRpcs": true,
+    "transactionsMatchLocalInitCode": true,
+    "blockscoutSourceVerification": {
+      "allContractsVerified": true,
+      "compilerVersion": "v0.8.26+commit.8a97fa7a"
+    },
+    "finalizedThroughBlock": 50557998,
+    "finalizedHeadsByRpc": {
+      "https://mainnet.base.org": 50558170,
+      "https://base-mainnet.public.blastapi.io": 50557998
+    },
+    "allDeploymentBlocksFinalized": true
+  },
+  "safetyBoundary": "This is an unaudited, zero-fund experimental deployment. No Safe module activation, escrow allowlisting, USDC approval, token transfer, or funding was authorized or performed."
+}
