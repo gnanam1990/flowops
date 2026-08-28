@@ -444,6 +444,12 @@ func (l *Lifecycle) PendingApprovals() []Record {
 }
 
 func (l *Lifecycle) spendSnapshot(intent PaymentIntent, now time.Time) policy.SpendSnapshot {
+	// Reservations deliberately have no rail dimension. An x402, direct-USDC,
+	// or escrow intent for the same customer therefore consumes the same task
+	// and daily budget, including after the hash-chained journal is replayed.
+	// Issued authorizations remain reserved until a protocol-aware canonical
+	// outcome can move them to settled or released accounting; treating them as
+	// spent without that evidence would invent settlement.
 	taskReserved := new(big.Int)
 	dailyReserved := new(big.Int)
 	for _, record := range l.records {

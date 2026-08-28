@@ -81,7 +81,7 @@ func controlPolicy(t *testing.T) *policy.Engine {
 	t.Helper()
 	engine, err := policy.Compile(policy.Config{
 		Version: "policy_7", Enabled: true, AllowedChainIDs: []uint64{84532},
-		AllowedRails: []envelope.Rail{envelope.RailX402}, AllowedAssets: []string{controlTestUSDC},
+		AllowedRails: []envelope.Rail{envelope.RailX402, envelope.RailDirect, envelope.RailEscrow}, AllowedAssets: []string{controlTestUSDC},
 		AllowedRecipients: []string{controlTestRecipient}, BlockedCategories: []string{"gambling"},
 		PerActionLimitAtomic: "200", AutoApproveThresholdAtomic: "100",
 		TaskBudgetAtomic: "200", DailyBudgetAtomic: "1000",
@@ -173,6 +173,56 @@ func controlIntent(id string, amount string) PaymentIntent {
 		TaskID: "task_104", ActionID: "action_fetch", Rail: envelope.RailX402, ChainID: 84532,
 		Recipient: controlTestRecipient, Asset: controlTestUSDC, AmountAtomic: amount,
 		Resource: "https://evidence.flowops.example/v1/fetch", Category: "research_data", Purpose: "fetch cited source",
+	}
+}
+
+func escrowControlIntent(t *testing.T, id, amount string) PaymentIntent {
+	t.Helper()
+	intent := controlIntent(id, amount)
+	intent.Rail = envelope.RailEscrow
+	contract := "0x86e145397f58e71c134c0e054320db929483227a"
+	buyer := "0x079bdde909e28e437768a06d7001eb40896668d4"
+	taskDigest := "0x" + strings.Repeat("31", 32)
+	requestDigest := "0x" + strings.Repeat("42", 32)
+	callID, err := envelope.DeriveEscrowCallID(intent.ChainID, contract, buyer, taskDigest, requestDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.Escrow = &envelope.EscrowTerms{
+		Contract: contract, Buyer: buyer, Provider: intent.Recipient, CallID: callID,
+		TaskDigest: taskDigest, RequestDigest: requestDigest,
+		AcknowledgeBy: 1_900_000_000, DeliverBy: 1_900_003_600, ReleaseWindow: 3600,
+	}
+	return intent
+}
+
+func TestPolicyBudgetReservationsAggregateAcrossAllRailsAndSurviveRestart(t *testing.T) {
+	now := time.Date(2026, 8, 28, 14, 0, 0, 0, time.UTC)
+	clock, freeze, version, ids := &fakeClock{now: now}, &fakeFreeze{}, &policyVersion{version: "policy_7"}, &sources{}
+	path := filepath.Join(t.TempDir(), "cross-rail-control.log")
+	lifecycle, journal, _ := newLifecycleForTest(t, path, clock, freeze, version, ids)
+
+	x402 := controlIntent("cross_rail_x402", "100")
+	first, err := lifecycle.Submit(context.Background(), x402)
+	if err != nil || first.State != StateApproved {
+		t.Fatalf("x402 reservation = %+v, %v", first, err)
+	}
+	direct := controlIntent("cross_rail_direct", "100")
+	direct.Rail = envelope.RailDirect
+	second, err := lifecycle.Submit(context.Background(), direct)
+	if err != nil || second.State != StateApproved {
+		t.Fatalf("direct reservation = %+v, %v", second, err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, reopened, _ := newLifecycleForTest(t, path, clock, freeze, version, ids)
+	defer reopened.Close()
+	escrow := escrowControlIntent(t, "cross_rail_escrow", "1")
+	denied, err := restarted.Submit(context.Background(), escrow)
+	if err != nil || denied.State != StateDenied || denied.Decision.Reason != policy.ReasonTaskBudget {
+		t.Fatalf("escrow did not see x402 plus direct reservations after restart: %+v, %v", denied, err)
 	}
 }
 
