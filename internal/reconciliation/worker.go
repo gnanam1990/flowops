@@ -26,6 +26,7 @@ type WorkerEngine interface {
 	ReconcileReceipt(context.Context, string, []ReceiptEvidence, *LedgerTransaction) (Execution, error)
 	ConfirmFinality(context.Context, string, []ReorgEvidence) (Execution, error)
 	ReopenReorg(context.Context, string, []ReorgEvidence, LedgerTransaction) (Execution, error)
+	ReopenRevertedReorg(context.Context, string, []ReorgEvidence) (Execution, error)
 	FinalityDepth() uint64
 }
 
@@ -115,8 +116,11 @@ func (w *Worker) RunOnce(ctx context.Context) (WorkerCycle, error) {
 			if err := w.reconcileReceipt(ctx, execution, &cycle); err != nil {
 				return cycle, err
 			}
-		case ExecutionSettled:
-			if execution.FinalityCheckedAt != nil || status.LastTrusted.BlockNumber < execution.BlockNumber || status.LastTrusted.BlockNumber-execution.BlockNumber < w.engine.FinalityDepth() {
+		case ExecutionSettled, ExecutionReverted:
+			if execution.FinalityCheckedAt != nil {
+				continue
+			}
+			if status.LastTrusted.BlockNumber < execution.BlockNumber || status.LastTrusted.BlockNumber-execution.BlockNumber < w.engine.FinalityDepth() {
 				continue
 			}
 			if err := w.checkFinality(ctx, execution, &cycle); err != nil {
@@ -270,7 +274,8 @@ func (w *Worker) checkFinality(ctx context.Context, execution Execution, cycle *
 		return nil
 	}
 	if result.Evidence[0].CanonicalBlockHash == execution.BlockHash {
-		if _, err := w.engine.ConfirmFinality(ctx, execution.Expected.ExecutionID, result.Evidence); err != nil {
+		_, err := w.engine.ConfirmFinality(ctx, execution.Expected.ExecutionID, result.Evidence)
+		if err != nil {
 			if errors.Is(err, ErrUnsafeFinality) || errors.Is(err, ErrChainUnavailable) {
 				cycle.Deferred++
 				return nil
@@ -278,6 +283,17 @@ func (w *Worker) checkFinality(ctx context.Context, execution Execution, cycle *
 			return fmt.Errorf("confirm finality for %s: %w", execution.Expected.ExecutionID, err)
 		}
 		cycle.FinalityConfirmed++
+		return nil
+	}
+	if execution.State == ExecutionReverted {
+		if _, err := w.engine.ReopenRevertedReorg(ctx, execution.Expected.ExecutionID, result.Evidence); err != nil {
+			if errors.Is(err, ErrUnsafeFinality) || errors.Is(err, ErrChainUnavailable) {
+				cycle.Deferred++
+				return nil
+			}
+			return fmt.Errorf("reopen reverted reorg for %s: %w", execution.Expected.ExecutionID, err)
+		}
+		cycle.ReorgsReopened++
 		return nil
 	}
 	original, ok := w.engine.LedgerTransaction(execution.LedgerTransactionID)

@@ -259,7 +259,8 @@ func run(ctx context.Context) (returnErr error) {
 	lifecycle, err := controlplane.New(controlplane.Config{
 		PolicyProvider: policyProvider, Journal: eventJournal,
 		FreezeGate: controlapi.AgentFreezeGate{Store: store}, ChainGate: reconciliationEngine,
-		ApprovalTTL: 15 * time.Minute, AuthorizationTTL: 5 * time.Minute,
+		OutcomeSource: reconciliationOutcomeSource{reader: reconciliationEngine},
+		ApprovalTTL:   15 * time.Minute, AuthorizationTTL: 5 * time.Minute,
 		RequestIDSource:       func() (string, error) { return randomID("req") },
 		AuthorizationIDSource: func() (string, error) { return randomID("auth") },
 		NonceSource:           func() (string, error) { return randomNonce() },
@@ -278,6 +279,7 @@ func run(ctx context.Context) (returnErr error) {
 	}
 	var signerBroadcasts controlapi.BroadcastRegistrar
 	var signerEscrowBroadcasts controlapi.EscrowBroadcastRegistrar
+	var x402Settlements controlapi.X402SettlementService
 	if len(cfg.signerReceiptKeys) > 0 {
 		keys, err := controlapi.NewStaticBroadcastKeys(cfg.signerReceiptKeys)
 		if err != nil {
@@ -290,6 +292,10 @@ func run(ctx context.Context) (returnErr error) {
 		signerEscrowBroadcasts, err = controlapi.NewSignerEscrowBroadcastRegistrar(lifecycle, keys, reconciliationEngine, nil)
 		if err != nil {
 			return fmt.Errorf("create customer signer escrow broadcast registrar: %w", err)
+		}
+		x402Settlements, err = controlapi.NewX402SettlementRegistrar(lifecycle, keys, reconciliationEngine, nil)
+		if err != nil {
+			return fmt.Errorf("create x402 settlement registrar: %w", err)
 		}
 	}
 	observers, err := reconciliation.NewObserverSet(cfg.observerConfig.ChainID, cfg.observerRPCs, nil, nil)
@@ -382,7 +388,7 @@ func run(ctx context.Context) (returnErr error) {
 		Store: store, Lifecycle: lifecycle, Chain: reconciliationEngine, SiteSessions: siteSessions,
 		OperatorControlKey: cfg.operatorKey, KeeperCallbackKey: cfg.keeperCallbackKey,
 		MetricsKey: cfg.metricsKey, Readiness: store,
-		SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, Escrow: escrowRegistrar,
+		SignerBroadcasts: signerBroadcasts, SignerEscrowBroadcasts: signerEscrowBroadcasts, X402Settlements: x402Settlements, Escrow: escrowRegistrar,
 		Reconciliation:     reconciliationEngine,
 		ASCPAgent:          ascpAgentService,
 		ASCPFlow:           ascpOrchestrationService,

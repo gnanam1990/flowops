@@ -149,6 +149,10 @@ type expiredPayload struct {
 	Reason string `json:"reason"`
 }
 
+func ExecutionID(authorizationID string) string {
+	return envelope.ExecutionID(authorizationID)
+}
+
 func requestDigest(requestID, intentDigest string, decision policy.Decision, expiresAt int64) (string, error) {
 	input := struct {
 		RequestID     string         `json:"requestId"`

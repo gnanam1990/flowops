@@ -110,6 +110,11 @@ type ASCPSettlementRegistrar interface {
 	Register(context.Context, ASCPSettlementAttemptRequest) (ASCPSettlementAttempt, error)
 }
 
+type X402SettlementService interface {
+	Validate(string, string, string, X402SettlementRequest) error
+	Register(context.Context, string, string, string, X402SettlementRequest) (reconciliation.Execution, error)
+}
+
 type ServerConfig struct {
 	Store                    Store
 	Lifecycle                *controlplane.Lifecycle
@@ -121,6 +126,7 @@ type ServerConfig struct {
 	OperatorControlKey       []byte
 	SignerBroadcasts         BroadcastRegistrar
 	SignerEscrowBroadcasts   EscrowBroadcastRegistrar
+	X402Settlements          X402SettlementService
 	Escrow                   *EscrowRegistrar
 	Reconciliation           ReconciliationReader
 	ASCPAgent                ASCPAgentService
@@ -145,6 +151,7 @@ type Server struct {
 	operatorControlKey       []byte
 	signerBroadcasts         BroadcastRegistrar
 	signerEscrowBroadcasts   EscrowBroadcastRegistrar
+	x402Settlements          X402SettlementService
 	escrow                   *EscrowRegistrar
 	reconciliation           ReconciliationReader
 	ascpAgent                ASCPAgentService
@@ -184,6 +191,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		operatorControlKey:     append([]byte(nil), cfg.OperatorControlKey...),
 		signerBroadcasts:       cfg.SignerBroadcasts,
 		signerEscrowBroadcasts: cfg.SignerEscrowBroadcasts,
+		x402Settlements:        cfg.X402Settlements,
 		escrow:                 cfg.Escrow,
 		reconciliation:         cfg.Reconciliation,
 		ascpAgent:              cfg.ASCPAgent,
@@ -251,6 +259,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET /v1/dashboard/snapshot", s.authenticate(http.HandlerFunc(s.handleDashboardSnapshot)))
 	mux.HandleFunc("POST /v1/signer/broadcasts", s.handleSignerBroadcast)
 	mux.HandleFunc("POST /v1/signer/escrow-broadcasts", s.handleSignerEscrowBroadcast)
+	if s.x402Settlements != nil {
+		mux.Handle("POST /v1/x402/authorizations/{authorizationID}/settlements", s.authenticate(http.HandlerFunc(s.handleX402Settlement)))
+	}
 	if s.escrow != nil {
 		mux.Handle("POST /v1/escrow/intents/{authorizationID}", s.authenticate(http.HandlerFunc(s.handleEscrowIntent)))
 		mux.Handle("POST /v1/escrow/calls/{callID}/transitions", s.authenticate(http.HandlerFunc(s.handleEscrowTransition)))
@@ -512,6 +523,61 @@ func (s *Server) handleSignerEscrowBroadcast(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"call": call})
+}
+
+func (s *Server) handleX402Settlement(w http.ResponseWriter, r *http.Request) {
+	principal := principalFrom(r.Context())
+	if !s.authorize(w, principal, PermissionIssue, "x402:settlements") {
+		return
+	}
+	authorizationID := r.PathValue("authorizationID")
+	record, exists := s.lifecycle.GetByAuthorization(authorizationID)
+	if !exists || record.Intent.OrganizationID != principal.OrganizationID ||
+		(principal.Kind == PrincipalAgent && record.Intent.AgentID != principal.AgentID) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", ErrNotFound, false, "")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var settlementRequest X402SettlementRequest
+	if err := decodeJSON(w, r, &settlementRequest); err != nil {
+		return
+	}
+	if idempotencyKey != settlementRequest.Settlement.Transaction {
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_MISMATCH", errors.New("Idempotency-Key must equal transaction"), false, "")
+		return
+	}
+	agentID := ""
+	if principal.Kind == PrincipalAgent {
+		agentID = principal.AgentID
+	}
+	// Reject malformed or unauthorized evidence before reserving the
+	// transaction hash in the durable command store. A corrected signer
+	// receipt for the same transaction must remain recoverable.
+	if err := s.x402Settlements.Validate(principal.OrganizationID, agentID, authorizationID, settlementRequest); err != nil {
+		status, code, retriable := classifyError(err)
+		writeError(w, status, code, err, retriable, "")
+		return
+	}
+	digest := digestJSON(struct {
+		AuthorizationID string                `json:"authorizationId"`
+		Request         X402SettlementRequest `json:"request"`
+	}{authorizationID, settlementRequest})
+	command, created, ok := s.beginCommand(w, r, principal, "x402.settlement.register", authorizationID, idempotencyKey, digest)
+	if !ok || !created {
+		if ok {
+			writeStoredCommand(w, command)
+		}
+		return
+	}
+	execution, err := s.x402Settlements.Register(r.Context(), principal.OrganizationID, agentID, authorizationID, settlementRequest)
+	if err != nil {
+		s.failCommand(w, r, command, err)
+		return
+	}
+	s.succeedCommand(w, r, command, map[string]any{"execution": execution}, http.StatusCreated)
 }
 
 func (s *Server) handleEscrowIntent(w http.ResponseWriter, r *http.Request) {
@@ -1730,12 +1796,16 @@ func classifyError(err error) (int, string, bool) {
 	case errors.Is(err, controlplane.ErrIdempotencyConflict), errors.Is(err, controlplane.ErrApprovalDigest),
 		errors.Is(err, controlplane.ErrNotPendingApproval), errors.Is(err, controlplane.ErrNotApproved),
 		errors.Is(err, controlplane.ErrPolicyChanged), errors.Is(err, reconciliation.ErrConflict), errors.Is(err, reconciliation.ErrEscrowDeployment),
-		errors.Is(err, reconciliation.ErrEscrowFinality), errors.Is(err, ErrEscrowBinding),
+		errors.Is(err, reconciliation.ErrEscrowFinality), errors.Is(err, ErrEscrowBinding), errors.Is(err, ErrX402SettlementBinding), errors.Is(err, ErrBroadcastBinding), errors.Is(err, ErrBroadcastTime),
 		errors.Is(err, ascpapproval.ErrSnapshotMismatch), errors.Is(err, ascpapproval.ErrNotRequested),
 		errors.Is(err, ascporchestration.ErrStateConflict), errors.Is(err, ascporchestration.ErrApprovalUnavailable):
 		return http.StatusConflict, "STATE_CONFLICT", false
 	case errors.Is(err, reconciliation.ErrEscrowTransition):
 		return http.StatusBadRequest, "INVALID_ESCROW_TRANSITION", false
+	case errors.Is(err, ErrX402SettlementResult):
+		return http.StatusBadRequest, "INVALID_X402_SETTLEMENT", false
+	case errors.Is(err, ErrBroadcastKeyUnknown), errors.Is(err, ErrBroadcastSignature):
+		return http.StatusUnauthorized, "INVALID_SIGNER_RECEIPT", false
 	case errors.Is(err, controlplane.ErrApprovalExpired):
 		return http.StatusGone, "APPROVAL_EXPIRED", false
 	case errors.Is(err, controlplane.ErrPolicyUnavailable), errors.Is(err, ascporchestration.ErrPolicyUnavailable):

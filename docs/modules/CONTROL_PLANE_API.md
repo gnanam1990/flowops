@@ -74,6 +74,7 @@ contract, asset, and immutable release window are runtime admission settings.
 | `GET` | `/v1/dashboard/snapshot` | human organization member | Live tenant-scoped agents, approvals, chain state, reconciliation exceptions, progress, and proved-asset aggregates |
 | `POST` | `/v1/signer/broadcasts` | customer signer receipt signature | Authorization-bound expected execution awaiting Base reconciliation |
 | `POST` | `/v1/signer/escrow-broadcasts` | customer signer receipt signature | Attested exact escrow FUND awaiting Base reconciliation |
+| `POST` | `/v1/x402/authorizations/{authorizationID}/settlements` | own-agent `x402:settlements` scope or authorized human | Facilitator result registered as an untrusted transaction candidate awaiting canonical Base proof |
 | `POST` | `/v1/escrow/intents/{authorizationID}` | own-agent `escrow:register` scope or authorized human | Authorization-derived durable escrow intent before broadcast |
 | `POST` | `/v1/escrow/calls/{callID}/transitions` | Owner/Admin with active step-up | Durable non-FUND candidate for one already-broadcast escrow transition |
 | `GET` | `/v1/escrow/calls/{callID}` | organization read permission; agents only their own call | Tenant-scoped canonical escrow timeline |
@@ -83,9 +84,13 @@ contract, asset, and immutable release window are runtime admission settings.
 | `POST` | `/v1/operator/executions/{executionID}/quarantine` | dedicated operator-control key, exact organization, named operator, unproven disposition | Durable containment without asserting drop/replacement or moving funds |
 
 Signer broadcast intake has rail-specific endpoints for `direct_usdc` and
-escrow FUND. x402 facilitator responses are not routed through either customer
-signer worker. Escrow uses its separate strict event decoder and transition
-worker; its registry never broadcasts.
+escrow FUND. An x402 facilitator result uses its authenticated, tenant-scoped
+endpoint instead of masquerading as a direct transfer. The result must carry a
+tenant-scoped customer-signer Ed25519 receipt and match the exact issued x402
+authorization, canonical payer, Base network, transaction hash, and amount, but
+remains only a candidate until independent receipt observers prove the exact
+native-USDC transfer. Escrow uses its separate strict event decoder and
+transition worker; none of these registries broadcast.
 
 ## Persistence
 
@@ -97,6 +102,14 @@ checksums are immutable. Hash-chained payloads are stored as `bytea`, because
 the chain commits to exact JSON bytes and `jsonb` normalization would change
 them during replay. Domain event replay refuses malformed, reordered,
 substituted, or externally advanced event streams.
+Canonical direct/x402 outcomes remain owned by the rollback-compatible
+reconciliation journal. Budget evaluation reads only executions with a durable
+reorg-lookback finality checkpoint: `SETTLED` moves the amount from reservation
+to spent accounting and `REVERTED` releases it. Missing or malformed projection
+state, missing durable signer evidence, or any organization/task/chain/asset/
+recipient/amount mismatch remains reserved. No new control event is written, so rolling back the API
+image preserves a conservative reservation instead of encountering an unknown
+control-journal event.
 
 Migration `0002_sites_memberships.sql` adds project-specific exchange-token
 digests and Sites identity memberships. It stores only a site-bound user hash

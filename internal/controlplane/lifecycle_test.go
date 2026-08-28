@@ -67,6 +67,22 @@ type sources struct {
 	nonce   atomic.Uint64
 }
 
+type staticOutcomeSource map[string]FinalizedExecution
+
+func (s staticOutcomeSource) FinalizedExecution(executionID string) (FinalizedExecution, bool) {
+	outcome, ok := s[executionID]
+	return outcome, ok
+}
+
+func finalizedOutcome(authorization envelope.Authorization, state CanonicalExecutionState, finalizedAt int64) FinalizedExecution {
+	return FinalizedExecution{
+		ExecutionID: ExecutionID(authorization.AuthorizationID), OrganizationID: authorization.OrganizationID,
+		AgentID: authorization.AgentID, TaskID: authorization.TaskID, ChainID: authorization.ChainID,
+		Asset: authorization.Asset, Recipient: authorization.Recipient, AmountAtomic: authorization.AmountAtomic,
+		State: state, FinalizedAt: finalizedAt,
+	}
+}
+
 func (s *sources) requestID() (string, error) {
 	return fmt.Sprintf("req_%d", s.request.Add(1)), nil
 }
@@ -223,6 +239,121 @@ func TestPolicyBudgetReservationsAggregateAcrossAllRailsAndSurviveRestart(t *tes
 	denied, err := restarted.Submit(context.Background(), escrow)
 	if err != nil || denied.State != StateDenied || denied.Decision.Reason != policy.ReasonTaskBudget {
 		t.Fatalf("escrow did not see x402 plus direct reservations after restart: %+v, %v", denied, err)
+	}
+}
+
+func TestCanonicalSettlementMovesReservationToSpentExactlyOnceAcrossRestart(t *testing.T) {
+	now := time.Date(2026, 8, 28, 15, 0, 0, 0, time.UTC)
+	clock, freeze, version, ids := &fakeClock{now: now}, &fakeFreeze{}, &policyVersion{version: "policy_7"}, &sources{}
+	path := filepath.Join(t.TempDir(), "settled-budget.log")
+	lifecycle, journal, _ := newLifecycleForTest(t, path, clock, freeze, version, ids)
+
+	firstIntent := controlIntent("settled_first", "100")
+	first, err := lifecycle.Submit(context.Background(), firstIntent)
+	if err != nil || first.State != StateApproved {
+		t.Fatalf("first intent = %+v, %v", first, err)
+	}
+	signed, err := lifecycle.Issue(context.Background(), first.RequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Add(time.Minute)
+	mismatched := finalizedOutcome(signed.Authorization, CanonicalExecutionSettled, clock.Now().Unix())
+	mismatched.AmountAtomic = "99"
+	lifecycle.outcomeSource = staticOutcomeSource{ExecutionID(signed.Authorization.AuthorizationID): mismatched}
+	if snapshot := lifecycle.spendSnapshot(firstIntent, clock.Now()); snapshot.TaskReservedAtomic != "100" || snapshot.TaskSpentAtomic != "0" {
+		t.Fatalf("mismatched finalized economics released reservation: %+v", snapshot)
+	}
+	outcomes := staticOutcomeSource{ExecutionID(signed.Authorization.AuthorizationID): finalizedOutcome(signed.Authorization, CanonicalExecutionSettled, clock.Now().Unix())}
+	lifecycle.outcomeSource = outcomes
+	eventCount := len(journal.Events())
+	snapshot := lifecycle.spendSnapshot(firstIntent, clock.Now())
+	if snapshot.TaskSpentAtomic != "100" || snapshot.TaskReservedAtomic != "0" || snapshot.DailySpentAtomic != "100" || snapshot.DailyReservedAtomic != "0" {
+		t.Fatalf("settled spend snapshot = %+v", snapshot)
+	}
+
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, reopened, _ := newLifecycleForTest(t, path, clock, freeze, version, ids)
+	defer reopened.Close()
+	restarted.outcomeSource = outcomes
+	snapshot = restarted.spendSnapshot(firstIntent, clock.Now())
+	if snapshot.TaskSpentAtomic != "100" || snapshot.TaskReservedAtomic != "0" {
+		t.Fatalf("replayed spend snapshot = %+v", snapshot)
+	}
+	if len(reopened.Events()) != eventCount {
+		t.Fatalf("outcome projection mutated control journal: events=%d/%d", len(reopened.Events()), eventCount)
+	}
+	second, err := restarted.Submit(context.Background(), controlIntent("settled_second", "100"))
+	if err != nil || second.State != StateApproved {
+		t.Fatalf("remaining task budget was not usable exactly once: %+v, %v", second, err)
+	}
+	denied, err := restarted.Submit(context.Background(), controlIntent("settled_overflow", "1"))
+	if err != nil || denied.State != StateDenied || denied.Decision.Reason != policy.ReasonTaskBudget {
+		t.Fatalf("spent plus reserved budget was not enforced: %+v, %v", denied, err)
+	}
+}
+
+func TestCanonicalRevertReleasesReservationOnlyAfterFinalityAndSurvivesRestart(t *testing.T) {
+	now := time.Date(2026, 8, 28, 16, 0, 0, 0, time.UTC)
+	clock, freeze, version, ids := &fakeClock{now: now}, &fakeFreeze{}, &policyVersion{version: "policy_7"}, &sources{}
+	path := filepath.Join(t.TempDir(), "reverted-budget.log")
+	lifecycle, journal, _ := newLifecycleForTest(t, path, clock, freeze, version, ids)
+
+	firstIntent := controlIntent("reverted_first", "100")
+	first, err := lifecycle.Submit(context.Background(), firstIntent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := lifecycle.Issue(context.Background(), first.RequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := lifecycle.spendSnapshot(firstIntent, clock.Now())
+	if before.TaskReservedAtomic != "100" || before.TaskSpentAtomic != "0" {
+		t.Fatalf("pre-finality snapshot = %+v", before)
+	}
+	clock.Add(time.Minute)
+	outcomes := staticOutcomeSource{ExecutionID(signed.Authorization.AuthorizationID): finalizedOutcome(signed.Authorization, CanonicalExecutionReverted, clock.Now().Unix())}
+	lifecycle.outcomeSource = outcomes
+	after := lifecycle.spendSnapshot(firstIntent, clock.Now())
+	if after.TaskReservedAtomic != "0" || after.TaskSpentAtomic != "0" || after.DailyReservedAtomic != "0" || after.DailySpentAtomic != "0" {
+		t.Fatalf("post-revert snapshot = %+v", after)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, reopened, _ := newLifecycleForTest(t, path, clock, freeze, version, ids)
+	defer reopened.Close()
+	restarted.outcomeSource = outcomes
+	afterRestart := restarted.spendSnapshot(firstIntent, clock.Now())
+	if afterRestart.TaskReservedAtomic != "0" || afterRestart.TaskSpentAtomic != "0" {
+		t.Fatalf("replayed revert snapshot = %+v", afterRestart)
+	}
+	fullBudget, err := restarted.Submit(context.Background(), controlIntent("reverted_reuse", "200"))
+	if err != nil || fullBudget.State != StatePendingApproval {
+		t.Fatalf("released budget was not reusable: %+v, %v", fullBudget, err)
+	}
+}
+
+func TestUnresolvedReservationCarriesAcrossUTCBudgetBoundary(t *testing.T) {
+	now := time.Date(2026, 8, 28, 23, 59, 0, 0, time.UTC)
+	clock, freeze, version, ids := &fakeClock{now: now}, &fakeFreeze{}, &policyVersion{version: "policy_7"}, &sources{}
+	lifecycle, journal, _ := newLifecycleForTest(t, filepath.Join(t.TempDir(), "midnight-budget.log"), clock, freeze, version, ids)
+	defer journal.Close()
+	intent := controlIntent("midnight_unknown", "100")
+	record, err := lifecycle.Submit(context.Background(), intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lifecycle.Issue(context.Background(), record.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	clock.Add(2 * time.Minute)
+	snapshot := lifecycle.spendSnapshot(intent, clock.Now())
+	if snapshot.DailyReservedAtomic != "100" || snapshot.DailySpentAtomic != "0" {
+		t.Fatalf("unresolved payment disappeared at midnight: %+v", snapshot)
 	}
 }
 

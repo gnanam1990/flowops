@@ -3,7 +3,6 @@ package controlapi
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -130,7 +129,7 @@ func (r *SignerBroadcastRegistrar) Register(ctx context.Context, signed broadcas
 		return reconciliation.Execution{}, ErrBroadcastRail
 	}
 	expected := reconciliation.ExpectedExecution{
-		ExecutionID:     executionID(authorization.AuthorizationID),
+		ExecutionID:     controlplane.ExecutionID(authorization.AuthorizationID),
 		OrganizationID:  authorization.OrganizationID,
 		AgentID:         authorization.AgentID,
 		TaskID:          authorization.TaskID,
@@ -190,9 +189,4 @@ func validateBroadcastBinding(lifecycle *controlplane.Lifecycle, keys *StaticBro
 		return controlplane.Record{}, envelope.Authorization{}, nil, ErrBroadcastTime
 	}
 	return record, authorization, publicKey, nil
-}
-
-func executionID(authorizationID string) string {
-	digest := sha256.Sum256([]byte("flowops:execution:v1\n" + authorizationID))
-	return "exec_" + hex.EncodeToString(digest[:])
 }

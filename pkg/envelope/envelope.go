@@ -88,6 +88,13 @@ type SignedAuthorization struct {
 	Signature     string        `json:"signature"`
 }
 
+// ExecutionID deterministically binds one reconciliation execution to one
+// issued authorization without exposing mutable request metadata.
+func ExecutionID(authorizationID string) string {
+	digest := sha256.Sum256([]byte("flowops:execution:v1\n" + authorizationID))
+	return "exec_" + hex.EncodeToString(digest[:])
+}
+
 func (a Authorization) Validate() error {
 	if a.Version != Version {
 		return fmt.Errorf("version: got %q, want %q", a.Version, Version)

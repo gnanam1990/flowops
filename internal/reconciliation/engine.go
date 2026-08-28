@@ -359,6 +359,48 @@ func (e *Engine) RegisterAttestedBroadcast(ctx context.Context, expected Expecte
 	return cloneExecution(execution), nil
 }
 
+// RegisterX402Settlement records a facilitator-submitted transaction without
+// treating the facilitator response as payment proof. Registration remains
+// available while Base is unhealthy because the transfer may already have
+// happened; the execution then waits in PENDING_CHAIN_RECOVERY.
+func (e *Engine) RegisterX402Settlement(ctx context.Context, expected ExpectedExecution, claim X402SettlementClaim) (Execution, error) {
+	if err := expected.validate(e.config.ChainID); err != nil {
+		return Execution{}, err
+	}
+	if err := claim.validate(expected); err != nil {
+		return Execution{}, err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if existing, ok := e.executions[expected.ExecutionID]; ok {
+		if equalJSON(existing.Expected, expected) && existing.X402SettlementClaim != nil && equalJSON(*existing.X402SettlementClaim, claim) {
+			return cloneExecution(existing), nil
+		}
+		return Execution{}, ErrConflict
+	}
+	if other, ok := e.executionByHash[expected.TransactionHash]; ok && other != expected.ExecutionID {
+		return Execution{}, ErrConflict
+	}
+	if _, ok := e.escrowByHash[expected.TransactionHash]; ok {
+		return Execution{}, ErrConflict
+	}
+	now := e.config.Clock().UTC()
+	state := ExecutionBroadcast
+	if !e.chainUsable(now) {
+		state = ExecutionPendingChainRecovery
+	}
+	claimCopy := claim
+	execution := Execution{Expected: expected, State: state, BroadcastAt: now, X402SettlementClaim: &claimCopy}
+	event, err := e.journal.append(ctx, now, eventExecutionBroadcast, expected.ExecutionID, executionPayload{Execution: execution})
+	if err != nil {
+		return Execution{}, err
+	}
+	if err := e.apply(event); err != nil {
+		return Execution{}, err
+	}
+	return cloneExecution(execution), nil
+}
+
 func (e *Engine) ReconcileReceipt(ctx context.Context, executionID string, evidence []ReceiptEvidence, settlement *LedgerTransaction) (Execution, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -383,7 +425,7 @@ func (e *Engine) ReconcileReceipt(ctx context.Context, executionID string, evide
 	if err != nil {
 		return Execution{}, err
 	}
-	if execution.CorrectionTransactionID != "" && execution.ReorgEvidenceDigest != "" && canonical.BlockNumber == execution.BlockNumber && canonical.BlockHash == execution.BlockHash {
+	if execution.ReorgEvidenceDigest != "" && canonical.BlockNumber == execution.BlockNumber && canonical.BlockHash == execution.BlockHash {
 		return Execution{}, fmt.Errorf("%w: receipt repeats the block removed by canonical reorg evidence", ErrUnsafeFinality)
 	}
 	resolved := cloneExecution(execution)
@@ -542,6 +584,61 @@ func (e *Engine) ReopenReorg(ctx context.Context, executionID string, evidence [
 	return cloneExecution(reopened), nil
 }
 
+// ReopenRevertedReorg reopens a previously reverted receipt when canonical
+// block evidence removes it. There is no ledger correction because a reverted
+// execution never posted settlement accounting.
+func (e *Engine) ReopenRevertedReorg(ctx context.Context, executionID string, evidence []ReorgEvidence) (Execution, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	execution, ok := e.executions[executionID]
+	if !ok {
+		return Execution{}, ErrUnknownExecution
+	}
+	reorgDigest, canonicalEvidence, err := digestReorgEvidence(evidence)
+	if err != nil {
+		return Execution{}, err
+	}
+	if execution.State == ExecutionPendingChainRecovery && execution.LedgerTransactionID == "" && execution.CorrectionTransactionID == "" && execution.ReorgEvidenceDigest == reorgDigest {
+		return cloneExecution(execution), nil
+	}
+	if execution.State != ExecutionReverted || execution.LedgerTransactionID != "" {
+		return Execution{}, errors.New("only a reverted execution can be reopened without a ledger correction")
+	}
+	now := e.config.Clock().UTC()
+	if (e.status.State != StateHealthy && e.status.State != StateRecovering) || !e.trustedFresh(now) {
+		return Execution{}, fmt.Errorf("%w: state=%s", ErrChainUnavailable, e.statusAt(now).State)
+	}
+	if err := e.validateReorgQuorum(execution, canonicalEvidence); err != nil {
+		return Execution{}, err
+	}
+	reopened := cloneExecution(execution)
+	reopened.State = ExecutionPendingChainRecovery
+	reopened.ResolvedAt = nil
+	reopened.Resolution = "canonical reorg removed the prior reverted receipt; outcome requires reconciliation"
+	reopened.ReorgEvidenceDigest = reorgDigest
+	reopened.FinalityCheckedAt = nil
+	reopened.FinalityCheckedHead = 0
+	status := cloneStatus(e.status)
+	status.State = StateRecovering
+	status.StateChangedAt = now
+	status.Reason = "canonical reorg evidence reopened a reverted execution"
+	status.ConsecutiveRecovery = 0
+	status.ReadyForManualResume = false
+	status.AffectedExecutions = e.unresolvedCount() + 1
+	e.setPauseFlags(&status)
+	event, err := e.journal.append(ctx, now, eventExecutionReorged, executionID, executionPayload{
+		Execution: reopened, Reorg: canonicalEvidence, Status: &status,
+	})
+	if err != nil {
+		return Execution{}, err
+	}
+	if err := e.apply(event); err != nil {
+		return Execution{}, err
+	}
+	e.refreshAffected()
+	return cloneExecution(reopened), nil
+}
+
 func (e *Engine) ConfirmFinality(ctx context.Context, executionID string, evidence []ReorgEvidence) (Execution, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -549,8 +646,11 @@ func (e *Engine) ConfirmFinality(ctx context.Context, executionID string, eviden
 	if !ok {
 		return Execution{}, ErrUnknownExecution
 	}
-	if execution.State != ExecutionSettled || execution.LedgerTransactionID == "" {
-		return Execution{}, errors.New("only a settled execution can complete finality monitoring")
+	if execution.State != ExecutionSettled && execution.State != ExecutionReverted {
+		return Execution{}, errors.New("only a settled or reverted execution can complete finality monitoring")
+	}
+	if (execution.State == ExecutionSettled && execution.LedgerTransactionID == "") || (execution.State == ExecutionReverted && execution.LedgerTransactionID != "") {
+		return Execution{}, errors.New("execution finality accounting binding is invalid")
 	}
 	canonical, err := e.validateCanonicalBlockQuorum(execution, evidence, false)
 	if err != nil {
@@ -791,6 +891,20 @@ func (e *Engine) preserveBroadcastAttestation(next *Execution) error {
 		if err := next.BroadcastAttestation.validate(next.Expected); err != nil {
 			return fmt.Errorf("execution broadcast attestation: %w", err)
 		}
+	}
+	if next.X402SettlementClaim == nil {
+		if current, ok := e.executions[next.Expected.ExecutionID]; ok && current.X402SettlementClaim != nil {
+			claim := *current.X402SettlementClaim
+			next.X402SettlementClaim = &claim
+		}
+	}
+	if next.X402SettlementClaim != nil {
+		if err := next.X402SettlementClaim.validate(next.Expected); err != nil {
+			return fmt.Errorf("execution x402 settlement claim: %w", err)
+		}
+	}
+	if next.BroadcastAttestation != nil && next.X402SettlementClaim != nil {
+		return errors.New("execution cannot carry both direct and x402 broadcast evidence")
 	}
 	return nil
 }
@@ -1082,6 +1196,10 @@ func cloneExecution(execution Execution) Execution {
 	if execution.BroadcastAttestation != nil {
 		attestation := *execution.BroadcastAttestation
 		execution.BroadcastAttestation = &attestation
+	}
+	if execution.X402SettlementClaim != nil {
+		claim := *execution.X402SettlementClaim
+		execution.X402SettlementClaim = &claim
 	}
 	if execution.ResolvedAt != nil {
 		resolvedAt := *execution.ResolvedAt

@@ -97,7 +97,14 @@ execution. A callback arriving after a chain halt is retained as
 The escrow signer posts the same proof shape to
 `POST /v1/signer/escrow-broadcasts`; FlowOps binds it to the exact issued
 escrow terms and registers only a FUND candidate. x402 facilitator settlements
-still require their own protocol-aware registration.
+use `POST /v1/x402/authorizations/{authorizationID}/settlements`. FlowOps binds
+the official settle response and a customer-signer Ed25519 broadcast receipt to
+the issued x402 authorization, then persists them as a routing claim, never as
+canonical payment evidence. Failed, malformed, unsigned, wrong-network,
+wrong-payer, substituted, signer-timestamp-outside-window, or cross-tenant
+claims fail closed. A delayed callback with an in-window signer timestamp
+remains recoverable during a chain outage and enters
+`PENDING_CHAIN_RECOVERY`, because the facilitator may already have broadcast.
 The hash-chained execution event preserves the exact authorization, signed
 receipt, and verifying public key. The reconciliation engine independently
 recomputes the authorization digest, re-verifies the signature, and matches all
@@ -113,13 +120,21 @@ receipt produces a deterministic settlement transaction over
 ledger entry. Both paths still pass through the engine's quorum validation and
 single durable append.
 
-Settled executions remain under reorg watch until independent providers confirm
-the original block hash at the configured lookback depth. That positive
-canonical evidence and the minimum agreed head are journaled on the execution,
-so restart does not poll old settlements forever. A conflicting canonical hash
-at that depth triggers the exact correction path. Reorganizations deeper than
-the configured lookback remain an explicitly accepted residual risk for the
-capped pilot and require operator incident handling.
+Settled and reverted executions remain under reorg watch until independent
+providers confirm the original block hash at the configured lookback depth.
+That positive canonical evidence and the minimum agreed head are journaled on
+the execution. A settled reorg triggers the exact ledger correction path; a
+reverted reorg reopens the unresolved execution without inventing a ledger
+entry. Only after this finality checkpoint does the control lifecycle move an
+issued reservation to `SETTLED` spend or release it as `REVERTED`. The policy
+lifecycle reads that finalized reconciliation projection directly and writes no
+second journal, preserving rollback compatibility and removing a dual-write
+failure window. Unresolved authorizations carry across UTC midnight in
+current-day reserved accounting so
+an unknown payment cannot create a temporary daily-budget bypass.
+Reorganizations deeper than the configured lookback remain an explicitly
+accepted residual risk for the capped pilot and require operator incident
+handling.
 
 ## CallEscrow lifecycle evidence
 

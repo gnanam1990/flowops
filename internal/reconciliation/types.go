@@ -231,6 +231,7 @@ type Execution struct {
 	State                   ExecutionState        `json:"state"`
 	BroadcastAt             time.Time             `json:"broadcastAt"`
 	BroadcastAttestation    *BroadcastAttestation `json:"broadcastAttestation,omitempty"`
+	X402SettlementClaim     *X402SettlementClaim  `json:"x402SettlementClaim,omitempty"`
 	ResolvedAt              *time.Time            `json:"resolvedAt,omitempty"`
 	BlockNumber             uint64                `json:"blockNumber,omitempty"`
 	BlockHash               string                `json:"blockHash,omitempty"`
@@ -240,6 +241,64 @@ type Execution struct {
 	ReorgEvidenceDigest     string                `json:"reorgEvidenceDigest,omitempty"`
 	FinalityCheckedAt       *time.Time            `json:"finalityCheckedAt,omitempty"`
 	FinalityCheckedHead     uint64                `json:"finalityCheckedHead,omitempty"`
+}
+
+// X402SettlementClaim preserves the facilitator result that introduced an
+// x402 transaction candidate. It is a routing claim, not canonical payment
+// evidence: the receipt worker must still prove the exact native-USDC Transfer
+// through the configured independent Base observers.
+type X402SettlementClaim struct {
+	Authorization envelope.Authorization         `json:"authorization"`
+	SignedReceipt broadcastreceipt.SignedReceipt `json:"signedReceipt"`
+	PublicKeyB64  string                         `json:"publicKeyB64"`
+	Success       bool                           `json:"success"`
+	Payer         string                         `json:"payer"`
+	Transaction   string                         `json:"transaction"`
+	Network       string                         `json:"network"`
+	Amount        string                         `json:"amount,omitempty"`
+}
+
+func (c X402SettlementClaim) validate(expected ExpectedExecution) error {
+	if !c.Success {
+		return errors.New("x402 settlement claim must report success")
+	}
+	if err := c.Authorization.Validate(); err != nil {
+		return fmt.Errorf("x402 settlement authorization: %w", err)
+	}
+	publicKey, err := base64.StdEncoding.DecodeString(c.PublicKeyB64)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize || c.PublicKeyB64 != base64.StdEncoding.EncodeToString(publicKey) {
+		return errors.New("x402 settlement claim public key is invalid")
+	}
+	if err := broadcastreceipt.Verify(c.SignedReceipt, ed25519.PublicKey(publicKey)); err != nil {
+		return fmt.Errorf("x402 settlement claim signature: %w", err)
+	}
+	receipt := c.SignedReceipt.Receipt
+	authorizationDigest, err := c.Authorization.Digest()
+	if err != nil || receipt.AuthorizationDigest != "0x"+hex.EncodeToString(authorizationDigest[:]) ||
+		receipt.AuthorizationID != c.Authorization.AuthorizationID || receipt.OrganizationID != c.Authorization.OrganizationID || receipt.CustomerID != c.Authorization.CustomerID {
+		return errors.New("x402 settlement receipt does not match its authorization")
+	}
+	broadcastAt := time.Unix(receipt.BroadcastAt, 0)
+	if broadcastAt.Before(time.Unix(c.Authorization.IssuedAt, 0)) || !broadcastAt.Before(time.Unix(c.Authorization.ExpiresAt, 0)) {
+		return errors.New("x402 settlement receipt time is outside its authorization window")
+	}
+	wantNetwork := "eip155:8453"
+	if expected.ChainID == 84532 {
+		wantNetwork = "eip155:84532"
+	}
+	if c.Authorization.Rail != envelope.RailX402 || c.Authorization.Escrow != nil ||
+		expected.ExecutionID != envelope.ExecutionID(c.Authorization.AuthorizationID) ||
+		c.Network != wantNetwork || c.Payer != expected.Sender || c.Transaction != expected.TransactionHash || receipt.Sender != expected.Sender || receipt.TransactionHash != expected.TransactionHash ||
+		(c.Amount != "" && c.Amount != expected.AmountAtomic) {
+		return errors.New("x402 settlement claim does not match expected execution")
+	}
+	if c.Authorization.OrganizationID != expected.OrganizationID || c.Authorization.AgentID != expected.AgentID ||
+		c.Authorization.TaskID != expected.TaskID || c.Authorization.ChainID != expected.ChainID ||
+		c.Authorization.Asset != expected.Asset || c.Authorization.Recipient != expected.Recipient ||
+		c.Authorization.AmountAtomic != expected.AmountAtomic {
+		return errors.New("x402 authorization does not match expected execution")
+	}
+	return nil
 }
 
 // BroadcastAttestation preserves the exact customer proof accepted when an

@@ -274,6 +274,70 @@ func TestWorkerPersistsPositiveFinalityAndDoesNotPollItAgain(t *testing.T) {
 	}
 }
 
+func TestWorkerFinalizesRevertedReceiptForBudgetProjection(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 28, 16, 30, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reverted-finality.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 120)
+	expected := testExpected()
+	if _, err := engine.RegisterBroadcast(context.Background(), expected); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.ReconcileReceipt(context.Background(), expected.ExecutionID, receiptQuorum(expected, 100, false), nil); err != nil {
+		t.Fatal(err)
+	}
+	reverted, _ := engine.Execution(expected.ExecutionID)
+	if reverted.State != ExecutionReverted || reverted.FinalityCheckedAt != nil {
+		t.Fatalf("pre-finality revert = %+v", reverted)
+	}
+	source := &workerSource{blocks: map[string]ReorgResult{
+		expected.ExecutionID: {Evidence: canonicalBlockEvidence(reverted, reverted.BlockHash, 120)},
+	}}
+	worker := testWorker(t, source, engine, clock)
+	cycle, err := worker.RunOnce(context.Background())
+	if err != nil || cycle.FinalityConfirmed != 1 {
+		t.Fatalf("reverted finality cycle=%+v err=%v", cycle, err)
+	}
+	finalized, _ := engine.Execution(expected.ExecutionID)
+	if finalized.FinalityCheckedAt == nil || finalized.FinalityCheckedHead != 120 {
+		t.Fatalf("finalized revert = %+v", finalized)
+	}
+}
+
+func TestWorkerReopensRevertedReceiptWhenCanonicalBlockChanges(t *testing.T) {
+	t.Parallel()
+	clock := &testClock{now: time.Date(2026, 8, 28, 16, 45, 0, 0, time.UTC)}
+	engine, err := Open(filepath.Join(t.TempDir(), "reverted-reorg.log"), testConfig(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	bootstrapHealthy(t, engine, clock, 120)
+	expected := testExpected()
+	if _, err := engine.RegisterBroadcast(context.Background(), expected); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.ReconcileReceipt(context.Background(), expected.ExecutionID, receiptQuorum(expected, 100, false), nil); err != nil {
+		t.Fatal(err)
+	}
+	reverted, _ := engine.Execution(expected.ExecutionID)
+	source := &workerSource{blocks: map[string]ReorgResult{
+		expected.ExecutionID: {Evidence: canonicalBlockEvidence(reverted, testHash(999), 120)},
+	}}
+	cycle, err := testWorker(t, source, engine, clock).RunOnce(context.Background())
+	if err != nil || cycle.ReorgsReopened != 1 {
+		t.Fatalf("reverted reorg cycle=%+v err=%v", cycle, err)
+	}
+	reopened, _ := engine.Execution(expected.ExecutionID)
+	if reopened.State != ExecutionPendingChainRecovery || reopened.ReorgEvidenceDigest == "" || reopened.LedgerTransactionID != "" {
+		t.Fatalf("reopened reverted execution = %+v", reopened)
+	}
+}
+
 func TestWorkerAcceptsCanonicalHeadAheadOfLastHealthSnapshot(t *testing.T) {
 	t.Parallel()
 	clock := &testClock{now: time.Date(2026, 8, 12, 13, 17, 0, 0, time.UTC)}

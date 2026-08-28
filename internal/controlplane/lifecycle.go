@@ -68,6 +68,33 @@ type ChainGate interface {
 	CheckChain(ctx context.Context, chainID uint64) error
 }
 
+type CanonicalExecutionState string
+
+const (
+	CanonicalExecutionSettled  CanonicalExecutionState = "SETTLED"
+	CanonicalExecutionReverted CanonicalExecutionState = "REVERTED"
+)
+
+type FinalizedExecution struct {
+	ExecutionID    string
+	OrganizationID string
+	AgentID        string
+	TaskID         string
+	ChainID        uint64
+	Asset          string
+	Recipient      string
+	AmountAtomic   string
+	State          CanonicalExecutionState
+	FinalizedAt    int64
+}
+
+// ExecutionOutcomeSource is a read-only projection over the canonical
+// reconciliation journal. An unavailable or invalid projection must be treated
+// as unresolved reservation exposure.
+type ExecutionOutcomeSource interface {
+	FinalizedExecution(executionID string) (FinalizedExecution, bool)
+}
+
 type authorizationChainGate interface {
 	CheckAuthorizationChain(ctx context.Context, authorization envelope.Authorization) error
 }
@@ -79,6 +106,7 @@ type Config struct {
 	Journal               EventJournal
 	FreezeGate            FreezeGate
 	ChainGate             ChainGate
+	OutcomeSource         ExecutionOutcomeSource
 	Clock                 func() time.Time
 	ApprovalTTL           time.Duration
 	AuthorizationTTL      time.Duration
@@ -96,6 +124,7 @@ type Lifecycle struct {
 	journal                EventJournal
 	freezeGate             FreezeGate
 	chainGate              ChainGate
+	outcomeSource          ExecutionOutcomeSource
 	clock                  func() time.Time
 	approvalTTL            time.Duration
 	authorizationTTL       time.Duration
@@ -134,7 +163,7 @@ func New(cfg Config) (*Lifecycle, error) {
 	}
 	l := &Lifecycle{
 		policyProvider: provider, journal: cfg.Journal,
-		freezeGate: cfg.FreezeGate, chainGate: cfg.ChainGate, clock: clock, approvalTTL: cfg.ApprovalTTL,
+		freezeGate: cfg.FreezeGate, chainGate: cfg.ChainGate, outcomeSource: cfg.OutcomeSource, clock: clock, approvalTTL: cfg.ApprovalTTL,
 		authorizationTTL: cfg.AuthorizationTTL, requestIDSource: cfg.RequestIDSource,
 		authorizationIDSource: cfg.AuthorizationIDSource, nonceSource: cfg.NonceSource,
 		envelopeKeyID: cfg.EnvelopeKeyID, envelopePrivateKey: append(ed25519.PrivateKey(nil), cfg.EnvelopePrivateKey...),
@@ -452,32 +481,46 @@ func (l *Lifecycle) spendSnapshot(intent PaymentIntent, now time.Time) policy.Sp
 	// spent without that evidence would invent settlement.
 	taskReserved := new(big.Int)
 	dailyReserved := new(big.Int)
+	taskSpent := new(big.Int)
+	dailySpent := new(big.Int)
 	for _, record := range l.records {
-		if !reservationActive(record.State) || record.Intent.OrganizationID != intent.OrganizationID || record.Intent.CustomerID != intent.CustomerID {
+		if record.Intent.OrganizationID != intent.OrganizationID || record.Intent.CustomerID != intent.CustomerID {
 			continue
 		}
 		amount, ok := new(big.Int).SetString(record.Intent.AmountAtomic, 10)
 		if !ok {
 			continue
 		}
-		if record.Intent.TaskID == intent.TaskID {
-			taskReserved.Add(taskReserved, amount)
-		}
-		submitted := time.Unix(record.SubmittedAt, 0).UTC()
-		if submitted.Year() == now.Year() && submitted.YearDay() == now.YearDay() {
+		finalized, hasFinalized := l.finalizedExecution(record)
+		if reservationActive(record.State) && !hasFinalized {
+			if record.Intent.TaskID == intent.TaskID {
+				taskReserved.Add(taskReserved, amount)
+			}
+			// An unresolved authorization carries into the current UTC budget
+			// window. Dropping yesterday's unknown payment at midnight would
+			// create a temporary overspend window before chain finality.
 			dailyReserved.Add(dailyReserved, amount)
+		} else if hasFinalized && finalized.State == CanonicalExecutionSettled {
+			if record.Intent.TaskID == intent.TaskID {
+				taskSpent.Add(taskSpent, amount)
+			}
+			finalizedAt := time.Unix(finalized.FinalizedAt, 0).UTC()
+			if finalizedAt.Year() == now.Year() && finalizedAt.YearDay() == now.YearDay() {
+				dailySpent.Add(dailySpent, amount)
+			}
 		}
 	}
 	return policy.SpendSnapshot{
-		TaskSpentAtomic: "0", TaskReservedAtomic: taskReserved.String(),
-		DailySpentAtomic: "0", DailyReservedAtomic: dailyReserved.String(),
+		TaskSpentAtomic: taskSpent.String(), TaskReservedAtomic: taskReserved.String(),
+		DailySpentAtomic: dailySpent.String(), DailyReservedAtomic: dailyReserved.String(),
 	}
 }
 
 func (l *Lifecycle) pilotOutstanding(intent PaymentIntent) string {
 	total := new(big.Int)
 	for _, record := range l.records {
-		if !reservationActive(record.State) || record.Intent.OrganizationID != intent.OrganizationID || record.Intent.CustomerID != intent.CustomerID {
+		_, finalized := l.finalizedExecution(record)
+		if !reservationActive(record.State) || finalized || record.Intent.OrganizationID != intent.OrganizationID || record.Intent.CustomerID != intent.CustomerID {
 			continue
 		}
 		amount, ok := new(big.Int).SetString(record.Intent.AmountAtomic, 10)
@@ -486,6 +529,24 @@ func (l *Lifecycle) pilotOutstanding(intent PaymentIntent) string {
 		}
 	}
 	return total.String()
+}
+
+func (l *Lifecycle) finalizedExecution(record Record) (FinalizedExecution, bool) {
+	if record.State != StateIssued || record.Authorization == nil || l.outcomeSource == nil ||
+		(record.Authorization.Rail != envelope.RailDirect && record.Authorization.Rail != envelope.RailX402) {
+		return FinalizedExecution{}, false
+	}
+	finalized, ok := l.outcomeSource.FinalizedExecution(ExecutionID(record.Authorization.AuthorizationID))
+	if !ok || (finalized.State != CanonicalExecutionSettled && finalized.State != CanonicalExecutionReverted) ||
+		finalized.ExecutionID != ExecutionID(record.Authorization.AuthorizationID) ||
+		finalized.OrganizationID != record.Authorization.OrganizationID || finalized.AgentID != record.Authorization.AgentID ||
+		finalized.TaskID != record.Authorization.TaskID || finalized.ChainID != record.Authorization.ChainID ||
+		finalized.Asset != record.Authorization.Asset || finalized.Recipient != record.Authorization.Recipient ||
+		finalized.AmountAtomic != record.Authorization.AmountAtomic ||
+		finalized.FinalizedAt < record.Authorization.IssuedAt || finalized.FinalizedAt > l.clock().UTC().Unix() {
+		return FinalizedExecution{}, false
+	}
+	return finalized, true
 }
 
 func reservationActive(state State) bool {
