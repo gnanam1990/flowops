@@ -4,13 +4,13 @@
   "purpose": "zero-fund-ascp-v4-contract-graph",
   "network": "base-mainnet",
   "chainId": 8453,
-  "preparedAt": "2026-08-28T03:25:29Z",
+  "preparedAt": "2026-08-28T04:15:22Z",
   "sourceBaseline": {
-    "commit": "cd7ec521aa7ccc820fea9cf7cd3396034541203b",
+    "commit": "ae8ebfdfa8d1e6013888134d72610f9ab9032b53",
     "requiresPromotionCommit": true,
     "deploymentScript": {
       "path": "contracts/script/DeployASCPBaseMainnet.s.sol",
-      "sha256": "0x063559ff3f630f116c3035d45bdcad63ef7a8ebc98b1e38661a43fdb2b9b109f"
+      "sha256": "0xf812893ebc02707b0444ebf5c70a62deebd0399d1139f4a7f51efb6002e4c4c7"
     },
     "contractSources": [
       {
@@ -26,7 +26,7 @@
       {
         "name": "ascp_call_escrow",
         "path": "contracts/src/ASCPCallEscrow.sol",
-        "sha256": "0xdf62c9de2665a2a481a8344cc2d6eaa17baef49511b5a32188eda4d487c1ae8e"
+        "sha256": "0x3849c079e603e0314e976d91fa351e011b8fa09637ed8e283192e7cc40ec7181"
       },
       {
         "name": "ascp_spend_module",
@@ -51,6 +51,15 @@
     "committedScriptDeployer": "0x0000000000000000000000000000000000000000",
     "committedScriptExpectedNonce": 0,
     "committedScriptSafe": "0x0000000000000000000000000000000000000000",
+    "committedScriptExpectedSafeOwners": [
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000"
+    ],
+    "committedScriptExpectedSafeThreshold": 0,
+    "committedScriptExpectedSafeNonce": 0,
+    "committedScriptExpectedSafeRuntimeCodeHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "committedScriptExpectedSafeImplementation": "0x0000000000000000000000000000000000000000",
     "externalReviewDigest": null,
     "releasePlanDigest": null,
     "broadcastEnabled": false,
@@ -66,6 +75,8 @@
   },
   "safe": {
     "address": "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
+    "runtimeCodeHash": "0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c",
+    "implementation": "0x29fcb43b46531bca003ddc8fcb67ffe91900c762",
     "owners": [
       "0x0f094eec6b569c3f33033102ad3ce33eabfeb2fb",
       "0xe8405844a45c209895afe2e49be6aa2c6c6202a6",
@@ -145,10 +156,10 @@
         "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518",
         "0x13e9fa8d49ee3e3b456db71d111da9b78fabd518"
       ],
-      "creationBytecodeKeccak": "0xef75661de09baffbf4fbf97e1992205767d2c889f4ca4f5f25623d52ac1edad0",
+      "creationBytecodeKeccak": "0x1e06b159f630af319ad706124642605f4240f821d0c3b91d3b59ca0cde1bddfb",
       "constructorArgumentsKeccak": "0x37219a8f74a0d6c0af80021f912c63bf668f2b1c02448f0f0758cea9b97a562e",
-      "initCodeKeccak": "0x6da11858f9b19841cc80aacdefd19d8ad616b4a29dfbc3e435a8930517ea5cd2",
-      "initCodeBytes": 14901
+      "initCodeKeccak": "0xd9f45e40ff8ada4fc8353bc0e572e5a854ce0b2bd98b484ae53c42d7536811ea",
+      "initCodeBytes": 14937
     },
     {
       "name": "ascp_spend_module",
@@ -166,9 +177,9 @@
           "10000000"
         ]
       ],
-      "creationBytecodeKeccak": "0x65afb819cc4853a06d7a9c10b498078c6b7f35c7dea32170bff9421f808c4cc6",
+      "creationBytecodeKeccak": "0x6a5333d750aa2445876dc666097f7be762ddc67fea75abf352ba2baf5108ba19",
       "constructorArgumentsKeccak": "0x4c7c7871e36ae81d32841215c2aff3ea815737a12ca46983c43dbc6073e590c0",
-      "initCodeKeccak": "0x23fc5e93570cecf7511333955be84251280732bd2d69c643885cfc4615e9dc8c",
+      "initCodeKeccak": "0xcbf879b4d6c3c53b1ef443263e2be7dc778113ff2ca4855079bc5a380401c42d",
       "initCodeBytes": 15005
     }
   ],

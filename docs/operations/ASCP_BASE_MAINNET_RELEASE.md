@@ -11,7 +11,8 @@ stored separately in
 `deployments/base-mainnet-ascp-deployment-candidate-v1.sha256`.
 
 The candidate binds the current source baseline, compiler and dependency
-revisions, deployer nonce, finalized 2-of-3 Safe, authorities, organization
+revisions, deployer nonce, finalized 2-of-3 Safe, its exact ordered owner set,
+threshold, nonce, empty module list, runtime code hash and singleton, authorities, organization
 domain, canonical USDC, four predicted CREATE addresses, constructor arguments,
 creation bytecode, encoded constructor arguments, complete init-code hashes,
 initial caps, and required write-inert post-deployment state. Run:
@@ -38,8 +39,9 @@ broadcast approval remain mandatory separate gates.
 3. Replace the zero constants in `contracts/script/DeployASCPBaseMainnet.s.sol` only in that reviewed PR. The committed script must otherwise remain unable to broadcast.
 4. Run the full script on a pinned Base mainnet fork and compare all constructor bindings and creation bytecode.
    The promoted script must pin the canonical USDC runtime code hash and the
-   deployer's exact starting nonce, validate the production Safe interface and
-   owner threshold, and prove that all four predicted CREATE addresses have no
+   deployer's exact starting nonce, validate the production Safe's reviewed
+   runtime, singleton, owner set, threshold, nonce and empty module list, and
+   prove that all four predicted CREATE addresses have no
    code, nonce, native balance, or USDC balance before broadcast.
 5. Obtain explicit zero-fund broadcast approval. Deploy the four contracts through the hardware-wallet ceremony. Do not enable the Safe module or transfer assets in the deployment transaction.
 6. Verify source and runtime bytecode independently through every admitted paid RPC provider.

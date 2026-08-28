@@ -14,12 +14,12 @@ jq -e '
   and .purpose == "zero-fund-ascp-v4-contract-graph"
   and .network == "base-mainnet"
   and .chainId == 8453
-  and .preparedAt == "2026-08-28T03:25:29Z"
-  and .sourceBaseline.commit == "cd7ec521aa7ccc820fea9cf7cd3396034541203b"
+  and .preparedAt == "2026-08-28T04:15:22Z"
+  and .sourceBaseline.commit == "ae8ebfdfa8d1e6013888134d72610f9ab9032b53"
   and .sourceBaseline.requiresPromotionCommit == true
   and .sourceBaseline.deploymentScript == {
     path: "contracts/script/DeployASCPBaseMainnet.s.sol",
-    sha256: "0x063559ff3f630f116c3035d45bdcad63ef7a8ebc98b1e38661a43fdb2b9b109f"
+    sha256: "0xf812893ebc02707b0444ebf5c70a62deebd0399d1139f4a7f51efb6002e4c4c7"
   }
   and .sourceBaseline.contractSources == [
     {
@@ -35,7 +35,7 @@ jq -e '
     {
       name: "ascp_call_escrow",
       path: "contracts/src/ASCPCallEscrow.sol",
-      sha256: "0xdf62c9de2665a2a481a8344cc2d6eaa17baef49511b5a32188eda4d487c1ae8e"
+      sha256: "0x3849c079e603e0314e976d91fa351e011b8fa09637ed8e283192e7cc40ec7181"
     },
     {
       name: "ascp_spend_module",
@@ -59,6 +59,15 @@ jq -e '
     committedScriptDeployer: "0x0000000000000000000000000000000000000000",
     committedScriptExpectedNonce: 0,
     committedScriptSafe: "0x0000000000000000000000000000000000000000",
+    committedScriptExpectedSafeOwners: [
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000"
+    ],
+    committedScriptExpectedSafeThreshold: 0,
+    committedScriptExpectedSafeNonce: 0,
+    committedScriptExpectedSafeRuntimeCodeHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    committedScriptExpectedSafeImplementation: "0x0000000000000000000000000000000000000000",
     externalReviewDigest: null,
     releasePlanDigest: null,
     broadcastEnabled: false,
@@ -71,6 +80,8 @@ jq -e '
   and .deployer.observedPendingNonce == 1
   and .deployer.observedBalanceWei == "147950415987658"
   and (.safe.address | address)
+  and .safe.runtimeCodeHash == "0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c"
+  and .safe.implementation == "0x29fcb43b46531bca003ddc8fcb67ffe91900c762"
   and (.safe.owners | length == 3 and length == (unique | length) and all(. | address))
   and .safe.threshold == 2
   and (.safe.deploymentTransaction | digest)
@@ -167,6 +178,8 @@ jq -e --slurpfile promotion "${promotion}" '
   | .deployer.address == $promotion.deployer.address
   and .deployer.expectedNonce == $promotion.deployer.expectedNonce
   and .safe.address == $promotion.safe.address
+  and .safe.runtimeCodeHash == $promotion.safe.runtimeCodeHash
+  and .safe.implementation == $promotion.safe.implementation
   and .safe.owners == $promotion.safe.owners
   and .safe.threshold == $promotion.safe.threshold
   and .safe.deploymentTransaction == $promotion.safe.deploymentTransaction
@@ -274,6 +287,13 @@ source_text="$(tr '[:upper:]' '[:lower:]' <"${repo_root}/contracts/script/Deploy
 grep -Fq 'address public constant designated_deployer = address(0);' <<<"${source_text}"
 grep -Fq 'uint256 public constant expected_deployer_nonce = 0;' <<<"${source_text}"
 grep -Fq 'address public constant production_safe = address(0);' <<<"${source_text}"
+grep -Fq 'address public constant expected_safe_owner_1 = address(0);' <<<"${source_text}"
+grep -Fq 'address public constant expected_safe_owner_2 = address(0);' <<<"${source_text}"
+grep -Fq 'address public constant expected_safe_owner_3 = address(0);' <<<"${source_text}"
+grep -Fq 'uint256 public constant expected_safe_threshold = 0;' <<<"${source_text}"
+grep -Fq 'uint256 public constant expected_safe_nonce = 0;' <<<"${source_text}"
+grep -Fq 'bytes32 public constant expected_safe_runtime_code_hash = bytes32(0);' <<<"${source_text}"
+grep -Fq 'address public constant expected_safe_implementation = address(0);' <<<"${source_text}"
 grep -Fq 'bytes32 public constant external_review_digest = bytes32(0);' <<<"${source_text}"
 grep -Fq 'bytes32 public constant release_plan_digest = bytes32(0);' <<<"${source_text}"
 grep -Fq 'bool public constant mainnet_broadcast_enabled = false;' <<<"${source_text}"
